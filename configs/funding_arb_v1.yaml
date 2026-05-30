@@ -1,0 +1,29 @@
+agent: funding_arb_v1
+description: Collect funding when 1h rate exits the band.
+mode: paper
+
+goals:
+  primary:
+    metric: sharpe
+    window: 30d
+    op: ">="
+    threshold: 1.5
+  secondary:
+    - {metric: net_pnl,  window: 30d, op: ">=", threshold: 500}
+    - {metric: win_rate, window: 30d, op: ">=", threshold: 0.55}
+
+guardrails:
+  - {metric: net_pnl,      window: 24h, op: ">=", threshold: -200,
+     action: pause,  reason: "24h loss limit -$200"}
+  - {metric: max_drawdown, window: 7d,  op: ">=", threshold: -0.10,
+     action: demote, reason: "7d drawdown > 10%"}
+  - {metric: edge_bps,     window: 7d,  op: ">=", threshold: -5,
+     action: alert,  reason: "edge_bps < -5 after costs"}
+
+promotion:
+  from: paper
+  to: live_small
+  conditions:
+    - {metric: sharpe,   window: 30d, op: ">=", threshold: 2.0}
+    - {metric: n_trades, window: 30d, op: ">=", threshold: 100}
+    - {metric: edge_bps, window: 30d, op: ">=", threshold: 3}
