@@ -56,10 +56,12 @@ class Condition(BaseModel):
     op: str
     threshold: float
 
-    def evaluate(self, sc: Scorecard) -> tuple[bool, float | None]:
+    def evaluate(self, sc: Scorecard) -> tuple[bool | None, float | None]:
+        """Returns (passed, value). passed=None means the metric was N/A
+        (missing data); callers should treat that as 'skip', not 'fail'."""
         v = getattr(sc, self.metric, None)
         if v is None:
-            return False, None
+            return None, None
         return OPS[self.op](v, self.threshold), float(v)
 
 
@@ -133,13 +135,16 @@ def evaluate(conn: sqlite3.Connection, g: AgentGoals) -> list[Evaluation]:
     cards: dict[Window, Scorecard] = {w: score_agent(conn, g.agent, w) for w in windows}
 
     # Primary / secondary goals -> informational pass/fail (no action).
+    def _status(ok: bool | None) -> str:
+        return "na" if ok is None else ("pass" if ok else "fail")
+
     if isinstance(primary, dict):
         c = Condition.model_validate(primary)
         ok, v = c.evaluate(cards[c.window])
         out.append(Evaluation(
             agent=g.agent, goal_name="primary",
             metric_value=v, threshold=c.threshold,
-            status="pass" if ok else "fail",
+            status=_status(ok),
             detail=f"{c.metric}({c.window}) {c.op} {c.threshold}",
         ))
     for i, s in enumerate(secondary if isinstance(secondary, list) else []):
@@ -148,26 +153,28 @@ def evaluate(conn: sqlite3.Connection, g: AgentGoals) -> list[Evaluation]:
         out.append(Evaluation(
             agent=g.agent, goal_name=f"secondary[{i}]",
             metric_value=v, threshold=c.threshold,
-            status="pass" if ok else "fail",
+            status=_status(ok),
             detail=f"{c.metric}({c.window}) {c.op} {c.threshold}",
         ))
 
     # Guardrails: a guardrail "passes" when the condition is satisfied (i.e.
-    # the agent is *within* limits). Failing triggers the action.
+    # the agent is *within* limits). Failing triggers the action. N/A (missing
+    # metric — e.g. no trades yet) NEVER triggers an action.
     for gr in g.guardrails:
         ok, v = gr.evaluate(cards[gr.window])
+        status = _status(ok)
         out.append(Evaluation(
             agent=g.agent, goal_name=f"guardrail:{gr.metric}",
             metric_value=v, threshold=gr.threshold,
-            status="pass" if ok else "fail",
-            action=("none" if ok else gr.action),  # type: ignore[arg-type]
+            status=status,
+            action=("none" if status != "fail" else gr.action),  # type: ignore[arg-type]
             detail=gr.reason or f"{gr.metric}({gr.window}) {gr.op} {gr.threshold}",
         ))
 
-    # Promotion: all conditions pass => promote.
+    # Promotion: ALL conditions must explicitly pass (na blocks promotion).
     if g.promotion and g.mode == g.promotion.from_mode:
         results = [c.evaluate(cards[c.window]) for c in g.promotion.conditions]
-        if all(ok for ok, _ in results):
+        if results and all(ok is True for ok, _ in results):
             out.append(Evaluation(
                 agent=g.agent, goal_name="promotion",
                 metric_value=None, threshold=None,

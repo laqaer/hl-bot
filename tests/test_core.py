@@ -89,3 +89,27 @@ def test_goals_primary_pass(conn):
     evals = evaluate(conn, g)
     primary = next(e for e in evals if e.goal_name == "primary")
     assert primary.status == "pass"
+
+
+def test_guardrail_na_does_not_trigger(conn):
+    """Regression: empty agent with no trades had max_drawdown=None which
+    was being treated as a guardrail failure and triggering demotion."""
+    g = AgentGoals.model_validate({
+        "agent": "empty_agent",
+        "mode": "paper",
+        "guardrails": [
+            {"metric": "max_drawdown", "window": "7d", "op": ">=",
+             "threshold": -0.10, "action": "demote", "reason": "7d dd > 10%"},
+            {"metric": "net_pnl", "window": "24h", "op": ">=",
+             "threshold": -200, "action": "pause", "reason": "24h loss"},
+        ],
+    })
+    evals = evaluate(conn, g)
+    # max_drawdown has no data -> na, no action
+    dd_eval = next(e for e in evals if "max_drawdown" in e.goal_name)
+    assert dd_eval.status == "na"
+    assert dd_eval.action == "none"
+    # net_pnl with no trades = 0, which is >= -200 -> pass
+    pnl_eval = next(e for e in evals if "net_pnl" in e.goal_name)
+    assert pnl_eval.status == "pass"
+    assert pnl_eval.action == "none"
