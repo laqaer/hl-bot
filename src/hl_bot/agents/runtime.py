@@ -23,7 +23,12 @@ log = logging.getLogger(__name__)
 
 
 def fetch_market_view(base_url: str, coins: list[str]) -> MarketView:
-    """Fetch mids + 1h funding for the requested coins via /info."""
+    """Fetch mids + 1h funding + 24h volume for all coins via /info.
+
+    NOTE: returns ALL coins from the universe, not just the requested ones,
+    because FEMR needs to scan the whole universe for funding extremes.
+    The `coins` parameter is kept for backward compatibility but ignored.
+    """
     with httpx.Client(timeout=15) as client:
         mids_raw = client.post(base_url + "/info", json={"type": "allMids"}).json() or {}
         meta_ctx = client.post(base_url + "/info", json={"type": "metaAndAssetCtxs"}).json()
@@ -33,6 +38,7 @@ def fetch_market_view(base_url: str, coins: list[str]) -> MarketView:
             mids[k] = float(v)
     funding: dict[str, float] = {}
     open_interest: dict[str, float] = {}
+    day_ntl_vlm: dict[str, float] = {}
     if isinstance(meta_ctx, list) and len(meta_ctx) == 2:
         universe = meta_ctx[0].get("universe", [])
         ctxs = meta_ctx[1]
@@ -43,13 +49,15 @@ def fetch_market_view(base_url: str, coins: list[str]) -> MarketView:
             try:
                 funding[name] = float(c.get("funding", 0))
                 open_interest[name] = float(c.get("openInterest", 0))
+                day_ntl_vlm[name] = float(c.get("dayNtlVlm", 0))
             except (TypeError, ValueError):
                 pass
     return MarketView(
         ts_ms=int(time.time() * 1000),
-        mids={c: mids[c] for c in coins if c in mids},
-        funding={c: funding[c] for c in coins if c in funding},
-        open_interest={c: open_interest[c] for c in coins if c in open_interest},
+        mids=mids,
+        funding=funding,
+        open_interest=open_interest,
+        extra={"day_ntl_vlm": day_ntl_vlm},
     )
 
 
