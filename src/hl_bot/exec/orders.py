@@ -15,6 +15,7 @@ KEY CHANGES vs initial version:
 from __future__ import annotations
 
 import logging
+import math
 import os
 import sqlite3
 import time
@@ -205,6 +206,7 @@ def check_guardrails(
     conn: sqlite3.Connection,
     info: Info,
     cfg: GuardrailConfig,
+    agents: list[str] | None = None,
 ) -> tuple[bool, str]:
     state = _retry(lambda: info.user_state(HL_TRADER_ADDRESS))
     try:
@@ -228,7 +230,10 @@ def check_guardrails(
         return False, f"24h femr PnL ${daily_pnl:.2f} < -${cfg.max_daily_loss:.2f}"
 
     asset_pos = (state or {}).get("assetPositions", []) or []
-    owned = bot_owned_coins(conn)
+    bot_agents = agents or ["femr_v1"]
+    owned: set[str] = set()
+    for agent in bot_agents:
+        owned |= bot_owned_coins(conn, agent=agent)
     bot_ntl = sum(
         abs(float(ap.get("position", {}).get("positionValue", 0) or 0))
         for ap in asset_pos
@@ -308,15 +313,39 @@ def _parse_response(res: dict) -> OrderResult:
     return OrderResult(ok=False, status="unknown", detail=res, error=f"unknown status: {list(s.keys())}")
 
 
+_SZ_DECIMALS_CACHE: dict[str, int] = {}
+
+
+def _round_order_size(exchange: Exchange, coin: str, sz: float) -> float:
+    """Floor size to Hyperliquid's per-asset szDecimals.
+
+    HL rejects otherwise-valid market orders with "Order has invalid size" when
+    the float has too many decimals for the asset. Floor instead of round so we
+    never exceed the agent's requested notional cap.
+    """
+    if coin not in _SZ_DECIMALS_CACHE:
+        meta = _retry(lambda: exchange.info.meta()) or {}
+        for asset in meta.get("universe", []) or []:
+            name = asset.get("name")
+            if name:
+                _SZ_DECIMALS_CACHE[str(name)] = int(asset.get("szDecimals", 5) or 0)
+    decimals = _SZ_DECIMALS_CACHE.get(coin, 5)
+    factor = 10 ** decimals
+    return math.floor(float(sz) * factor) / factor
+
+
 def place_market_order(
     exchange: Exchange, coin: str, is_buy: bool, sz: float,
     slippage_pct: float = 0.01, cloid: str | None = None,
 ) -> OrderResult:
     if not cloid:
         return OrderResult(ok=False, status="error", error="SAFETY: cloid required")
+    rounded_sz = _round_order_size(exchange, coin, sz)
+    if rounded_sz <= 0:
+        return OrderResult(ok=False, status="error", error=f"rounded size is zero: requested {sz}")
     try:
         res = _retry(lambda: exchange.market_open(
-            name=coin, is_buy=is_buy, sz=sz,
+            name=coin, is_buy=is_buy, sz=rounded_sz,
             slippage=slippage_pct, cloid=_as_cloid(cloid),
         ))
     except Exception as e:  # noqa: BLE001

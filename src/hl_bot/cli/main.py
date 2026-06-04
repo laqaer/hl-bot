@@ -248,17 +248,31 @@ def femr_tick(live: bool = False):
 
     conn, s = _conn()
 
+    # Load auto-tuner overrides if present
+    overrides_path = Path(__file__).resolve().parents[3] / "configs" / "agent_overrides.json"
+    overrides: dict = {}
+    if overrides_path.exists():
+        try:
+            overrides = json.loads(overrides_path.read_text())
+        except (ValueError, OSError):
+            overrides = {}
+
+    def _cfg(agent_name: str, defaults: dict) -> dict:
+        merged = dict(defaults)
+        merged.update(overrides.get(agent_name) or {})
+        return merged
+
     # Instantiate the full agent roster
     agents = [
-        FemrAgent(config={
+        FemrAgent(config=_cfg("femr_v1", {
             "max_notional_per_trade": 20.0,
             "max_total_notional": 40.0,
             "funding_enter_per_hr": 0.00015,
             "funding_exit_per_hr": 0.00005,
-        }, conn=conn),
-        TwapMrAgent(conn=conn),
-        LiqCascadeAgent(conn=conn),
-        BasisAgent(conn=conn),
+        }), conn=conn),
+        TwapMrAgent(config=_cfg("twap_mr_v1", {}), conn=conn),
+        LiqCascadeAgent(config=_cfg("liq_cascade_v1", {}), conn=conn),
+        BasisAgent(config=_cfg("basis_v1", {}), conn=conn),
     ]
 
     # Allocator: rebalance per-agent caps from rolling 7d Sharpe
@@ -332,8 +346,11 @@ def femr_tick(live: bool = False):
         decisions = agent.decide(view)
         for d in decisions:
             d.is_paper = not live
-            # Skip logging "hold" decisions to keep audit log clean
-            if d.action != "hold":
+            # Only log non-place/flatten actions immediately (holds skipped, rejected later).
+            # `place` and `flatten` are logged ONLY after exchange acceptance in the execution
+            # loop below — otherwise the cooldown check would see our own intent rows and
+            # block subsequent ticks forever.
+            if d.action not in ("hold", "place", "flatten"):
                 log_decision(conn, d)
             all_decisions.append(d)
 
@@ -354,7 +371,12 @@ def femr_tick(live: bool = False):
         telegram_alert(f"🚨 hl-bot: build_exchange failed: {e}")
         raise typer.Exit(2)
 
-    ok, why = check_guardrails(conn, info, GuardrailConfig(min_bot_capital=40.0))
+    ok, why = check_guardrails(
+        conn,
+        info,
+        GuardrailConfig(min_bot_capital=40.0, max_total_notional=75.0, max_concurrent_positions=4),
+        agents=[a.name for a in agents],
+    )
     if not ok:
         console.print(f"[red]HALT[/red]: {why}")
         return
@@ -375,21 +397,14 @@ def femr_tick(live: bool = False):
                                      slippage_pct=0.01, cloid=d.cloid)
             if res.ok:
                 console.print(f"[bold green]FILLED[/bold green] {d.coin} {'BUY' if is_buy else 'SELL'} {res.filled_sz} @ ${res.avg_px}")
-                # `place` decision was already logged by the agent loop above.
+                # Log place ONLY after fill confirmed
+                log_decision(conn, d)
             else:
-                # Rewrite as 'rejected' so it doesn't pollute ownership state
                 console.print(f"[red]REJECT[/red] {d.coin}: {res.status} — {res.error}")
-                # Log a separate audit row for visibility
                 log_decision(conn, Decision(
                     agent=d.agent, action="rejected", coin=d.coin,
                     reasoning=f"HL rejected: {res.error}", is_paper=False,
                 ))
-                # Important: remove the place row that the agent loop wrote
-                conn.execute(
-                    """DELETE FROM agent_decisions
-                       WHERE agent=? AND coin=? AND action='place' AND ts_ms >= ?""",
-                    (d.agent, d.coin, int((time.time() - 60) * 1000)),
-                )
                 conn.commit()
 
         elif d.action == "flatten":
