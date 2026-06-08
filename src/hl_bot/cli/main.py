@@ -477,6 +477,25 @@ def femr_tick(live: bool = False, execution: str = "taker"):
     view = fetch_market_view(s.hl_api_url, [])
     _enrich_view(view, s.hl_api_url, view.extra.get("day_ntl_vlm", {}))
 
+    # Overlay a fresh WS snapshot if available (sub-second mids, L2 book, and a
+    # REAL liquidations feed for liq_cascade). Purely additive; REST is the
+    # fallback when no fresh snapshot exists. Opt-in via HLBOT_WS_SNAPSHOT.
+    import os as _os
+    ws_path = _os.environ.get("HLBOT_WS_SNAPSHOT")
+    if ws_path:
+        from ..ingest.ws import load_fresh_snapshot
+        snap = load_fresh_snapshot(ws_path, max_age_s=30.0)
+        if snap is not None:
+            view.mids.update(snap.mids)
+            view.funding.update(snap.funding)
+            if snap.book_top:
+                view.book_top.update(snap.book_top)
+            liqs = snap.extra.get("liquidations") or []
+            if liqs:
+                view.extra["liquidations"] = liqs
+            console.print(f"[dim]ws snapshot overlaid: {len(snap.mids)} mids, "
+                          f"{len(liqs)} liqs[/dim]")
+
     # Build position list from HL truth
     all_positions = []
     for ap in st.get("assetPositions", []) or []:
@@ -816,6 +835,26 @@ def confirm(
     console.print(res.summary())
     if not res.confirmed:
         raise typer.Exit(1)
+
+
+@app.command()
+def ws(
+    coins: str = "BTC,ETH,SOL,HYPE",
+    snapshot: Path = Path("data/ws_snapshot.json"),
+    seconds: float = 0.0,
+):
+    """Run the WebSocket market-data service: maintain live state, write a snapshot.
+
+    Long-running (supervise via systemd). The tick reads the snapshot when fresh
+    (set HLBOT_WS_SNAPSHOT) for sub-second mids, L2 depth, and live liquidations.
+    seconds=0 runs forever.
+    """
+    from ..ingest.ws import run_ws
+
+    _, s = _conn()
+    coin_list = [c.strip() for c in coins.split(",") if c.strip()]
+    console.print(f"[green]ws[/green] subscribing {coin_list} → {snapshot} (every 1s)")
+    run_ws(coin_list, snapshot, base_url=s.hl_api_url, duration_s=(seconds or None))
 
 
 @app.command()
