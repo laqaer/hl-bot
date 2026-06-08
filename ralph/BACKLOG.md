@@ -41,7 +41,10 @@ Keep it ruthlessly prioritized: the top item should always be the highest-levera
 
 ## P1 — honest measurement (so the supervisor can trust itself)
 
-- [ ] **B6 — Per-agent funding attribution.** Map `funding_payments` to the agent
+- [x] **B6/B7 — Per-agent funding attribution + Sharpe.** Done: funding split to
+  the agent holding the coin at funding time (scoring includes it in net/edge);
+  per-agent Sharpe from daily PnL so sharpe-gates evaluate. Tested. (Iteration 7.)
+- [ ] **B6old — (superseded by B6/B7 above)** Map `funding_payments` to the agent
   holding the position at funding time (via cloid→position replay), so
   `scoring.metrics` includes funding in each agent's net. (REVIEW C4.)
 - [ ] **B7 — Per-agent equity curves + Sharpe/DD.** Reuse the backtest

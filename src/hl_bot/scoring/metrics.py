@@ -15,6 +15,7 @@ is partial. We expose both.
 
 from __future__ import annotations
 
+import math
 import sqlite3
 import time
 from dataclasses import asdict, dataclass
@@ -67,15 +68,88 @@ def _fills_df(conn: sqlite3.Connection, agent: str, since_ms: int | None) -> pd.
 
 
 def _funding_total(conn: sqlite3.Connection, since_ms: int | None) -> float:
-    # Funding isn't attributable to a specific agent unless we track positions
-    # per agent over time. For now we report account-level funding under the
-    # "_account" pseudo-agent and 0 for everyone else.
+    # Account-level funding (everything). Per-agent attribution is below.
     q = "SELECT COALESCE(SUM(usdc), 0) FROM funding_payments"
     params: list = []
     if since_ms is not None:
         q += " WHERE time_ms >= ?"
         params.append(since_ms)
     return float(conn.execute(q, params).fetchone()[0])
+
+
+_HOLD_INF = 1 << 62
+
+
+def _coin_holders_over_time(
+    conn: sqlite3.Connection,
+) -> dict[str, list[tuple[str, int, int]]]:
+    """Reconstruct which agent held which coin when, from the decision audit log.
+
+    Returns coin -> list of (agent, open_ms, close_ms) intervals. A `place`
+    opens an interval for (agent, coin); a `flatten` closes it. Still-open
+    positions run to +inf. This is the basis for attributing account-level
+    funding payments back to the agent that actually held the position.
+    """
+    rows = conn.execute(
+        """SELECT ts_ms, agent, action, coin FROM agent_decisions
+           WHERE action IN ('place', 'flatten') AND coin IS NOT NULL
+           ORDER BY ts_ms ASC"""
+    ).fetchall()
+    open_pos: dict[tuple[str, str], int] = {}
+    intervals: dict[str, list[tuple[str, int, int]]] = {}
+    for r in rows:
+        key = (r["agent"], r["coin"])
+        if r["action"] == "place":
+            open_pos.setdefault(key, int(r["ts_ms"]))
+        else:  # flatten
+            if key in open_pos:
+                intervals.setdefault(r["coin"], []).append(
+                    (r["agent"], open_pos.pop(key), int(r["ts_ms"]))
+                )
+    for (agent, coin), o in open_pos.items():
+        intervals.setdefault(coin, []).append((agent, o, _HOLD_INF))
+    return intervals
+
+
+def _agent_funding_payments(
+    conn: sqlite3.Connection, agent: str, since_ms: int | None
+) -> list[tuple[int, float]]:
+    """This agent's attributed funding payments as (time_ms, usdc_share).
+
+    Each account-level funding payment is split equally among the agents holding
+    that coin at that instant, so shares sum to the total without double-counting.
+    Coins held only by manual positions stay unattributed (counted under _account).
+    """
+    intervals = _coin_holders_over_time(conn)
+    q = "SELECT time_ms, coin, usdc FROM funding_payments"
+    params: list = []
+    if since_ms is not None:
+        q += " WHERE time_ms >= ?"
+        params.append(since_ms)
+    out: list[tuple[int, float]] = []
+    for r in conn.execute(q, params).fetchall():
+        t = int(r["time_ms"])
+        coin = r["coin"]
+        usdc = float(r["usdc"] or 0.0)
+        holders = [ag for (ag, o, c) in intervals.get(coin, []) if o <= t < c]
+        if agent in holders:
+            out.append((t, usdc / len(holders)))
+    return out
+
+
+def _daily_pnl_sharpe(daily: list[float], periods_per_year: float = 365) -> float | None:
+    """Annualized Sharpe from a daily-PnL series (dollar terms), ≥3 days required.
+
+    Matches the MetaAllocator's convention so per-agent Sharpe is consistent
+    across the system. Dollar-PnL Sharpe is dimensionless and comparable to the
+    return-based account Sharpe when PnL is roughly stationary.
+    """
+    if len(daily) < 3:
+        return None
+    mean = sum(daily) / len(daily)
+    var = sum((x - mean) ** 2 for x in daily) / len(daily)
+    std = math.sqrt(var)
+    return (mean / std * math.sqrt(periods_per_year)) if std > 0 else None
 
 
 def _equity_curve(conn: sqlite3.Connection, since_ms: int | None) -> pd.DataFrame:
@@ -111,7 +185,14 @@ def score_agent(conn: sqlite3.Connection, agent: str, window: Window) -> Scoreca
     n_trades = int(len(fills))
     realized = float(fills["closed_pnl"].sum()) if n_trades else 0.0
     fees = float(fills["fee"].sum()) if n_trades else 0.0
-    funding = _funding_total(conn, since) if agent == "_account" else 0.0
+    # Funding: account-level gets everything; a real agent gets its attributed
+    # share (so a carry strategy's main revenue line is no longer invisible).
+    if agent == "_account":
+        fund_payments: list[tuple[int, float]] = []
+        funding = _funding_total(conn, since)
+    else:
+        fund_payments = _agent_funding_payments(conn, agent, since)
+        funding = sum(s for _, s in fund_payments)
     net = realized + funding - fees
 
     # Per-trade win stats (close events only)
@@ -127,9 +208,10 @@ def score_agent(conn: sqlite3.Connection, agent: str, window: Window) -> Scoreca
     notional = float((fills["px"] * fills["sz"]).abs().sum()) if n_trades else 0.0
     edge_bps = float(net / notional * 10_000) if notional > 0 else None
 
-    # Sharpe / DD: account-level only (we need an equity curve)
+    # Sharpe / DD
     sharpe = dd = calmar = None
     if agent == "_account":
+        # Account uses the real equity curve (return-based Sharpe + % drawdown).
         eq = _equity_curve(conn, since)
         if len(eq) >= 3:
             eq["ts"] = pd.to_datetime(eq["ts_ms"], unit="ms")
@@ -140,6 +222,18 @@ def score_agent(conn: sqlite3.Connection, agent: str, window: Window) -> Scoreca
             if dd is not None and dd < 0:
                 ann_ret = (1 + rets.mean()) ** 365 - 1 if not rets.empty else 0
                 calmar = float(ann_ret / abs(dd)) if dd != 0 else None
+    else:
+        # Per-agent Sharpe from daily PnL (trading + attributed funding), so
+        # sharpe-based promotion gates can actually evaluate for real agents.
+        daily: dict[int, float] = {}
+        if n_trades:
+            for tm, cp, fe in zip(fills["time_ms"], fills["closed_pnl"], fills["fee"], strict=False):
+                d = int(tm) // 86_400_000
+                daily[d] = daily.get(d, 0.0) + float(cp) - float(fe)
+        for t, s in fund_payments:
+            d = t // 86_400_000
+            daily[d] = daily.get(d, 0.0) + s
+        sharpe = _daily_pnl_sharpe(list(daily.values()))
 
     return Scorecard(
         agent=agent, window=window, n_trades=n_trades,
