@@ -66,3 +66,14 @@ def test_place_limit_order_requires_cloid():
     ex = _FakeExchange()
     res = place_limit_order(ex, "TST", is_buy=True, sz=1.0, limit_px=1.0, cloid=None)
     assert not res.ok and "cloid" in (res.error or "")
+
+
+def test_resolve_trader_address(monkeypatch):
+    from hl_bot.exec.orders import _resolve_trader_address
+    monkeypatch.delenv("HL_TRADER_ADDRESS", raising=False)
+    monkeypatch.delenv("HL_ADDRESS", raising=False)
+    assert _resolve_trader_address().startswith("0x5C3a")   # legacy default
+    monkeypatch.setenv("HL_ADDRESS", "0x" + "a" * 40)
+    assert _resolve_trader_address() == "0x" + "a" * 40      # falls back to HL_ADDRESS
+    monkeypatch.setenv("HL_TRADER_ADDRESS", "0x" + "b" * 40)
+    assert _resolve_trader_address() == "0x" + "b" * 40      # HL_TRADER_ADDRESS wins

@@ -33,7 +33,21 @@ from hyperliquid.utils.signing import Cloid
 
 log = logging.getLogger(__name__)
 
-HL_TRADER_ADDRESS = "0x5C3a67932Ca4026A6ABC18822Dc601BeD44f45a3"
+def _resolve_trader_address() -> str:
+    """The funded account the bot trades on.
+
+    Prefer ``HL_TRADER_ADDRESS``, then ``HL_ADDRESS``, then the legacy default so
+    existing deployments keep working. Set HL_TRADER_ADDRESS in /etc/hl-bot/env to
+    point the bot at your own account.
+    """
+    return (
+        os.environ.get("HL_TRADER_ADDRESS")
+        or os.environ.get("HL_ADDRESS")
+        or "0x5C3a67932Ca4026A6ABC18822Dc601BeD44f45a3"
+    )
+
+
+HL_TRADER_ADDRESS = _resolve_trader_address()
 DEFAULT_API_WALLET_ENV = Path.home() / ".config" / "hermes" / "hl-bot-api-wallet.env"
 COOLDOWN_S = 3600  # 1h cooldown per coin between attempts
 

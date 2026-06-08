@@ -112,3 +112,5 @@ Keep it ruthlessly prioritized: the top item should always be the highest-levera
 - [x] **B14a — deployment automation** (`deploy/`: install.sh, systemd units,
   Litestream, loop service, run-tick). (Iteration 5.)
 - [x] **B10 — WebSocket market view + live liquidations.** (Iteration 5.)
+- [x] **B13 — HL_TRADER_ADDRESS via env** (no more hardcoded account). (Iteration 6.)
+- [x] **hlbot-ws.service** managed WS feed + docs/HOST_QUICKSTART.md. (Iteration 6.)
