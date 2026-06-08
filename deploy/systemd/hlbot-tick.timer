@@ -1,0 +1,12 @@
+[Unit]
+Description=Run hl-bot tick every 5 minutes
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=5min
+# Don't fire missed runs in a burst after downtime.
+Persistent=false
+AccuracySec=15s
+
+[Install]
+WantedBy=timers.target

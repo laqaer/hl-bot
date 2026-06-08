@@ -1,0 +1,16 @@
+[Unit]
+Description=hl-bot daily report + track-record export
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=hlbot
+WorkingDirectory=/opt/hl-bot
+EnvironmentFile=/etc/hl-bot/env
+ExecStart=/usr/bin/env bash -c 'uv run hlbot report --send; uv run hlbot track-record'
+TimeoutStartSec=180
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/opt/hl-bot/data
