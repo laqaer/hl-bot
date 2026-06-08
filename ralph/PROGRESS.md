@@ -294,3 +294,14 @@ guardrails; the loop is forbidden from enabling live or raising caps.
 
 **What's next (loop).** B-book (book-aware maker pricing via WS L2), userFills WS,
 B4-RUN (confirm carry on real history), B16 (HL vault eval for AUM).
+
+---
+
+## Iteration 8 — 2026-06-08 — book-aware maker pricing + fastest live path
+
+- **B-book** — `maker_limit_price` joins the near touch (best bid/ask) from the WS
+  L2 book; live maker entries price off `view.book_top` (fallback mid, never
+  cross). Tested. 91 tests pass.
+- **Fastest live path** — `docs/AWS_NOVICE_SETUP.md` FAST PATH: one user-data block
+  brings the box up live-armed (agent enabled, maker exec, loop on); trades start
+  the moment the API wallet is added (one post-boot command). Off switch one line.
