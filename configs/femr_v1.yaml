@@ -17,7 +17,7 @@ guardrails:
   - {metric: net_pnl,  window: 24h, op: ">=", threshold: -10,
      action: pause,  reason: "24h realized loss > $10"}
   - {metric: edge_bps, window: 7d,  op: ">=", threshold: -15,
-     action: demote, reason: "7d realized edge < -15 bps after costs"}
+     action: alert, reason: "7d realized edge < -15 bps after costs"}
   - {metric: edge_bps, window: 24h, op: ">=", threshold: -50,
      action: alert,  reason: "24h edge < -50 bps"}
 

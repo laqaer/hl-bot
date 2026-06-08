@@ -1,6 +1,6 @@
 """Auto-tuner: read 7d fills, ask DeepSeek to propose param tweaks, apply if safe.
 
-Runs weekly (Hermes cron Sun 14:00 UTC). Reads ~/projects/hl-bot/data/hlbot-aws.sqlite
+Runs on demand / scheduled by Hermes cron. Reads the configured HLBOT_DB
 (synced from EC2). Writes proposed/applied tweaks to:
   ~/projects/hl-bot/data/auto_tuner_log.jsonl
   ~/projects/hl-bot/configs/agent_overrides.json   (live params, picked up by CLI)
@@ -151,7 +151,7 @@ def ask_deepseek(summaries: list[dict], current: dict[str, dict]) -> dict:
     }, default=str)
 
     body = json.dumps({
-        "model": "deepseek/deepseek-chat-v3.1",
+        "model": "deepseek/deepseek-v4-pro",
         "messages": [
             {"role": "system", "content": system},
             {"role": "user", "content": user},
@@ -260,7 +260,7 @@ def main() -> int:
     summaries = [per_agent_summary(conn, a) for a in AGENTS]
     current = {a: current_params(a) for a in AGENTS}
 
-    lines = ["🔧 *hl-bot weekly auto-tune*", "7d snapshot:", ""]
+    lines = ["🔧 *hl-bot auto-tune*", "7d snapshot:", ""]
     for s in summaries:
         edge = f"{s['edge_bps']:+.1f}" if s["edge_bps"] is not None else "—"
         lines.append(
