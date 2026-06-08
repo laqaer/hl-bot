@@ -90,15 +90,14 @@ risky.
 ## Part B — Turn on self-improvement (the "auto-improve, don't touch" part)
 
 The box already **auto-deploys** improvements every 15 min (test-gated:
-`HLBOT_AUTO_UPDATE=1`). To also let it **write** improvements, run the loop:
+`HLBOT_AUTO_UPDATE=1`). To also let it **write** improvements, give it an Anthropic
+key and start the loop:
 
 ```bash
-# in the browser terminal / SSH:
-sudo -u hlbot -i
-cd /opt/hl-bot
-claude            # log in once (follow the link); or: export ANTHROPIC_API_KEY=sk-...
-exit
+# easiest: paste an API key from console.anthropic.com into the env, then start the loop
+echo 'ANTHROPIC_API_KEY=sk-ant-CHANGE_ME' | sudo tee -a /etc/hl-bot/env
 sudo systemctl enable --now hlbot-loop
+# (alternative: `sudo -u hlbot -i; cd /opt/hl-bot; claude` to log in interactively)
 ```
 Now: the loop researches + backtests + commits green improvements and pushes them;
 the auto-update timer pulls them, re-runs the tests, and restarts the bot only if
