@@ -719,6 +719,21 @@ def backtest(
 
 
 @app.command()
+def track_record(out: Path = Path("data/track_record")):
+    """Export a public-grade track record (equity curve, Sharpe, DD, per-agent).
+
+    Writes track_record.{json,md} for capital/AUM due diligence (Path C) and the
+    go-live gates. Read-only on the DB.
+    """
+    from ..reports.track_record import export
+
+    conn, _ = _conn()
+    jp, mp = export(conn, out)
+    console.print(mp.read_text())
+    console.print(f"[green]✓[/green] wrote {jp} and {mp}")
+
+
+@app.command()
 def report(send: bool = False):
     """Build daily report; optionally send to Telegram."""
     conn, s = _conn()
