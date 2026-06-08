@@ -612,6 +612,33 @@ def femr_tick(live: bool = False):
 
 
 @app.command()
+def backtest_fetch(
+    coins: str = "BTC,ETH,SOL",
+    interval: str = "1h",
+    days: int = 30,
+    refresh: bool = False,
+):
+    """Fetch + cache HL candle/funding history for offline, reproducible backtests.
+
+    Writes a gzipped frame dataset under data/backtest_cache/ (gitignored).
+    Run this once where HL is reachable; then `hlbot backtest` runs without network.
+    """
+    from ..backtest.data import cached_or_fetch, default_cache_path
+
+    _, s = _conn()
+    coin_list = [c.strip() for c in coins.split(",") if c.strip()]
+    path = default_cache_path(coin_list, interval, days)
+    console.print(f"[dim]fetching {days}d {interval} for {coin_list}…[/dim]")
+    try:
+        frames = cached_or_fetch(coin_list, interval=interval, days=days,
+                                 base_url=s.hl_api_url, refresh=refresh)
+    except Exception as e:  # noqa: BLE001
+        console.print(f"[red]fetch failed: {e}[/red]")
+        raise typer.Exit(2) from e
+    console.print(f"[green]✓[/green] cached {len(frames)} frames → {path}")
+
+
+@app.command()
 def backtest(
     agent: str = "twap_mr_v1",
     coins: str = "BTC,ETH,SOL",
@@ -620,6 +647,7 @@ def backtest(
     maker: bool = False,
     compare: bool = True,
     starting_capital: float = 1000.0,
+    cache: bool = True,
 ):
     """Replay an agent over real Hyperliquid history with an explicit cost model.
 
@@ -629,7 +657,7 @@ def backtest(
     you can see how much of the edge the spread is eating — the central question
     for this book. Places no orders; purely offline analysis.
     """
-    from ..backtest.data import load_frames
+    from ..backtest.data import cached_or_fetch, load_frames
     from ..backtest.engine import Backtester, CostModel
 
     _, s = _conn()
@@ -646,9 +674,12 @@ def backtest(
         console.print(f"[red]unknown agent {agent}; choose from {list(factories)}[/red]")
         raise typer.Exit(1)
 
-    console.print(f"[dim]loading {days}d of {interval} candles for {coin_list}…[/dim]")
+    console.print(f"[dim]loading {days}d of {interval} candles for {coin_list} "
+                  f"({'cache' if cache else 'network'})…[/dim]")
     try:
-        frames = load_frames(coin_list, interval=interval, days=days, base_url=s.hl_api_url)
+        frames = (cached_or_fetch(coin_list, interval=interval, days=days, base_url=s.hl_api_url)
+                  if cache else
+                  load_frames(coin_list, interval=interval, days=days, base_url=s.hl_api_url))
     except Exception as e:  # noqa: BLE001
         console.print(f"[red]failed to load history: {e}[/red]")
         raise typer.Exit(2) from e

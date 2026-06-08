@@ -10,7 +10,11 @@ Hyperliquid info endpoints used (public, no auth):
 
 from __future__ import annotations
 
+import gzip
+import json
 import time
+from dataclasses import asdict
+from pathlib import Path
 from typing import Any
 
 import httpx
@@ -204,3 +208,52 @@ def load_frames(
         candles_by_coin, funding_by_coin=funding_by_coin,
         vwap_window=vwap_window, warmup=min(vwap_window, 30),
     )
+
+
+# ---------------------------------------------------------------------------
+# Offline cache (so backtests are reproducible and runnable without network)
+# ---------------------------------------------------------------------------
+
+
+def save_frames(path: str | Path, frames: list[Frame]) -> Path:
+    """Persist built frames to a gzipped JSON file (created parent dirs)."""
+    p = Path(path)
+    p.parent.mkdir(parents=True, exist_ok=True)
+    payload = [asdict(f) for f in frames]
+    with gzip.open(p, "wt", encoding="utf-8") as fh:
+        json.dump(payload, fh)
+    return p
+
+
+def load_cached_frames(path: str | Path) -> list[Frame]:
+    """Load frames previously written by ``save_frames``."""
+    with gzip.open(Path(path), "rt", encoding="utf-8") as fh:
+        payload = json.load(fh)
+    return [Frame(**d) for d in payload]
+
+
+def default_cache_path(coins: list[str], interval: str, days: int) -> Path:
+    """Stable on-disk location for a (coins, interval, days) backtest dataset."""
+    from ..config import DATA_DIR
+    key = f"{'-'.join(sorted(coins))}_{interval}_{days}d"
+    return DATA_DIR / "backtest_cache" / f"{key}.json.gz"
+
+
+def cached_or_fetch(
+    coins: list[str],
+    *,
+    interval: str = "1h",
+    days: int = 30,
+    base_url: str = "https://api.hyperliquid.xyz",
+    cache_path: str | Path | None = None,
+    refresh: bool = False,
+    vwap_window: int = 60,
+) -> list[Frame]:
+    """Return frames from cache if present, else fetch (network) and cache them."""
+    p = Path(cache_path) if cache_path else default_cache_path(coins, interval, days)
+    if p.exists() and not refresh:
+        return load_cached_frames(p)
+    frames = load_frames(coins, interval=interval, days=days,
+                         base_url=base_url, vwap_window=vwap_window)
+    save_frames(p, frames)
+    return frames

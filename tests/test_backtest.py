@@ -110,3 +110,22 @@ def test_build_frames_from_candles():
     assert "TST" in last.mids
     assert "TST" in last.candles_1h
     assert last.candles_1h["TST"]["sigma"] > 0
+
+
+def test_frame_cache_roundtrip(tmp_path):
+    from hl_bot.backtest.data import load_cached_frames, save_frames
+    frames = _mean_reversion_path()
+    p = save_frames(tmp_path / "c" / "frames.json.gz", frames)
+    assert p.exists()
+    loaded = load_cached_frames(p)
+    assert len(loaded) == len(frames)
+    assert loaded[1].mids == frames[1].mids
+    assert loaded[1].candles_1h == frames[1].candles_1h
+    # a cached run scores identically to a fresh run
+    from hl_bot.backtest.engine import Backtester, CostModel
+    from hl_bot.db.schema import init_db
+    c1 = init_db(":memory:")
+    c2 = init_db(":memory:")
+    r1 = Backtester(CostModel(maker=True, maker_fee_bps=0.0), conn=c1).run(TwapMrAgent(config={}, conn=c1), frames)
+    r2 = Backtester(CostModel(maker=True, maker_fee_bps=0.0), conn=c2).run(TwapMrAgent(config={}, conn=c2), loaded)
+    assert r1.net_pnl == r2.net_pnl
