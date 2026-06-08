@@ -37,3 +37,41 @@ history. **Blocked here:** the sandbox cannot reach api.hyperliquid.xyz (403), s
 this must run where HL history is reachable, or implement B1a (offline cache)
 first. If unblocked, the immediate hypothesis to test is: *most of the bleed is
 the spread*, which would make B2 (maker execution) the highest-value next build.
+
+---
+
+## Iteration 1 — 2026-06-08 — production-hardening toward a safe go-live
+
+**Context.** Directive: "start the loop, move it toward production and live." Did
+NOT enable live trading — strategies still have negative edge after costs and the
+switch is human-gated by design (see `docs/GO_LIVE.md`). Instead worked the P0/P1
+items that *earn* the right to go live. B1 stays network-blocked here, so I took
+the highest-value unblocked items.
+
+**Changed (4 green-gated commits).**
+- **B8 — real fill price.** `femr_tick` logged the pre-trade mid as the entry on a
+  confirmed fill; now records `res.avg_px`/`res.filled_sz` so stops/TPs/age key
+  off the real fill. (REVIEW M1.)
+- **B3 — twap_mr_regime_v1.** New agent that consults `regime_allows_fade` and
+  drops fades against a strong trend — the #1 loss loop (REVIEW C3). Plumbed a
+  trailing `closes` series through `backtest.Frame` and the live `_enrich_view`.
+  **Evidence:** cost-free synthetic uptrend, baseline TWAP nets **−$7.88** fading
+  the rip; regime variant nets **−$4.00** (2 trades vs 4) by refusing those fades
+  (`tests/test_regime_twap.py`). Real-data tuning pending B1.
+- **B2 (primitive) — maker execution.** `place_limit_order` (post-only "Alo" so it
+  can never become a taker), `round_price_to` (HL tick rules), `has_resting_order`.
+  Tested via fake exchange + rounding cases. The *payoff* half (async resting-order
+  fill reconciliation + routing live entries to maker) is queued as **B2b**.
+- **B14 — go-live runbook.** `docs/GO_LIVE.md`: the gated checklist, secrets/env,
+  promote/kill-switch/rollback, monitoring. The honest definition of "live."
+
+**Evidence.** 47 → **56 tests pass**; `ruff check .` clean each commit.
+
+**Readiness.** Still **NOT live-ready** (by design): no strategy has passed G0
+(needs real-history backtests — B1), and live entries are still taker until B2b.
+The regime TWAP is the leading G0 candidate.
+
+**What's next.** B1a (offline history cache) to unblock B1 in this sandbox, then
+B2b (async maker entries) — together they let the regime/carry strategies be
+backtested *and* executed as makers, which is the whole ballgame for a positive
+live edge.

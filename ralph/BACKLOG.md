@@ -14,13 +14,19 @@ Keep it ruthlessly prioritized: the top item should always be the highest-levera
 - [ ] **B1a — Offline history cache.** Add `hlbot backtest-fetch` to pull candle/
   funding history to a local parquet/sqlite cache under `data/` (gitignored), so
   backtests are reproducible and runnable without live network each time.
-- [ ] **B2 — Maker (post-only) execution.** Add a limit/ALO order path in
-  `exec/orders.py` and a `Decision`/agent option to prefer maker. Default exits
-  may stay taker for urgency. Backtest the passive strategies as maker first.
-- [ ] **B3 — `twap_mr_regime_v1`.** New agent that consults
-  `research/candidates.py::regime_allows_fade` before placing a fade. Backtest vs
-  baseline TWAP on trending vs choppy history; promote only if net-of-cost edge
-  improves. (Wires REVIEW C3.)
+- [~] **B2 — Maker (post-only) execution.** Primitive done: `place_limit_order`
+  (post-only 'Alo'), `round_price_to`, `has_resting_order` + tests. **Remaining
+  (B2b):** async resting-order fill reconciliation across ticks, then route live
+  *entries* through maker (exits stay taker). Until then live entries are still
+  taker. Backtest passive strategies as maker once B1 unblocks.
+- [x] **B3 — `twap_mr_regime_v1`.** Done: new agent consults
+  `regime_allows_fade`; closes plumbed through Frame + live `_enrich_view`;
+  backtest tests prove it beats baseline on a trend. Thresholds need real-data
+  tuning under B1. (Wires REVIEW C3.)
+- [ ] **B2b — Async maker fill reconciliation + route live entries to maker.**
+  Track resting orders across ticks, reconcile fills from `userFills`/`open_orders`,
+  cancel stale quotes, then switch live *entries* to `place_limit_order` (exits
+  stay taker). The payoff half of B2.
 - [ ] **B4 — Maker carry strategy.** A hold-to-collect funding strategy that
   enters maker, holds while |funding| stays extreme, and only collects (no tight
   TP/SL churn). Backtest with funding folded in. (Fixes FEMR's economics.)
@@ -37,9 +43,8 @@ Keep it ruthlessly prioritized: the top item should always be the highest-levera
   equity-curve math (`engine._curve_stats`) to compute per-agent Sharpe/maxDD
   from fills, so `funding_arb_v1.yaml`'s sharpe gate can actually evaluate.
   Then standardize all goal configs. (REVIEW C5.)
-- [ ] **B8 — Record actual fill price.** In `cli/main.py::femr_tick`, log the
-  confirmed `res.avg_px` (not pre-trade mid) on fill, so stops/TPs key off the
-  real entry. (REVIEW M1.)
+- [x] **B8 — Record actual fill price.** Done: `femr_tick` now logs the confirmed
+  `res.avg_px`/`res.filled_sz` on fill so stops/TPs key off the real entry. (M1.)
 - [ ] **B9 — fills→positions replay.** Populate the unused `positions` table from
   fills so attribution survives partial fills/manual interference. (REVIEW M2.)
 
@@ -52,8 +57,10 @@ Keep it ruthlessly prioritized: the top item should always be the highest-levera
 - [ ] **B12 — Consolidate execution paths.** `runtime.run_tick` vs `femr_tick`
   duplicate logic; unify so the safe wrapper is what live uses. (REVIEW M3.)
 - [ ] **B13 — Move hardcoded trader address to config.** (REVIEW M6.)
-- [ ] **B14 — Deploy/runbook in-repo.** Document the EC2/systemd/Hermes cron setup
-  (without secrets) so the live loop is reproducible. (REVIEW D3.)
+- [x] **B14 — Go-live runbook in-repo.** `docs/GO_LIVE.md`: gated checklist,
+  secrets/env, promote/kill-switch/rollback, monitoring. (REVIEW D3.)
+- [ ] **B14a — Deploy automation.** Codify the EC2/systemd/Hermes cron + DB sync
+  (without secrets) so the live loop is reproducible from the repo.
 
 ## P3 — capital formation (Path C)
 
@@ -72,3 +79,8 @@ Keep it ruthlessly prioritized: the top item should always be the highest-levera
   `maker` flag to quantify the taker tax. (Iteration 0.)
 - [x] **B-CI — Fix red CI.** Ruff B007 in `scripts/daily_scorecard.py`; aligned
   `make lint` to include `scripts`. (Iteration 0.)
+- [x] **B8 — Real fill px/sz on confirmed fills.** (Iteration 1.)
+- [x] **B3 — twap_mr_regime_v1** with proving backtest tests. (Iteration 1.)
+- [x] **B2 (primitive) — post-only maker order path** + tick rounding + tests.
+  Async fill reconciliation tracked as B2b. (Iteration 1.)
+- [x] **B14 — docs/GO_LIVE.md** go-live runbook. (Iteration 1.)
