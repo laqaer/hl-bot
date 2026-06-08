@@ -32,6 +32,8 @@ KNOWN_AGENTS = [
     "funding_arb_v1",
     "twap_mr_v1",
     "twap_mr_regime_v1",
+    "funding_carry_v1",
+    "xfund_carry_v1",
     "liq_cascade_v1",
     "basis_v1",
     "veto_v1",

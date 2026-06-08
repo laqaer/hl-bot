@@ -15,12 +15,14 @@ from rich.table import Table
 from ..agents.basis import BasisAgent
 from ..agents.femr import FemrAgent
 from ..agents.funding_arb import FundingArbAgent
+from ..agents.funding_carry import FundingCarryAgent
 from ..agents.liq_cascade import LiqCascadeAgent
 from ..agents.meta_allocator import MetaAllocator, MetaAllocatorConfig
 from ..agents.runtime import run_tick
 from ..agents.twap_mr import TwapMrAgent
 from ..agents.twap_mr_regime import TwapMrRegimeAgent
 from ..agents.veto import VetoAgent
+from ..agents.xfund_carry import XFundCarryAgent
 from ..config import CONFIG_DIR, Settings
 from ..db.schema import init_db
 from ..ingest.hyperliquid import ingest_fills, ingest_funding, snapshot_equity
@@ -668,6 +670,8 @@ def backtest(
         "twap_mr_v1": lambda conn: TwapMrAgent(config={}, conn=conn),
         "twap_mr_regime_v1": lambda conn: TwapMrRegimeAgent(config={}, conn=conn),
         "femr_v1": lambda conn: FemrAgent(config={}, conn=conn),
+        "funding_carry_v1": lambda conn: FundingCarryAgent(config={}, conn=conn),
+        "xfund_carry_v1": lambda conn: XFundCarryAgent(config={}, conn=conn),
         "liq_cascade_v1": lambda conn: LiqCascadeAgent(config={}, conn=conn),
         "basis_v1": lambda conn: BasisAgent(config={}, conn=conn),
     }
@@ -744,6 +748,8 @@ def confirm(
         "twap_mr_v1": lambda conn: TwapMrAgent(config={}, conn=conn),
         "twap_mr_regime_v1": lambda conn: TwapMrRegimeAgent(config={}, conn=conn),
         "femr_v1": lambda conn: FemrAgent(config={}, conn=conn),
+        "funding_carry_v1": lambda conn: FundingCarryAgent(config={}, conn=conn),
+        "xfund_carry_v1": lambda conn: XFundCarryAgent(config={}, conn=conn),
         "liq_cascade_v1": lambda conn: LiqCascadeAgent(config={}, conn=conn),
         "basis_v1": lambda conn: BasisAgent(config={}, conn=conn),
     }

@@ -318,11 +318,19 @@ class Backtester:
         # 'hold' / 'error' / advisory: nothing to execute.
 
     # -- run --------------------------------------------------------------
-    def run(self, agent: Agent, frames: list[Frame]) -> BacktestResult:
+    def run(
+        self, agent: Agent, frames: list[Frame], *, liquidate_at_end: bool = True
+    ) -> BacktestResult:
         """Replay ``agent`` over ``frames`` and return a scored result.
 
         ``agent`` must have been constructed with ``conn=`` this engine's
         connection so its own position-tracking reads the simulated audit log.
+
+        With ``liquidate_at_end`` (default), any position still open after the
+        last frame is force-closed at that frame's mid, so accrued funding /
+        unrealized PnL of held positions lands in the *realized* scorecard. This
+        matters for carry strategies that hold to collect funding and would
+        otherwise show ~zero realized PnL.
         """
         equity_curve: list[tuple[int, float]] = []
         for frame in frames:
@@ -337,6 +345,17 @@ class Backtester:
                 for coin, pos in self._book.items()
             )
             equity_curve.append((frame.ts_ms, self.starting_capital + self._realized + unreal))
+
+        if liquidate_at_end and self._book and frames:
+            last = frames[-1]
+            with frozen_clock(last.ts_ms / 1000.0):
+                for coin in list(self._book):
+                    if last.mids.get(coin):
+                        self._close(agent.name, Decision(
+                            agent=agent.name, action="flatten", coin=coin,
+                            sz=self._book[coin].sz, px=last.mids[coin],
+                            reasoning="LIQUIDATE-AT-END",
+                        ), last)
 
         scorecard = score_agent(self.conn, agent.name, "all")
         sharpe, dd, calmar = _curve_stats(equity_curve)

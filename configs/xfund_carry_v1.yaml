@@ -1,0 +1,32 @@
+agent: xfund_carry_v1
+description: >-
+  Market-neutral cross-sectional funding carry — short the top-K highest-funding
+  coins, long the bottom-K most-negative, dollar-neutral, collect the funding
+  spread. Highest-conviction candidate (low directional variance, scalable,
+  capital/AUM-friendly). Must pass the G0 confirmation gate on real history
+  before it is wired into the live roster.
+mode: paper
+
+goals:
+  primary:
+    metric: edge_bps
+    window: 7d
+    op: ">="
+    threshold: 0
+  secondary:
+    - {metric: net_pnl, window: 30d, op: ">=", threshold: 0}
+
+guardrails:
+  - {metric: net_pnl,  window: 24h, op: ">=", threshold: -30,
+     action: pause,  reason: "24h realized loss > $30"}
+  - {metric: edge_bps, window: 7d,  op: ">=", threshold: -10,
+     action: demote, reason: "7d realized edge < -10 bps after costs"}
+
+# paper -> live_small only, behind G0 (confirm) + sample/edge gates. Human-gated.
+promotion:
+  from: paper
+  to: live_small
+  conditions:
+    - {metric: edge_bps, window: 30d, op: ">=", threshold: 5}
+    - {metric: net_pnl,  window: 30d, op: ">=", threshold: 50}
+    - {metric: n_trades, window: 30d, op: ">=", threshold: 100}
