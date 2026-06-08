@@ -601,6 +601,81 @@ def femr_tick(live: bool = False):
 
 
 @app.command()
+def backtest(
+    agent: str = "twap_mr_v1",
+    coins: str = "BTC,ETH,SOL",
+    interval: str = "1h",
+    days: int = 30,
+    maker: bool = False,
+    compare: bool = True,
+    starting_capital: float = 1000.0,
+):
+    """Replay an agent over real Hyperliquid history with an explicit cost model.
+
+    Fetches candle + funding history (network), drives the agent's real
+    ``decide()``, simulates fills (taker by default), and scores the run with the
+    same code used live. With ``--compare`` (default) it runs taker AND maker so
+    you can see how much of the edge the spread is eating — the central question
+    for this book. Places no orders; purely offline analysis.
+    """
+    from ..backtest.data import load_frames
+    from ..backtest.engine import Backtester, CostModel
+
+    _, s = _conn()
+    coin_list = [c.strip() for c in coins.split(",") if c.strip()]
+
+    factories = {
+        "twap_mr_v1": lambda conn: TwapMrAgent(config={}, conn=conn),
+        "femr_v1": lambda conn: FemrAgent(config={}, conn=conn),
+        "liq_cascade_v1": lambda conn: LiqCascadeAgent(config={}, conn=conn),
+        "basis_v1": lambda conn: BasisAgent(config={}, conn=conn),
+    }
+    if agent not in factories:
+        console.print(f"[red]unknown agent {agent}; choose from {list(factories)}[/red]")
+        raise typer.Exit(1)
+
+    console.print(f"[dim]loading {days}d of {interval} candles for {coin_list}…[/dim]")
+    try:
+        frames = load_frames(coin_list, interval=interval, days=days, base_url=s.hl_api_url)
+    except Exception as e:  # noqa: BLE001
+        console.print(f"[red]failed to load history: {e}[/red]")
+        raise typer.Exit(2) from e
+    if not frames:
+        console.print("[red]no frames built (insufficient history)[/red]")
+        raise typer.Exit(2)
+    console.print(f"[dim]{len(frames)} frames[/dim]")
+
+    per_year = {"1m": 525_600, "5m": 105_120, "15m": 35_040,
+                "1h": 8_760, "4h": 2_190, "1d": 365}.get(interval, 8_760)
+
+    modes = [False, True] if compare else [maker]
+    table = Table(title=f"Backtest {agent} ({days}d {interval})")
+    for col in ("exec", "net_pnl", "edge_bps", "trades", "win", "sharpe", "maxDD"):
+        table.add_column(col)
+    for is_maker in modes:
+        from ..db.schema import init_db as _init
+        conn = _init(":memory:")
+        bt = Backtester(CostModel(maker=is_maker), conn=conn,
+                        starting_capital=starting_capital)
+        res = bt.run(factories[agent](conn), frames)
+        # recompute curve stats at the right cadence
+        from ..backtest.engine import _curve_stats
+        sh, dd, _ = _curve_stats(res.equity_curve, periods_per_year=per_year)
+        sc = res.scorecard
+        table.add_row(
+            "maker" if is_maker else "taker",
+            f"{sc.net_pnl:+.2f}",
+            "—" if sc.edge_bps is None else f"{sc.edge_bps:+.1f}",
+            str(sc.n_trades),
+            f"{sc.win_rate*100:.0f}%",
+            "—" if sh is None else f"{sh:+.2f}",
+            "—" if dd is None else f"{dd*100:+.1f}%",
+        )
+    console.print(table)
+    console.print("[dim]taker→maker gap ≈ the spread/fee tax this strategy is paying.[/dim]")
+
+
+@app.command()
 def report(send: bool = False):
     """Build daily report; optionally send to Telegram."""
     conn, s = _conn()

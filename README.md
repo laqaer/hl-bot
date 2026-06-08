@@ -87,10 +87,32 @@ Supported metrics: anything on `Scorecard` (`net_pnl`, `sharpe`,
 0  9 * * * cd ~/projects/hl-bot && uv run hlbot report --send
 ```
 
+## Backtesting
+
+```bash
+# Replay an agent over real HL history with an explicit cost model.
+# --compare runs taker AND maker so you can see how much edge the spread eats.
+uv run hlbot backtest --agent twap_mr_v1 --coins BTC,ETH,SOL --days 30 --compare
+```
+
+The engine (`src/hl_bot/backtest/`) drives each agent's real `decide()`, simulates
+fills with fee + slippage + funding, and scores via the same `score_agent` used
+live — so backtest and production numbers can never silently disagree.
+
+## Strategy, review & the self-improvement loop
+
+- [`docs/REVIEW.md`](docs/REVIEW.md) — full code/system review and findings.
+- [`docs/ROADMAP_TO_1M.md`](docs/ROADMAP_TO_1M.md) — the numbers-first path to a
+  $1M portfolio and the promotion gates.
+- [`ralph/`](ralph/) — an autonomous loop that works the prioritized
+  [`ralph/BACKLOG.md`](ralph/BACKLOG.md): research → backtest → propose. Going
+  live stays human-gated.
+
 ## Roadmap
 
-- [ ] Live order adapter (signed `hyperliquid-python-sdk` exchange.order) — gated behind `HL_SECRET_KEY` + `mode != paper`.
-- [ ] Per-agent position attribution from fills (replay engine).
+- [x] Backtest harness re-using the same scoring code.
+- [ ] Maker (post-only) execution — quantify and kill the taker tax.
+- [ ] Live order adapter hardening — gated behind `HL_SECRET_KEY` + `mode != paper`.
+- [ ] Per-agent position attribution + funding from fills (replay engine).
 - [ ] WebSocket market view for sub-second ticks.
-- [ ] Backtest harness re-using the same scoring code.
 - [ ] LLM-reasoning agent template with auto-captured thought traces.

@@ -55,7 +55,7 @@ def per_agent(conn, agent: str, days: int) -> dict:
         sharpe = None
 
     by_coin: dict[str, dict] = {}
-    for _, coin, sz, px, p, fee in fills:
+    for _, coin, _sz, _px, p, fee in fills:
         c = by_coin.setdefault(coin, {"n": 0, "net": 0.0})
         c["n"] += 1
         c["net"] += float(p or 0) - float(fee or 0)
