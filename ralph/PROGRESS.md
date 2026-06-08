@@ -230,3 +230,37 @@ as a service to keep improving the repo.
 **What's next (loop).** B6/B7 (per-agent funding attribution + Sharpe so gates
 measure truth), B-book (book-aware maker pricing using WS L2), userFills WS for
 instant maker-fill detection, and B4-RUN (confirm carry strategies on real data).
+
+---
+
+## Iteration 6 — 2026-06-08 — env-config, managed WS, AWS deploy
+
+**Context.** "Deploy on AWS, decide everything, get it running." Built the AWS
+one-`apply` path and removed the last hardcoded-account blocker.
+
+**Changed (2 commits).**
+- **B13 — HL_TRADER_ADDRESS via env** (`_resolve_trader_address`: HL_TRADER_ADDRESS
+  → HL_ADDRESS → legacy default) in orders.py + daily_scorecard; tested. No more
+  hardcoded account.
+- **Managed WS service** — `deploy/systemd/hlbot-ws.service` (Restart=always),
+  auto-enabled by install.sh; HLBOT_WS_SNAPSHOT/COINS in env so the tick overlays
+  it by default.
+- **docs/HOST_QUICKSTART.md** — full nothing→24/7 runbook incl. real-data confirm
+  gate + gated go-live.
+- **AWS automation (`deploy/aws/`)** — Terraform: latest Ubuntu 24.04 arm64,
+  t4g.small in Tokyo (ap-northeast-1), encrypted gp3, security group, **IAM
+  instance role** for Litestream S3 backups (no static keys), and cloud-init
+  user-data that runs install.sh on boot → instance comes up running PAPER.
+  install.sh now renders litestream.yml to concrete values + adds an
+  EnvironmentFile drop-in; env file is 640 root:hlbot so the bot user can read it.
+
+**Evidence.** 85 tests pass; lint clean; all shell scripts `bash -n` clean.
+Terraform/HCL written carefully but NOT validated in CI (no terraform/creds in the
+sandbox) — run `terraform validate`/`plan` before `apply`.
+
+**Cannot do from the sandbox:** provision AWS (no creds/network) or trade live (no
+keys, HL firewalled). Deployment is now one `terraform apply` on the operator side;
+going live stays the gated confirm→enable sequence.
+
+**What's next (loop).** B6/B7 (per-agent funding + Sharpe), B-book (book-aware
+maker pricing), userFills WS, B4-RUN (confirm on real history).

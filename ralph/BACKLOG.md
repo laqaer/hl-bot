@@ -114,3 +114,6 @@ Keep it ruthlessly prioritized: the top item should always be the highest-levera
 - [x] **B10 — WebSocket market view + live liquidations.** (Iteration 5.)
 - [x] **B13 — HL_TRADER_ADDRESS via env** (no more hardcoded account). (Iteration 6.)
 - [x] **hlbot-ws.service** managed WS feed + docs/HOST_QUICKSTART.md. (Iteration 6.)
+- [x] **AWS deploy automation** — `deploy/aws/` Terraform (EC2 t4g/Tokyo, IAM-role
+  S3 backups, cloud-init boots paper) + Litestream rendering in install.sh.
+  (Iteration 6.)

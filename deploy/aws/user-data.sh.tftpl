@@ -1,0 +1,34 @@
+#!/usr/bin/env bash
+# EC2 cloud-init: bring hl-bot up on first boot, running PAPER. Rendered by
+# Terraform (templatefile) — values below are injected, not shell vars.
+set -euxo pipefail
+exec > /var/log/hl-bot-bootstrap.log 2>&1
+
+apt-get update -y
+apt-get install -y git curl ca-certificates
+
+# Pre-write the env BEFORE install.sh so it wires Litestream backups (if a bucket
+# is set). Secrets (Telegram token, API wallet) are added later by you, not here.
+mkdir -p /etc/hl-bot
+cat > /etc/hl-bot/env <<'ENVEOF'
+HL_ADDRESS=${hl_address}
+HL_TRADER_ADDRESS=${hl_trader_address}
+HL_API_URL=https://api.hyperliquid.xyz
+HLBOT_DB=/opt/hl-bot/data/hlbot.sqlite
+HLBOT_HOME=/opt/hl-bot
+HLBOT_PAPER=1
+HLBOT_TICK_ARGS=
+HLBOT_WS_SNAPSHOT=/opt/hl-bot/data/ws_snapshot.json
+HLBOT_WS_COINS=BTC,ETH,SOL,HYPE
+HEALTHCHECK_URL=
+TG_BOT_TOKEN=
+TG_CHAT_ID=
+LITESTREAM_S3_BUCKET=${backup_bucket}
+LITESTREAM_S3_PATH=hl-bot/hlbot.sqlite
+AWS_REGION=${region}
+ENVEOF
+
+git clone -b ${branch} ${repo_url} /tmp/hl-bot-src
+REPO_URL=${repo_url} BRANCH=${branch} bash /tmp/hl-bot-src/deploy/install.sh
+
+echo "hl-bot bootstrap complete (PAPER). See docs/HOST_QUICKSTART.md to confirm + go live."

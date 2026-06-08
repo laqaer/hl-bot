@@ -1,6 +1,7 @@
 # Litestream: continuous SQLite replication to S3 so the ground-truth DB +
-# track record survive host loss. Installed/enabled optionally by install.sh when
-# LITESTREAM_S3_BUCKET is set. Docs: https://litestream.io
+# track record survive host loss. install.sh renders the ${...} placeholders to
+# concrete values. On AWS, credentials come from the EC2 IAM instance role (no
+# static keys); region from AWS_REGION. Docs: https://litestream.io
 dbs:
   - path: /opt/hl-bot/data/hlbot.sqlite
     replicas:

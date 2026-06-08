@@ -59,7 +59,7 @@ if [ ! -f "$ENV_FILE" ]; then
   echo "HLBOT_HOME=${HLBOT_HOME}" >> "$ENV_FILE"
   log "  -> created ${ENV_FILE} from template; EDIT IT (HL_ADDRESS, alerts)"
 fi
-chmod 600 "$ENV_FILE"; chown root:root "$ENV_FILE"
+chmod 640 "$ENV_FILE"; chown root:"$HLBOT_USER" "$ENV_FILE"   # bot user can read; others can't
 
 log "7/8 systemd units"
 for f in "${HLBOT_HOME}"/deploy/systemd/*; do
@@ -74,12 +74,21 @@ log "8/8 optional Litestream backups"
 # shellcheck disable=SC1090
 . "$ENV_FILE" 2>/dev/null || true
 if [ -n "${LITESTREAM_S3_BUCKET:-}" ]; then
+  arch="$(uname -m)"; ls_arch="amd64"; [ "$arch" = "aarch64" ] && ls_arch="arm64"
   if ! command -v litestream >/dev/null 2>&1; then
-    curl -LsS https://github.com/benbjohnson/litestream/releases/latest/download/litestream-linux-amd64.tar.gz \
+    curl -LsS "https://github.com/benbjohnson/litestream/releases/latest/download/litestream-linux-${ls_arch}.tar.gz" \
       | tar -xz -C /usr/local/bin litestream || log "  litestream install skipped (fetch failed)"
   fi
-  install -m 644 "${HLBOT_HOME}/deploy/litestream.yml" /etc/litestream.yml
-  systemctl enable --now litestream 2>/dev/null || log "  enable litestream after configuring /etc/litestream.yml"
+  # Render concrete config (don't rely on env-expansion); creds come from the
+  # IAM instance role on EC2 (no static keys), region from AWS_REGION in the env.
+  sed -e "s|\${LITESTREAM_S3_BUCKET}|${LITESTREAM_S3_BUCKET}|g" \
+      -e "s|\${LITESTREAM_S3_PATH}|${LITESTREAM_S3_PATH:-hl-bot/hlbot.sqlite}|g" \
+      "${HLBOT_HOME}/deploy/litestream.yml" > /etc/litestream.yml
+  mkdir -p /etc/systemd/system/litestream.service.d
+  printf '[Service]\nEnvironmentFile=%s\n' "$ENV_FILE" > /etc/systemd/system/litestream.service.d/env.conf
+  systemctl daemon-reload
+  systemctl enable --now litestream 2>/dev/null || log "  start litestream after IAM/creds are in place"
+  log "  -> Litestream replicating ${HLBOT_HOME}/data/hlbot.sqlite to s3://${LITESTREAM_S3_BUCKET}"
 else
   log "  LITESTREAM_S3_BUCKET unset -> skipping backups (set it in ${ENV_FILE} to enable)"
 fi

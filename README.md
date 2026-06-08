@@ -116,11 +116,16 @@ live is gated. See [`deploy/README.md`](deploy/README.md) and
 [`docs/INFRA.md`](docs/INFRA.md).
 
 ```bash
+# Any Ubuntu host:
 sudo REPO_URL=https://github.com/<you>/hl-bot.git BRANCH=main bash deploy/install.sh
+# AWS (one apply -> EC2 already running paper): see deploy/aws/
+#   cd deploy/aws && terraform init && terraform apply -var key_name=... -var hl_address=0x...
 uv run hlbot doctor    # preflight: env, DB, configs, API-wallet, HL reachability
 uv run hlbot health    # ok/warn/down + heartbeat ping
 uv run hlbot ws        # WebSocket market-data service (writes a snapshot)
 ```
+End-to-end runbook: [`docs/HOST_QUICKSTART.md`](docs/HOST_QUICKSTART.md). AWS:
+[`deploy/aws/README.md`](deploy/aws/README.md).
 
 ## Roadmap
 
