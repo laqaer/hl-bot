@@ -819,6 +819,55 @@ def confirm(
 
 
 @app.command()
+def health(max_tick_age_s: int = 900, heartbeat: bool = True):
+    """Assess bot health (tick/ingest freshness, equity, paused agents, 24h PnL).
+
+    Pings HEALTHCHECK_URL when healthy (dead-man switch) and Telegram-alerts when
+    not. Designed to run on a timer alongside the tick.
+    """
+    import os
+
+    from ..ops.health import assess_health, ping_heartbeat
+
+    conn, s = _conn()
+    rep = assess_health(conn, max_tick_age_s=max_tick_age_s)
+    console.print(rep.render())
+    if heartbeat:
+        ping_heartbeat(os.environ.get("HEALTHCHECK_URL"), ok=rep.ok)
+    if not rep.ok:
+        with contextlib.suppress(Exception):
+            from ..exec.orders import telegram_alert
+            telegram_alert(rep.render())
+        raise typer.Exit(1)
+
+
+@app.command()
+def doctor(require_live: bool = False):
+    """Preflight: env, DB, configs, API-wallet perms, HL reachability.
+
+    Exit non-zero if any critical check fails. Run before enabling live and in CI.
+    """
+    from pathlib import Path as _Path
+
+    from ..exec.orders import DEFAULT_API_WALLET_ENV
+    from ..ops.doctor import render, run_doctor
+
+    _, s = _conn()
+    checks = run_doctor(
+        hl_address=s.hl_address,
+        api_url=s.hl_api_url,
+        db_path=s.db_path,
+        config_dir=_Path(CONFIG_DIR),
+        api_wallet_path=DEFAULT_API_WALLET_ENV,
+        require_live=require_live,
+    )
+    text, ok = render(checks)
+    console.print(text)
+    if not ok:
+        raise typer.Exit(1)
+
+
+@app.command()
 def track_record(out: Path = Path("data/track_record")):
     """Export a public-grade track record (equity curve, Sharpe, DD, per-agent).
 
