@@ -150,6 +150,7 @@ def build_frames(
         mids: dict[str, float] = {}
         vol: dict[str, float] = {}
         candles_1h: dict[str, dict] = {}
+        closes_window: dict[str, list[float]] = {}
         funding: dict[str, float] = {}
         for coin, idx in by_ts.items():
             k = idx.get(ts)
@@ -170,12 +171,13 @@ def build_frames(
             vwap, sigma = rolling_vwap_sigma(closes[:cut], vols[:cut], vwap_window)
             if vwap is not None and sigma is not None:
                 candles_1h[coin] = {"vwap": vwap, "sigma": sigma, "n": min(cut, vwap_window)}
+            closes_window[coin] = closes[max(0, cut - vwap_window):cut]
             vol[coin] = sum(vols[max(0, cut - 1440):cut]) * mid  # ~rolling notional proxy
             funding[coin] = funding_rate_at(funding_by_coin.get(coin, []), ts)
         if mids:
             frames.append(Frame(
                 ts_ms=ts, mids=mids, funding=funding,
-                day_ntl_vlm=vol, candles_1h=candles_1h,
+                day_ntl_vlm=vol, candles_1h=candles_1h, closes=closes_window,
             ))
     return frames
 

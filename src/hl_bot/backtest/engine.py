@@ -53,6 +53,7 @@ class Frame:
     day_ntl_vlm: dict[str, float] = field(default_factory=dict)
     open_interest: dict[str, float] = field(default_factory=dict)
     candles_1h: dict[str, dict] = field(default_factory=dict)        # coin -> {vwap, sigma}
+    closes: dict[str, list[float]] = field(default_factory=dict)     # coin -> trailing closes
     spot_mids: dict[str, float] = field(default_factory=dict)
     liquidations: list[dict] = field(default_factory=list)
 
@@ -201,6 +202,7 @@ class Backtester:
             extra={
                 "day_ntl_vlm": dict(frame.day_ntl_vlm),
                 "candles_1h": dict(frame.candles_1h),
+                "closes": {k: list(v) for k, v in frame.closes.items()},
                 "spot_mids": dict(frame.spot_mids),
                 "liquidations": list(frame.liquidations),
                 "live_positions": live_positions,
