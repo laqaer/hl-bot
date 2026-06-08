@@ -229,33 +229,43 @@ class Backtester:
 
     # -- execution --------------------------------------------------------
     def _open(self, agent: str, d: Decision, frame: Frame) -> None:
-        mid = frame.mids.get(d.coin or "")
+        coin = d.coin or ""
+        mid = frame.mids.get(coin)
         if not mid or not d.sz or d.side not in ("B", "A"):
             return
-        fill_px = mid * (1 + self.cost.slip) if d.side == "B" else mid * (1 - self.cost.slip)
-        fee = fill_px * d.sz * self.cost.fee_rate
-        self._realized -= fee
-        existing = self._book.get(d.coin)  # type: ignore[arg-type]
-        if existing and existing.side == d.side:
-            tot = existing.sz + d.sz
-            existing.entry_px = (existing.entry_px * existing.sz + fill_px * d.sz) / tot
-            existing.sz = tot
-        elif existing and existing.side != d.side:
-            # opposite-side order reduces/flips — close then (maybe) open remainder
-            self._close(agent, Decision(agent=agent, action="flatten", coin=d.coin,
-                                        sz=min(d.sz, existing.sz), px=mid, cloid=d.cloid), frame)
-            remainder = d.sz - existing.sz
-            if remainder > 1e-12:
-                self._book[d.coin] = _Pos(  # type: ignore[index]
-                    side=d.side, sz=remainder, entry_px=fill_px, entry_ts_ms=frame.ts_ms,
-                )
+
+        existing = self._book.get(coin)
+        if existing and existing.side != d.side:
+            # Opposite-side order: close up to the existing size first, then open
+            # only the leftover in the new direction. Capture the size BEFORE the
+            # close mutates the position (else remainder is wrong), and record a
+            # fill for the OPENED size only — the close leg books its own fill —
+            # so a reduce/flip never double-counts fees/notional.
+            existing_sz = existing.sz
+            self._close(agent, Decision(
+                agent=agent, action="flatten", coin=coin,
+                sz=min(d.sz, existing_sz), px=mid, cloid=d.cloid), frame)
+            open_sz = d.sz - existing_sz
+            if open_sz <= 1e-12:
+                return  # pure reduce / exact flat — the close already booked it
         else:
-            self._book[d.coin] = _Pos(  # type: ignore[index]
-                side=d.side, sz=d.sz, entry_px=fill_px, entry_ts_ms=frame.ts_ms,
+            open_sz = d.sz
+
+        fill_px = mid * (1 + self.cost.slip) if d.side == "B" else mid * (1 - self.cost.slip)
+        fee = fill_px * open_sz * self.cost.fee_rate
+        self._realized -= fee
+        existing = self._book.get(coin)  # may have been removed by the close above
+        if existing and existing.side == d.side:
+            tot = existing.sz + open_sz
+            existing.entry_px = (existing.entry_px * existing.sz + fill_px * open_sz) / tot
+            existing.sz = tot
+        else:
+            self._book[coin] = _Pos(
+                side=d.side, sz=open_sz, entry_px=fill_px, entry_ts_ms=frame.ts_ms,
             )
-        self._record_fill(agent, d.coin, d.side, d.sz, fill_px, fee, 0.0, d.cloid)  # type: ignore[arg-type]
+        self._record_fill(agent, coin, d.side, open_sz, fill_px, fee, 0.0, d.cloid)
         log_decision(self.conn, Decision(
-            agent=agent, action="place", coin=d.coin, side=d.side, sz=d.sz,
+            agent=agent, action="place", coin=coin, side=d.side, sz=open_sz,
             px=fill_px, cloid=d.cloid, reasoning=d.reasoning, is_paper=True,
         ))
 

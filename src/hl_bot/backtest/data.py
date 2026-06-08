@@ -130,13 +130,19 @@ def build_frames(
     funding_by_coin: dict[str, list[dict[str, Any]]] | None = None,
     vwap_window: int = 60,
     warmup: int = 60,
+    bar_hours: float = 1.0,
 ) -> list[Frame]:
     """Assemble aligned per-timestamp frames from per-coin candle series.
 
     Each output frame carries, per coin: mid (= close), day volume proxy
-    (rolling sum), rolling VWAP/sigma (as ``candles_1h``), and the prevailing
-    funding rate. Timestamps are the union across coins; coins missing a bar are
-    simply absent from that frame.
+    (rolling sum), rolling VWAP/sigma (as ``candles_1h``), and the funding rate
+    accrued over the bar. Timestamps are the union across coins; coins missing a
+    bar are simply absent from that frame.
+
+    HL funding rates are hourly; the engine treats ``Frame.funding`` as the
+    *per-bar* rate, so we scale by ``bar_hours`` (= bar interval / 1h). 1h bars
+    are unchanged; 5m bars get 1/12 of the hourly rate per bar; 4h bars get 4×.
+    Without this, carry PnL is over/understated on any non-1h interval.
     """
     funding_by_coin = funding_by_coin or {}
     # index each coin's candles by open time
@@ -177,7 +183,7 @@ def build_frames(
                 candles_1h[coin] = {"vwap": vwap, "sigma": sigma, "n": min(cut, vwap_window)}
             closes_window[coin] = closes[max(0, cut - vwap_window):cut]
             vol[coin] = sum(vols[max(0, cut - 1440):cut]) * mid  # ~rolling notional proxy
-            funding[coin] = funding_rate_at(funding_by_coin.get(coin, []), ts)
+            funding[coin] = funding_rate_at(funding_by_coin.get(coin, []), ts) * bar_hours
         if mids:
             frames.append(Frame(
                 ts_ms=ts, mids=mids, funding=funding,
@@ -204,9 +210,10 @@ def load_frames(
         candles_by_coin[coin] = fetch_candles(coin, interval, start_ms, end_ms, base_url=base_url)
         if with_funding:
             funding_by_coin[coin] = fetch_funding_history(coin, start_ms, end_ms, base_url=base_url)
+    bar_hours = INTERVAL_MS.get(interval, 3_600_000) / 3_600_000
     return build_frames(
         candles_by_coin, funding_by_coin=funding_by_coin,
-        vwap_window=vwap_window, warmup=min(vwap_window, 30),
+        vwap_window=vwap_window, warmup=min(vwap_window, 30), bar_hours=bar_hours,
     )
 
 
