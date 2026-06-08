@@ -1,0 +1,17 @@
+{
+  "twap_mr_v1": {
+    "max_notional_per_trade": 200.0,
+    "max_concurrent_positions": 3,
+    "sigma_enter": 2.0,
+    "coin_loss_veto_window_hours": 24.0,
+    "coin_loss_veto_min_fills": 2,
+    "coin_loss_veto_usd": 5.0,
+    "coin_loss_veto_edge_bps": -25.0
+  },
+  "femr_v1": {
+    "max_notional_per_trade": 20.0,
+    "max_total_notional": 40.0,
+    "max_concurrent_positions": 1,
+    "stop_loss_pct": 0.0225
+  }
+}

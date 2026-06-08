@@ -1,0 +1,39 @@
+{
+  "generated_ms": 1780875349713,
+  "note": "Risk-reducing proposals only. Review before merging into agent_overrides.json. Notional increases are never auto-proposed.",
+  "overrides": {},
+  "_meta": {
+    "femr_v1": {
+      "add_coin_vetoes": [
+        "AVAX",
+        "BABY",
+        "MON",
+        "PURR",
+        "WLD",
+        "XMR"
+      ],
+      "flags": [],
+      "rationale": [
+        "veto loss-bleeding coins: AVAX, BABY, MON, PURR, WLD, XMR",
+        "7d core edge -51 bps over 56 trades (net $-5.34) \u2014 bleeding, tightening."
+      ]
+    },
+    "twap_mr_v1": {
+      "add_coin_vetoes": [
+        "ADA",
+        "AVAX",
+        "HYPE",
+        "NEAR",
+        "PUMP",
+        "TON",
+        "VVV"
+      ],
+      "flags": [
+        "outlier-dominated edge: ZEC is 79% of positive PnL \u2014 aggregate edge unreliable, do not promote on it."
+      ],
+      "rationale": [
+        "veto loss-bleeding coins: ADA, AVAX, HYPE, NEAR, PUMP, TON, VVV"
+      ]
+    }
+  }
+}

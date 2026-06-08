@@ -89,10 +89,12 @@ class BasisAgent(Agent):
 
         # ---- exits ----
         for coin, pos in list(open_pos.items()):
-            mid = view.mids.get(coin); spot_mid = spot.get(coin)
+            mid = view.mids.get(coin)
+            spot_mid = spot.get(coin)
             if mid is None or mid <= 0:
                 continue
-            entry = pos["entry_px"]; is_long = pos["side"] == "B"
+            entry = pos["entry_px"]
+            is_long = pos["side"] == "B"
             ret_pct = (mid - entry) / entry if is_long else (entry - mid) / entry
             hold_hrs = (time.time() - pos["ts_ms"] / 1000) / 3600
             basis = (mid - spot_mid) / spot_mid if spot_mid else None
@@ -119,7 +121,8 @@ class BasisAgent(Agent):
         for coin in BASIS_COINS:
             if coin in active:
                 continue
-            mid = view.mids.get(coin); spot_mid = spot.get(coin)
+            mid = view.mids.get(coin)
+            spot_mid = spot.get(coin)
             if not (mid and spot_mid and mid > 0 and spot_mid > 0):
                 continue
             basis = (mid - spot_mid) / spot_mid

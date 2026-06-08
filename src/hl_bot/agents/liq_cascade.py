@@ -98,7 +98,8 @@ class LiqCascadeAgent(Agent):
             mid = view.mids.get(coin)
             if mid is None or mid <= 0:
                 continue
-            entry = pos["entry_px"]; is_long = pos["side"] == "B"
+            entry = pos["entry_px"]
+            is_long = pos["side"] == "B"
             ret_pct = (mid - entry) / entry if is_long else (entry - mid) / entry
             hold_min = (time.time() - pos["ts_ms"] / 1000) / 60
             reason = None

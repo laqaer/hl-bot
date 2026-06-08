@@ -1,0 +1,35 @@
+agent: twap_mr_v1
+description: TWAP mean-reversion — fade >2-sigma deviations from 1h VWAP.
+mode: paper
+
+# NOTE: sharpe / max_drawdown are only computed for the synthetic _account agent,
+# so per-agent guardrails below use net_pnl / edge_bps / n_trades, which ARE
+# computed per agent. Thresholds are sized for the small live notional in use.
+goals:
+  primary:
+    metric: edge_bps
+    window: 7d
+    op: ">="
+    threshold: 0
+  secondary:
+    - {metric: net_pnl, window: 30d, op: ">=", threshold: 0}
+    - {metric: win_rate, window: 30d, op: ">=", threshold: 0.50}
+
+guardrails:
+  - {metric: net_pnl,  window: 24h, op: ">=", threshold: -30,
+     action: pause,  reason: "24h realized loss > $30"}
+  - {metric: edge_bps, window: 7d,  op: ">=", threshold: -10,
+     action: demote, reason: "7d realized edge < -10 bps after costs"}
+  - {metric: edge_bps, window: 24h, op: ">=", threshold: -40,
+     action: alert,  reason: "24h edge < -40 bps"}
+
+# Promotion is paper -> live_small ONLY, behind strong sample + edge gates.
+# It can never auto-promote to full live. With current bleeding edge (~-26 bps)
+# this will not fire; it exists so a genuinely improved TWAP can earn size.
+promotion:
+  from: paper
+  to: live_small
+  conditions:
+    - {metric: edge_bps, window: 30d, op: ">=", threshold: 5}
+    - {metric: net_pnl,  window: 30d, op: ">=", threshold: 50}
+    - {metric: n_trades, window: 30d, op: ">=", threshold: 200}

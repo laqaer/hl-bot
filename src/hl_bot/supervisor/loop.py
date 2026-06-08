@@ -34,6 +34,7 @@ def _pause(conn: sqlite3.Connection, agent: str, reason: str) -> None:
         INSERT INTO agent_state(agent, mode, enabled, paused_reason, paused_at_ms)
         VALUES(?, 'paper', 0, ?, ?)
         ON CONFLICT(agent) DO UPDATE SET
+            mode = excluded.mode,
             enabled = 0,
             paused_reason = excluded.paused_reason,
             paused_at_ms = excluded.paused_at_ms

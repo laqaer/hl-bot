@@ -23,10 +23,19 @@ from typing import Any
 import httpx
 
 from ..agents.cloid import agent_from_cloid
+from ..risk.scaling import unified_portfolio_value
 
 log = logging.getLogger(__name__)
-
 INFO_PATH = "/info"
+KNOWN_AGENTS = [
+    "femr_v1",
+    "funding_arb_v1",
+    "twap_mr_v1",
+    "liq_cascade_v1",
+    "basis_v1",
+    "veto_v1",
+]
+
 
 
 def _post(client: httpx.Client, base_url: str, payload: dict[str, Any]) -> Any:
@@ -43,7 +52,7 @@ def ingest_fills(conn: sqlite3.Connection, address: str, base_url: str) -> int:
     cur = conn.cursor()
     for f in fills:
         cloid = f.get("cloid")
-        agent = agent_from_cloid(cloid) if cloid else "manual"
+        agent = agent_from_cloid(cloid, known_agents=KNOWN_AGENTS) if cloid else "manual"
         try:
             cur.execute(
                 """
@@ -80,20 +89,31 @@ def ingest_fills(conn: sqlite3.Connection, address: str, base_url: str) -> int:
 
 
 def snapshot_equity(conn: sqlite3.Connection, address: str, base_url: str) -> None:
-    """Take one clearinghouseState snapshot."""
+    """Take one unified portfolio-value snapshot.
+
+    Hyperliquid currently exposes usable collateral across perp account value
+    plus spot USDC. Store that unified value in account_value so future trailing
+    averages track the portfolio sizing rule instead of stale perp-only equity.
+    """
     with httpx.Client() as client:
         st = _post(client, base_url, {"type": "clearinghouseState", "user": address})
+        try:
+            spot_st = _post(client, base_url, {"type": "spotClearinghouseState", "user": address})
+        except (httpx.HTTPError, ValueError, TypeError) as e:
+            log.warning("spotClearinghouseState snapshot failed; using perp-only value: %s", e)
+            spot_st = {}
     if not st:
         log.warning("empty clearinghouseState")
         return
     margin = st.get("marginSummary", {}) or {}
+    portfolio_value = unified_portfolio_value(st, spot_st)
     cross_lev = None
     try:
         ntl = float(margin.get("totalNtlPos", 0) or 0)
-        acct = float(margin.get("accountValue", 0) or 0)
-        cross_lev = ntl / acct if acct else None
+        cross_lev = ntl / portfolio_value if portfolio_value else None
     except (TypeError, ValueError):
         pass
+    raw = {"clearinghouseState": st, "spotClearinghouseState": spot_st, "portfolioValue": portfolio_value}
     conn.execute(
         """
         INSERT OR REPLACE INTO equity_snapshots(
@@ -103,13 +123,13 @@ def snapshot_equity(conn: sqlite3.Connection, address: str, base_url: str) -> No
         """,
         (
             int(time.time() * 1000),
-            float(margin.get("accountValue", 0) or 0),
+            portfolio_value,
             float(margin.get("totalMarginUsed", 0) or 0),
             float(margin.get("totalNtlPos", 0) or 0),
             float(margin.get("totalRawUsd", 0) or 0),
             float(st.get("withdrawable", 0) or 0),
             cross_lev,
-            json.dumps(st, separators=(",", ":")),
+            json.dumps(raw, separators=(",", ":")),
         ),
     )
 

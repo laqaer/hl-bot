@@ -32,9 +32,16 @@ class TwapMrConfig:
     min_daily_volume_usd: float = 10_000_000.0
     stop_loss_pct: float = 0.015
     max_hold_hours: float = 4.0
-    max_notional_per_trade: float = 25.0
-    max_total_notional: float = 50.0
-    max_concurrent_positions: int = 2
+    max_notional_per_trade: float = 200.0
+    max_total_notional: float = float("inf")
+    max_concurrent_positions: int = 5
+    # Per-coin loss veto: stop re-entering coins whose own recent fills show a
+    # material loss AND a bad realized edge. Prevents the bleed loop where the
+    # same coins (ADA/HYPE/AVAX...) get faded, lose, and get faded again.
+    coin_loss_veto_window_hours: float = 24.0
+    coin_loss_veto_min_fills: int = 2
+    coin_loss_veto_usd: float = 5.0
+    coin_loss_veto_edge_bps: float = -25.0
 
 
 class TwapMrAgent(Agent):
@@ -52,11 +59,48 @@ class TwapMrAgent(Agent):
             min_daily_volume_usd=float(c.get("min_daily_volume_usd", 10_000_000.0)),
             stop_loss_pct=float(c.get("stop_loss_pct", 0.015)),
             max_hold_hours=float(c.get("max_hold_hours", 4.0)),
-            max_notional_per_trade=float(c.get("max_notional_per_trade", 25.0)),
-            max_total_notional=float(c.get("max_total_notional", 50.0)),
-            max_concurrent_positions=int(c.get("max_concurrent_positions", 2)),
+            max_notional_per_trade=float(c.get("max_notional_per_trade", 200.0)),
+            max_total_notional=float(c.get("max_total_notional", float("inf"))),
+            max_concurrent_positions=int(c.get("max_concurrent_positions", 5)),
+            coin_loss_veto_window_hours=float(c.get("coin_loss_veto_window_hours", 24.0)),
+            coin_loss_veto_min_fills=int(c.get("coin_loss_veto_min_fills", 2)),
+            coin_loss_veto_usd=float(c.get("coin_loss_veto_usd", 5.0)),
+            coin_loss_veto_edge_bps=float(c.get("coin_loss_veto_edge_bps", -25.0)),
         )
         self.conn = conn
+
+    def _vetoed_coins(self) -> dict[str, dict]:
+        """Coins to skip for NEW entries based on this agent's recent fills.
+
+        A coin is vetoed when, within the loss-veto window, it has at least
+        ``coin_loss_veto_min_fills`` fills, a net loss of at least
+        ``coin_loss_veto_usd``, and a realized edge at or below
+        ``coin_loss_veto_edge_bps``. Returns coin -> stats for logging.
+        """
+        if self.conn is None:
+            return {}
+        cutoff_ms = int((time.time() - self.cfg.coin_loss_veto_window_hours * 3600) * 1000)
+        rows = self.conn.execute(
+            """SELECT coin,
+                      COUNT(*) AS n,
+                      COALESCE(SUM(closed_pnl), 0) - COALESCE(SUM(fee), 0) AS net,
+                      COALESCE(SUM(ABS(px * sz)), 0) AS ntl
+               FROM fills
+               WHERE agent = ? AND time_ms >= ? AND coin IS NOT NULL
+               GROUP BY coin""",
+            (self.name, cutoff_ms),
+        ).fetchall()
+        vetoed: dict[str, dict] = {}
+        for r in rows:
+            n = int(r["n"] or 0)
+            net = float(r["net"] or 0.0)
+            ntl = float(r["ntl"] or 0.0)
+            if n < self.cfg.coin_loss_veto_min_fills:
+                continue
+            edge_bps = (net / ntl * 10_000) if ntl > 0 else 0.0
+            if net <= -abs(self.cfg.coin_loss_veto_usd) and edge_bps <= self.cfg.coin_loss_veto_edge_bps:
+                vetoed[r["coin"]] = {"n": n, "net": net, "edge_bps": edge_bps}
+        return vetoed
 
     def _open_positions(self) -> dict[str, dict]:
         if self.conn is None:
@@ -97,7 +141,8 @@ class TwapMrAgent(Agent):
             ret_pct = (mid - entry) / entry if is_long else (entry - mid) / entry
             hold_hrs = (time.time() - pos["ts_ms"] / 1000) / 3600
             stats = candles.get(coin) or {}
-            vwap = stats.get("vwap"); sigma = stats.get("sigma") or 0
+            vwap = stats.get("vwap")
+            sigma = stats.get("sigma") or 0
             reason = None
             if ret_pct <= -self.cfg.stop_loss_pct:
                 reason = f"STOP {ret_pct*100:+.2f}%"
@@ -115,16 +160,20 @@ class TwapMrAgent(Agent):
 
         # ---- scan for entries ----
         active = set(open_pos.keys())
+        vetoed = self._vetoed_coins()
         room = self.cfg.max_concurrent_positions - len(active)
         room_notional = self.cfg.max_total_notional - len(active) * self.cfg.max_notional_per_trade
         candidates = []
         for coin, stats in candles.items():
             if coin in active:
                 continue
+            if coin in vetoed:
+                continue
             if vol.get(coin, 0) < self.cfg.min_daily_volume_usd:
                 continue
             mid = view.mids.get(coin)
-            vwap = stats.get("vwap"); sigma = stats.get("sigma")
+            vwap = stats.get("vwap")
+            sigma = stats.get("sigma")
             if not (mid and vwap and sigma and sigma > 0):
                 continue
             z = (mid - vwap) / sigma
@@ -134,8 +183,7 @@ class TwapMrAgent(Agent):
         # rank by extremity
         candidates.sort(key=lambda r: abs(r[1]), reverse=True)
 
-        placed = 0
-        for coin, z, mid, vwap, sigma in candidates:
+        for placed, (coin, z, mid, vwap, sigma) in enumerate(candidates):
             if placed >= room or room_notional < 5.0:
                 break
             notional = min(self.cfg.max_notional_per_trade, room_notional)
@@ -154,13 +202,21 @@ class TwapMrAgent(Agent):
                 market_snapshot={"mid": mid, "vwap": vwap, "sigma": sigma, "z": z,
                                  "vol24": vol.get(coin, 0), "notional": notional},
             ))
-            placed += 1
             room_notional -= notional
 
         if not out:
+            veto_note = ""
+            if vetoed:
+                veto_note = " | vetoed(loss): " + ",".join(
+                    f"{c}({v['net']:+.1f}$,{v['edge_bps']:+.0f}bps)" for c, v in vetoed.items()
+                )
             out.append(Decision(
                 agent=self.name, action="hold",
-                reasoning=f"no z>{self.cfg.sigma_enter} signals among {len(candles)} coins w/ candles",
-                market_snapshot={"n_candle_coins": len(candles), "n_active": len(active)},
+                reasoning=(
+                    f"no z>{self.cfg.sigma_enter} signals among {len(candles)} coins w/ candles"
+                    f"{veto_note}"
+                ),
+                market_snapshot={"n_candle_coins": len(candles), "n_active": len(active),
+                                 "vetoed_coins": vetoed},
             ))
         return out

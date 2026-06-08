@@ -1,0 +1,32 @@
+agent: femr_v1
+description: Funding Extremes Mean Reversion — fade extreme 1h funding.
+mode: paper
+
+# Per-agent metrics only (net_pnl / edge_bps / n_trades); FEMR runs at very small
+# notional ($20/trade), so loss limits are tight.
+goals:
+  primary:
+    metric: edge_bps
+    window: 7d
+    op: ">="
+    threshold: 0
+  secondary:
+    - {metric: net_pnl, window: 30d, op: ">=", threshold: 0}
+
+guardrails:
+  - {metric: net_pnl,  window: 24h, op: ">=", threshold: -10,
+     action: pause,  reason: "24h realized loss > $10"}
+  - {metric: edge_bps, window: 7d,  op: ">=", threshold: -15,
+     action: demote, reason: "7d realized edge < -15 bps after costs"}
+  - {metric: edge_bps, window: 24h, op: ">=", threshold: -50,
+     action: alert,  reason: "24h edge < -50 bps"}
+
+# paper -> live_small only, behind strong gates. FEMR is all-time negative, so
+# this will not fire until it shows durable positive edge on real sample size.
+promotion:
+  from: paper
+  to: live_small
+  conditions:
+    - {metric: edge_bps, window: 30d, op: ">=", threshold: 5}
+    - {metric: net_pnl,  window: 30d, op: ">=", threshold: 25}
+    - {metric: n_trades, window: 30d, op: ">=", threshold: 150}

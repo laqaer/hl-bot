@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import json
 import logging
 import time
@@ -24,6 +25,13 @@ from ..db.schema import init_db
 from ..ingest.hyperliquid import ingest_fills, ingest_funding, snapshot_equity
 from ..reports.daily import build as build_report
 from ..reports.daily import send_telegram
+from ..research.strategy_health import (
+    agent_health,
+    build_proposal_document,
+    propose_overrides,
+)
+from ..risk.allocation import resolve_agent_caps
+from ..risk.scaling import compute_notional_cap, spot_usdc_from_state, unified_portfolio_value
 from ..scoring.metrics import score_all
 from ..supervisor.loop import supervise
 
@@ -35,6 +43,25 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name
 def _conn():
     s = Settings.from_env()
     return init_db(s.db_path), s
+
+
+def _filter_live_agents_by_state(conn, agents):
+    """Return agents allowed to place live orders plus skipped reasons.
+
+    Paper/default state is safe: an agent must be explicitly enabled and in
+    live_small/live mode before it enters the live execution roster.
+    """
+    rows = conn.execute("SELECT agent, mode, enabled FROM agent_state").fetchall()
+    state = {r["agent"]: (r["mode"], int(r["enabled"])) for r in rows}
+    live_agents = []
+    skipped: dict[str, str] = {}
+    for agent in agents:
+        mode, enabled = state.get(agent.name, ("paper", 1))
+        if enabled == 1 and mode in ("live_small", "live"):
+            live_agents.append(agent)
+        else:
+            skipped[agent.name] = f"mode={mode} enabled={enabled}"
+    return live_agents, skipped
 
 
 @app.command()
@@ -89,6 +116,79 @@ def supervisor(configs: Path = CONFIG_DIR):
 
 
 @app.command()
+def research_strategies(write: bool = True):
+    """Evaluate strategy health from fills; emit risk-reducing proposals.
+
+    Read-only on trade data. Writes proposals to
+    configs/agent_overrides.proposed.json (NEVER the live overrides), and never
+    proposes raising any notional cap. Safe to run anytime; places no orders.
+    """
+    from ..scoring.metrics import list_agents
+
+    conn, _ = _conn()
+    agents = [
+        a for a in list_agents(conn)
+        if a not in ("_account", "manual") and not a.startswith("unknown:")
+    ]
+    overrides_path = CONFIG_DIR / "agent_overrides.json"
+    current: dict = {}
+    if overrides_path.exists():
+        try:
+            current = json.loads(overrides_path.read_text())
+        except (ValueError, OSError):
+            current = {}
+
+    healths = [agent_health(conn, a) for a in agents]
+
+    table = Table(title="Strategy health (realized, exchange-grounded)")
+    for col in ("agent", "24h", "7d", "30d", "concentration", "losing coins"):
+        table.add_column(col)
+
+    def _cell(h, w: str) -> str:
+        ws = h.windows.get(w)
+        if ws is None or ws.n_trades == 0:
+            return "—"
+        edge = "—" if ws.edge_bps is None else f"{ws.edge_bps:+.0f}bps"
+        return f"${ws.net_pnl:+.1f}/{edge}/{ws.n_trades}t"
+
+    for h in healths:
+        conc = "—" if h.concentration is None else f"{h.concentration*100:.0f}%"
+        table.add_row(
+            h.agent, _cell(h, "24h"), _cell(h, "7d"), _cell(h, "30d"),
+            conc, ", ".join(h.losing_coins) or "—",
+        )
+    console.print(table)
+
+    proposals = propose_overrides(healths, current)
+    doc = build_proposal_document(proposals)
+    any_proposal = False
+    for p in proposals:
+        if not (p.changes or p.flags or p.add_coin_vetoes):
+            continue
+        any_proposal = True
+        console.print(f"[bold]{p.agent}[/bold]")
+        if p.changes:
+            console.print(f"  proposed (risk-reducing): {p.changes}")
+        if p.add_coin_vetoes:
+            console.print(f"  veto coins: {', '.join(p.add_coin_vetoes)}")
+        for f in p.flags:
+            console.print(f"  [yellow]⚠ {f}[/yellow]")
+        for r in p.rationale:
+            console.print(f"  [dim]{r}[/dim]")
+    if not any_proposal:
+        console.print("[dim]no risk-reducing changes proposed[/dim]")
+
+    if write:
+        out_path = CONFIG_DIR / "agent_overrides.proposed.json"
+        out_path.write_text(json.dumps(doc, indent=2))
+        console.print(f"[green]✓[/green] proposals written to {out_path}")
+        console.print("[dim]review and merge into agent_overrides.json manually; "
+                      "nothing was applied automatically[/dim]")
+    else:
+        console.print(json.dumps(doc, indent=2))
+
+
+@app.command()
 def tick(coins: str = "BTC,ETH,SOL,HYPE,ZEC"):
     """Run one tick of all wired agents (paper mode)."""
     conn, s = _conn()
@@ -133,9 +233,11 @@ def _enrich_view(view, api_url: str, vol: dict[str, float]) -> None:
                 pxs, vols = [], []
                 for k in cs:
                     try:
-                        c_px = float(k.get("c", 0)); c_vol = float(k.get("v", 0))
+                        c_px = float(k.get("c", 0))
+                        c_vol = float(k.get("v", 0))
                         if c_px > 0:
-                            pxs.append(c_px); vols.append(c_vol)
+                            pxs.append(c_px)
+                            vols.append(c_vol)
                     except (TypeError, ValueError):
                         continue
                 if len(pxs) < 10:
@@ -157,7 +259,8 @@ def _enrich_view(view, api_url: str, vol: dict[str, float]) -> None:
         try:
             spot = cli.post(api_url + "/info", json={"type": "spotMetaAndAssetCtxs"}).json()
             if isinstance(spot, list) and len(spot) == 2:
-                meta = spot[0] or {}; ctxs = spot[1] or []
+                meta = spot[0] or {}
+                ctxs = spot[1] or []
                 universe = meta.get("universe", []) or []
                 tokens = meta.get("tokens", []) or []
                 name_by_token = {t.get("index"): t.get("name") for t in tokens}
@@ -191,10 +294,13 @@ def _enrich_view(view, api_url: str, vol: dict[str, float]) -> None:
                     scaled_mid = raw_mid * (10 ** (base_wei - quote_wei))
                     # only adopt if scaled_mid is within 5% of perp mid (sanity)
                     perp_mid = view.mids.get(norm)
-                    if perp_mid and scaled_mid > 0 and 0.5 < scaled_mid / perp_mid < 1.5:
+                    if (
+                        perp_mid and scaled_mid > 0
+                        and 0.5 < scaled_mid / perp_mid < 1.5
+                        and ((base_name or "").startswith("U") or norm not in spot_mids)
+                    ):
                         # Prefer wrapped (U-prefixed) over plain if both present.
-                        if base_name.startswith("U") or norm not in spot_mids:
-                            spot_mids[norm] = scaled_mid
+                        spot_mids[norm] = scaled_mid
         except Exception:  # noqa: BLE001
             pass
 
@@ -205,7 +311,8 @@ def _enrich_view(view, api_url: str, vol: dict[str, float]) -> None:
                 for e in ev:
                     try:
                         coin = e.get("coin")
-                        sz = float(e.get("sz") or 0); px = float(e.get("px") or 0)
+                        sz = float(e.get("sz") or 0)
+                        px = float(e.get("px") or 0)
                         if coin and sz > 0 and px > 0:
                             liquidations.append({
                                 "coin": coin,
@@ -231,6 +338,7 @@ def femr_tick(live: bool = False):
     live: place real orders on MAIN account, gated by guardrails.
           Bot only touches positions it itself opened (cloid-tagged).
     """
+    from ..agents.decisions import Decision, log_decision
     from ..agents.runtime import fetch_market_view
     from ..exec.orders import (
         HL_TRADER_ADDRESS,
@@ -240,11 +348,11 @@ def femr_tick(live: bool = False):
         check_guardrails,
         close_position,
         coin_in_cooldown,
+        dynamic_daily_loss_limit,
         place_market_order,
         reconcile_positions,
         telegram_alert,
     )
-    from ..agents.decisions import Decision, log_decision
 
     conn, s = _conn()
 
@@ -262,7 +370,38 @@ def femr_tick(live: bool = False):
         merged.update(overrides.get(agent_name) or {})
         return merged
 
-    # Instantiate the full agent roster
+    import httpx as _httpx
+    with _httpx.Client(timeout=10) as cli:
+        st = cli.post(
+            s.hl_api_url + "/info",
+            json={"type": "clearinghouseState", "user": HL_TRADER_ADDRESS},
+        ).json() or {}
+        try:
+            spot_st = cli.post(
+                s.hl_api_url + "/info",
+                json={"type": "spotClearinghouseState", "user": HL_TRADER_ADDRESS},
+            ).json() or {}
+        except _httpx.HTTPError:
+            spot_st = {}
+    acct_val = float((st.get("marginSummary") or {}).get("accountValue", 0) or 0)
+    spot_usdc = spot_usdc_from_state(spot_st)
+    portfolio_value = unified_portfolio_value(st, spot_st)
+    withdrawable = float(st.get("withdrawable", 0) or 0)
+    risk_cap = compute_notional_cap(conn, live_portfolio_value=portfolio_value)
+    pv_label = "—" if risk_cap.portfolio_value is None else f"${risk_cap.portfolio_value:.2f}"
+    console.print(
+        "[bold]risk cap[/bold]: "
+        f"bot-open <= ${risk_cap.max_total_notional:.0f}; "
+        f"per-position <= ${risk_cap.max_per_position_notional:.0f} "
+        f"({risk_cap.multiplier:g}x / {risk_cap.per_position_multiplier:g}x live unified portfolio {pv_label}; "
+        f"perp ${acct_val:.2f} + spot USDC ${spot_usdc:.2f}; "
+        f"ceiling={'none' if risk_cap.ceiling_notional is None else f'${risk_cap.ceiling_notional:.0f}'}; "
+        f"source={risk_cap.source})"
+    )
+
+    # Instantiate the full agent roster. In paper mode, evaluate everything. In
+    # live mode, only agents explicitly enabled and promoted to live_small/live
+    # in agent_state are allowed into the execution roster.
     agents = [
         FemrAgent(config=_cfg("femr_v1", {
             "max_notional_per_trade": 20.0,
@@ -274,31 +413,68 @@ def femr_tick(live: bool = False):
         LiqCascadeAgent(config=_cfg("liq_cascade_v1", {}), conn=conn),
         BasisAgent(config=_cfg("basis_v1", {}), conn=conn),
     ]
+    if live:
+        agents, skipped_live = _filter_live_agents_by_state(conn, agents)
+        if skipped_live:
+            console.print(
+                "[yellow]live roster skipped[/yellow]: "
+                + ", ".join(f"{name}({why})" for name, why in skipped_live.items())
+            )
+        if not agents:
+            console.print("[yellow]LIVE MODE but no agent_state rows are enabled in live_small/live; no orders possible[/yellow]")
+            return
 
-    # Allocator: rebalance per-agent caps from rolling 7d Sharpe
-    allocator = MetaAllocator([a.name for a in agents],
-                              MetaAllocatorConfig(total_capital=300.0))
+    # Allocator: rebalance per-agent caps from rolling 7d performance.
+    # The approved live risk rule is dynamic but layered:
+    #   - aggregate bot-open notional can reach 5x live unified portfolio value
+    #   - any SINGLE agent is limited to 1x portfolio value (max_alloc), so one
+    #     agent can never consume the whole 5x portfolio cap.
+    # resolve_agent_caps applies the final rule: explicit (sub-legacy) configured
+    # caps win, legacy broad $1000 ceilings are replaced by the dynamic 1x cap,
+    # and configured per-trade sizes are preserved (never raised).
+    allocator = MetaAllocator(
+        [a.name for a in agents],
+        MetaAllocatorConfig(
+            total_capital=risk_cap.max_total_notional,
+            max_alloc=risk_cap.max_per_position_notional,
+        ),
+    )
     allocs = allocator.allocate(conn)
+    configured_caps_in = {
+        a.name: {
+            "max_total_notional": float(getattr(a.cfg, "max_total_notional", float("inf"))),
+            "max_notional_per_trade": float(getattr(a.cfg, "max_notional_per_trade", float("inf"))),
+        }
+        for a in agents if hasattr(a, "cfg")
+    }
+    resolved = resolve_agent_caps(allocs, risk_cap, configured_caps_in)
+    effective_caps: dict[str, float] = {}
+    effective_order_caps: dict[str, float] = {}
     for a in agents:
-        cap = allocs.get(a.name, 50.0)
+        cap = resolved.get(a.name)
+        if cap is None:
+            effective_caps[a.name] = allocs.get(a.name, 0.0)
+            continue
+        effective_caps[a.name] = cap.max_total_notional
         if hasattr(a, "cfg") and hasattr(a.cfg, "max_total_notional"):
-            a.cfg.max_total_notional = cap
+            a.cfg.max_total_notional = cap.max_total_notional
+            if hasattr(a.cfg, "max_notional_per_trade"):
+                a.cfg.max_notional_per_trade = cap.max_notional_per_trade
+                effective_order_caps[a.name] = cap.max_notional_per_trade
     console.print("[bold]allocator caps[/bold]: " +
-                  ", ".join(f"{n}=${v:.0f}" for n, v in allocs.items()))
+                  ", ".join(
+                      f"{n}=total ${effective_caps.get(n, v):.0f}/pos ${effective_order_caps.get(n, 0):.0f}"
+                      for n, v in allocs.items()
+                  ))
 
     view = fetch_market_view(s.hl_api_url, [])
     _enrich_view(view, s.hl_api_url, view.extra.get("day_ntl_vlm", {}))
-
-    import httpx as _httpx
-    with _httpx.Client(timeout=10) as cli:
-        st = cli.post(s.hl_api_url + "/info",
-                      json={"type": "clearinghouseState", "user": HL_TRADER_ADDRESS}).json() or {}
 
     # Build position list from HL truth
     all_positions = []
     for ap in st.get("assetPositions", []) or []:
         pos = ap.get("position", {}) or {}
-        try:
+        with contextlib.suppress(TypeError, ValueError):
             all_positions.append({
                 "coin": pos.get("coin"),
                 "szi": float(pos.get("szi", 0) or 0),
@@ -309,8 +485,6 @@ def femr_tick(live: bool = False):
                 "leverage": (pos.get("leverage") or {}).get("value"),
                 "margin_used": float(pos.get("marginUsed", 0) or 0),
             })
-        except (TypeError, ValueError):
-            pass
 
     # RECONCILE first — clear stale DB ownership for each agent independently
     reconciled_all: dict[str, list[str]] = {}
@@ -326,8 +500,6 @@ def femr_tick(live: bool = False):
     bot_positions = [p for p in all_positions if p["coin"] in owned_femr]
     view.extra["live_positions"] = bot_positions
 
-    acct_val = float((st.get("marginSummary") or {}).get("accountValue", 0) or 0)
-    withdrawable = float(st.get("withdrawable", 0) or 0)
     owned_all: set[str] = set()
     for a in agents:
         owned_all |= bot_owned_coins(conn, agent=a.name)
@@ -369,18 +541,24 @@ def femr_tick(live: bool = False):
     except Exception as e:  # noqa: BLE001
         console.print(f"[red]FATAL: build_exchange failed: {e}[/red]")
         telegram_alert(f"🚨 hl-bot: build_exchange failed: {e}")
-        raise typer.Exit(2)
+        raise typer.Exit(2) from e
 
     ok, why = check_guardrails(
         conn,
         info,
-        GuardrailConfig(min_bot_capital=40.0, max_total_notional=75.0, max_concurrent_positions=4),
+        GuardrailConfig(
+            min_bot_capital=40.0,
+            max_daily_loss=dynamic_daily_loss_limit(portfolio_value),
+            max_total_notional=risk_cap.max_total_notional,
+            max_concurrent_positions=4,
+        ),
         agents=[a.name for a in agents],
     )
     if not ok:
-        console.print(f"[red]HALT[/red]: {why}")
-        return
-    console.print(f"[green]guardrails[/green]: {why}")
+        console.print(f"[red]HALT new entries[/red]: {why}")
+        console.print("[yellow]Flatten/close decisions are still allowed for risk reduction.[/yellow]")
+    else:
+        console.print(f"[green]guardrails[/green]: {why}")
 
     # Execute
     agent_names = {a.name for a in agents}
@@ -389,6 +567,9 @@ def femr_tick(live: bool = False):
             continue
 
         if d.action == "place" and d.sz and d.side:
+            if not ok:
+                console.print(f"[dim]SKIP {d.agent} {d.coin}: guardrail blocks new entries[/dim]")
+                continue
             if coin_in_cooldown(conn, d.coin, agent=d.agent):
                 console.print(f"[dim]SKIP {d.agent} {d.coin}: in cooldown[/dim]")
                 continue
@@ -411,6 +592,10 @@ def femr_tick(live: bool = False):
             res = close_position(exchange, d.coin, cloid=d.cloid)
             if res.ok:
                 console.print(f"[bold]CLOSED[/bold] {d.coin} @ ${res.avg_px}")
+                # Log the flatten immediately so ownership clears this tick rather
+                # than waiting for next-tick reconciliation.
+                log_decision(conn, d)
+                conn.commit()
             else:
                 console.print(f"[red]CLOSE FAILED[/red] {d.coin}: {res.error}")
 

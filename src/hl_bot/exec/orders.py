@@ -191,6 +191,23 @@ class GuardrailConfig:
     max_per_order_notional: float = 20.0
 
 
+def dynamic_daily_loss_limit(
+    portfolio_value: float | None,
+    floor: float = 10.0,
+    pct: float = 0.03,
+) -> float:
+    """Daily realized-loss limit that scales with portfolio size.
+
+    Returns a positive dollar figure: the most the bot may lose (realized,
+    net of fees) across all active agents in a rolling 24h window before new
+    entries are halted. Small/unknown accounts fall back to ``floor`` so a
+    momentarily-empty portfolio reading can never widen the limit.
+    """
+    if portfolio_value is None or portfolio_value <= 0:
+        return float(floor)
+    return max(float(floor), float(pct) * float(portfolio_value))
+
+
 def _spot_usdc(info: Info, address: str) -> float:
     try:
         st = info.post("/info", {"type": "spotClearinghouseState", "user": address}) or {}
@@ -219,18 +236,22 @@ def check_guardrails(
     if capital < cfg.min_bot_capital:
         return False, f"capital ${capital:.2f} (spot ${spot_usdc:.2f} + perp ${perp_val:.2f}) < ${cfg.min_bot_capital:.2f}"
 
+    bot_agents = agents or ["femr_v1"]
     since_ms = int((time.time() - 86400) * 1000)
+    placeholders = ",".join("?" for _ in bot_agents)
     row = conn.execute(
-        """SELECT COALESCE(SUM(closed_pnl), 0) - COALESCE(SUM(fee), 0)
-           FROM fills WHERE time_ms >= ? AND agent LIKE 'femr%'""",
-        (since_ms,),
+        f"""SELECT COALESCE(SUM(closed_pnl), 0) - COALESCE(SUM(fee), 0)
+           FROM fills WHERE time_ms >= ? AND agent IN ({placeholders})""",
+        (since_ms, *bot_agents),
     ).fetchone()
     daily_pnl = float(row[0] or 0.0)
     if daily_pnl < -abs(cfg.max_daily_loss):
-        return False, f"24h femr PnL ${daily_pnl:.2f} < -${cfg.max_daily_loss:.2f}"
+        return False, (
+            f"24h bot PnL ${daily_pnl:.2f} < -${cfg.max_daily_loss:.2f} "
+            f"(agents={','.join(bot_agents)})"
+        )
 
     asset_pos = (state or {}).get("assetPositions", []) or []
-    bot_agents = agents or ["femr_v1"]
     owned: set[str] = set()
     for agent in bot_agents:
         owned |= bot_owned_coins(conn, agent=agent)

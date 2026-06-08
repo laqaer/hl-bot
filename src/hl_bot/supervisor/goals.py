@@ -160,9 +160,12 @@ def evaluate(conn: sqlite3.Connection, g: AgentGoals) -> list[Evaluation]:
     # Guardrails: a guardrail "passes" when the condition is satisfied (i.e.
     # the agent is *within* limits). Failing triggers the action. N/A (missing
     # metric — e.g. no trades yet) NEVER triggers an action.
+    guardrail_failed = False
     for gr in g.guardrails:
         ok, v = gr.evaluate(cards[gr.window])
         status = _status(ok)
+        if status == "fail":
+            guardrail_failed = True
         out.append(Evaluation(
             agent=g.agent, goal_name=f"guardrail:{gr.metric}",
             metric_value=v, threshold=gr.threshold,
@@ -171,8 +174,10 @@ def evaluate(conn: sqlite3.Connection, g: AgentGoals) -> list[Evaluation]:
             detail=gr.reason or f"{gr.metric}({gr.window}) {gr.op} {gr.threshold}",
         ))
 
-    # Promotion: ALL conditions must explicitly pass (na blocks promotion).
-    if g.promotion and g.mode == g.promotion.from_mode:
+    # Promotion: ALL conditions must explicitly pass (na blocks promotion), and
+    # no guardrail may be failing. Risk controls dominate growth controls: an
+    # agent cannot be paused/demoted/alerting and promoted in the same run.
+    if g.promotion and g.mode == g.promotion.from_mode and not guardrail_failed:
         results = [c.evaluate(cards[c.window]) for c in g.promotion.conditions]
         if results and all(ok is True for ok, _ in results):
             out.append(Evaluation(
