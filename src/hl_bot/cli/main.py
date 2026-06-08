@@ -720,6 +720,55 @@ def backtest(
 
 
 @app.command()
+def confirm(
+    agent: str = "twap_mr_regime_v1",
+    coins: str = "BTC,ETH,SOL,HYPE",
+    interval: str = "1h",
+    days: int = 120,
+    prefer: str = "taker",
+    min_edge_bps: float = 3.0,
+    min_sharpe: float = 1.0,
+    cache: bool = True,
+):
+    """Confirm a strategy through the G0 gate: walk-forward + cost stress.
+
+    Prints an explicit PASS/FAIL. A strategy must clear this on real history
+    before it is eligible for paper→live promotion (see docs/GO_LIVE.md).
+    """
+    from ..backtest.confirm import confirm_strategy
+    from ..backtest.data import cached_or_fetch, load_frames
+
+    _, s = _conn()
+    coin_list = [c.strip() for c in coins.split(",") if c.strip()]
+    factories = {
+        "twap_mr_v1": lambda conn: TwapMrAgent(config={}, conn=conn),
+        "twap_mr_regime_v1": lambda conn: TwapMrRegimeAgent(config={}, conn=conn),
+        "femr_v1": lambda conn: FemrAgent(config={}, conn=conn),
+        "liq_cascade_v1": lambda conn: LiqCascadeAgent(config={}, conn=conn),
+        "basis_v1": lambda conn: BasisAgent(config={}, conn=conn),
+    }
+    if agent not in factories:
+        console.print(f"[red]unknown agent {agent}; choose from {list(factories)}[/red]")
+        raise typer.Exit(1)
+    per_year = {"1m": 525_600, "5m": 105_120, "15m": 35_040,
+                "1h": 8_760, "4h": 2_190, "1d": 365}.get(interval, 8_760)
+    try:
+        frames = (cached_or_fetch(coin_list, interval=interval, days=days, base_url=s.hl_api_url)
+                  if cache else
+                  load_frames(coin_list, interval=interval, days=days, base_url=s.hl_api_url))
+    except Exception as e:  # noqa: BLE001
+        console.print(f"[red]failed to load history: {e}[/red]")
+        raise typer.Exit(2) from e
+    res = confirm_strategy(
+        factories[agent], frames, prefer=prefer,
+        min_edge_bps=min_edge_bps, min_sharpe=min_sharpe, periods_per_year=per_year,
+    )
+    console.print(res.summary())
+    if not res.confirmed:
+        raise typer.Exit(1)
+
+
+@app.command()
 def track_record(out: Path = Path("data/track_record")):
     """Export a public-grade track record (equity curve, Sharpe, DD, per-agent).
 
