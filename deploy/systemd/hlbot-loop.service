@@ -14,7 +14,9 @@ User=hlbot
 WorkingDirectory=/opt/hl-bot
 EnvironmentFile=/etc/hl-bot/env
 Environment=RALPH_ITERS=1000
-Environment=RALPH_PUSH=0
+# Push green commits so improvements are backed up to GitHub and the box's
+# auto-update timer + history stay on one linear branch (no on-box divergence).
+Environment=RALPH_PUSH=1
 ExecStart=/opt/hl-bot/ralph/loop.sh
 Restart=on-failure
 RestartSec=30
