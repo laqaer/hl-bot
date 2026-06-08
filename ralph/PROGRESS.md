@@ -264,3 +264,33 @@ going live stays the gated confirm→enable sequence.
 
 **What's next (loop).** B6/B7 (per-agent funding + Sharpe), B-book (book-aware
 maker pricing), userFills WS, B4-RUN (confirm on real history).
+
+---
+
+## Iteration 7 — 2026-06-08 — honest metrics + set-and-forget autonomy
+
+**Changed (2 commits).**
+- **B6/B7 — per-agent funding attribution + Sharpe.** `_coin_holders_over_time`
+  replays per-agent ownership from the decision log; `_agent_funding_payments`
+  splits each funding payment among concurrent holders (sums to total, no
+  double-count); score_agent folds the share into net/edge and computes per-agent
+  daily-PnL Sharpe — so carry strategies are measured correctly and sharpe-gates
+  can fire. Tested (5 cases).
+- **Set-and-forget autonomy + novice AWS guide.** `deploy/update.sh` +
+  `hlbot-update.timer`: the box pulls branch improvements (e.g. from the Ralph
+  loop), TEST-GATES them, and restarts only if green — so a self-improving bot
+  ships its own code without ever deploying red. Gated by HLBOT_AUTO_UPDATE=1
+  (enabled by install.sh + AWS user-data). `docs/AWS_NOVICE_SETUP.md`: step-by-step
+  console deploy → enable loop → gated go-live → off switch, written for a novice.
+
+**Evidence.** **90 tests pass**; lint clean; all shell scripts `bash -n` clean.
+
+**Autonomy model.** Infra is genuinely set-and-forget: 24/7 trading (paper by
+default), self-improvement loop (writes green code), auto-deploy (test-gated), self-
+governing risk (guardrails auto-pause/demote, capital floor halts), Telegram alerts.
+The two irreducible human steps for LIVE money: provide the API/agent wallet once,
+and flip HLBOT_TICK_ARGS to --live for a confirmed agent. Losses bounded by
+guardrails; the loop is forbidden from enabling live or raising caps.
+
+**What's next (loop).** B-book (book-aware maker pricing via WS L2), userFills WS,
+B4-RUN (confirm carry on real history), B16 (HL vault eval for AUM).

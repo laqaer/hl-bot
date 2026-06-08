@@ -1,0 +1,11 @@
+[Unit]
+Description=hl-bot auto-deploy (pull self-improvements, test-gate, restart)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+# Runs as root: repo/test work is dropped to the hlbot user inside the script,
+# but restarting units needs root. Gated by HLBOT_AUTO_UPDATE in /etc/hl-bot/env.
+ExecStart=/opt/hl-bot/deploy/update.sh
+TimeoutStartSec=600

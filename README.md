@@ -125,7 +125,8 @@ uv run hlbot health    # ok/warn/down + heartbeat ping
 uv run hlbot ws        # WebSocket market-data service (writes a snapshot)
 ```
 End-to-end runbook: [`docs/HOST_QUICKSTART.md`](docs/HOST_QUICKSTART.md). AWS:
-[`deploy/aws/README.md`](deploy/aws/README.md).
+[`deploy/aws/README.md`](deploy/aws/README.md). **Novice set-and-forget on AWS
+(auto self-improving):** [`docs/AWS_NOVICE_SETUP.md`](docs/AWS_NOVICE_SETUP.md).
 
 ## Roadmap
 

@@ -1,0 +1,11 @@
+[Unit]
+Description=Check for hl-bot self-improvements every 15 minutes
+
+[Timer]
+OnBootSec=10min
+OnUnitActiveSec=15min
+Persistent=false
+AccuracySec=1min
+
+[Install]
+WantedBy=timers.target
