@@ -337,7 +337,7 @@ def _enrich_view(view, api_url: str, vol: dict[str, float]) -> None:
 
 
 @app.command()
-def femr_tick(live: bool = False):
+def femr_tick(live: bool = False, execution: str = "taker"):
     """Run FEMR (Funding Extremes Mean Reversion) one tick.
 
     paper (default): log decisions only, no orders placed.
@@ -567,6 +567,31 @@ def femr_tick(live: bool = False):
     else:
         console.print(f"[green]guardrails[/green]: {why}")
 
+    # Maker execution prep: refresh fills, promote filled resting orders to owned,
+    # cancel stale quotes. Entries below then rest post-only instead of crossing.
+    if execution == "maker":
+        from ..exec.maker import (
+            log_cancel,
+            log_rest,
+            reconcile_maker_fills,
+            stale_working,
+            working_orders,
+        )
+        from ..exec.orders import cancel_order, place_limit_order
+        from ..ingest.hyperliquid import ingest_fills
+        ingest_fills(conn, s.hl_address, s.hl_api_url)  # so cloid fills are visible
+        for a in agents:
+            working = working_orders(conn, a.name)
+            got = reconcile_maker_fills(conn, a.name, working)
+            for o in stale_working(working):
+                if o["coin"] in got or o.get("oid") is None:
+                    continue
+                cancel_order(exchange, o["coin"], o["oid"])
+                log_cancel(conn, a.name, o)
+            if got:
+                console.print(f"[green]maker fills[/green] {a.name}: {got}")
+        conn.commit()
+
     # Execute
     agent_names = {a.name for a in agents}
     for d in all_decisions:
@@ -581,6 +606,25 @@ def femr_tick(live: bool = False):
                 console.print(f"[dim]SKIP {d.agent} {d.coin}: in cooldown[/dim]")
                 continue
             is_buy = (d.side == "B")
+            if execution == "maker":
+                # Already have a working quote on this coin? leave it.
+                if d.coin in working_orders(conn, d.agent):
+                    console.print(f"[dim]SKIP {d.agent} {d.coin}: maker quote already resting[/dim]")
+                    continue
+                res = place_limit_order(exchange, d.coin, is_buy, d.sz, d.px or 0,
+                                        post_only=True, cloid=d.cloid)
+                if res.status == "resting":
+                    console.print(f"[cyan]RESTING[/cyan] {d.coin} {'BUY' if is_buy else 'SELL'} {d.sz} @ ${d.px} oid={res.oid}")
+                    log_rest(conn, d.agent, d.coin, d.side, d.sz, d.px or 0, d.cloid, res.oid)
+                elif res.ok:  # filled immediately (rare for post-only)
+                    console.print(f"[bold green]FILLED(maker)[/bold green] {d.coin} @ ${res.avg_px}")
+                    if res.avg_px:
+                        d.px = res.avg_px
+                    log_decision(conn, d)
+                else:
+                    console.print(f"[red]MAKER REJECT[/red] {d.coin}: {res.status} — {res.error}")
+                conn.commit()
+                continue
             res = place_market_order(exchange, d.coin, is_buy, d.sz,
                                      slippage_pct=0.01, cloid=d.cloid)
             if res.ok:

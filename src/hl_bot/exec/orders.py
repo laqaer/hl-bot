@@ -470,6 +470,18 @@ def has_resting_order(info: Info, coin: str, address: str = HL_TRADER_ADDRESS) -
     return any((o or {}).get("coin") == coin for o in orders)
 
 
+def cancel_order(exchange: Exchange, coin: str, oid: int) -> OrderResult:
+    """Cancel a resting order by oid. Best-effort; returns an OrderResult."""
+    try:
+        res = _retry(lambda: exchange.cancel(coin, oid))
+    except Exception as e:  # noqa: BLE001
+        log.exception("cancel_order failed")
+        return OrderResult(ok=False, status="error", error=str(e))
+    status = ((res or {}).get("response", {}).get("data", {}).get("statuses", []) or [None])[0]
+    ok = status == "success"
+    return OrderResult(ok=ok, status="cancelled" if ok else "error", oid=oid, detail=res)
+
+
 # ---------------------------------------------------------------------------
 # Telegram alerts (best-effort; failures don't break the bot)
 # ---------------------------------------------------------------------------
