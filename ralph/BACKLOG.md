@@ -11,9 +11,9 @@ Keep it ruthlessly prioritized: the top item should always be the highest-levera
   `hlbot backtest --agent <a> --compare` over ≥90d for twap_mr/femr; record the
   taker vs maker net/edge in `PROGRESS.md`. _Blocked in CI sandbox: outbound to
   api.hyperliquid.xyz is 403. Run where HL history is reachable, or add B1a._
-- [ ] **B1a — Offline history cache.** Add `hlbot backtest-fetch` to pull candle/
-  funding history to a local parquet/sqlite cache under `data/` (gitignored), so
-  backtests are reproducible and runnable without live network each time.
+- [x] **B1a — Offline history cache.** Done: `hlbot backtest-fetch` +
+  save/load/cached_or_fetch under `data/backtest_cache/` (gzipped JSON,
+  gitignored); `hlbot backtest --cache` runs without network. (Iteration 2.)
 - [~] **B2 — Maker (post-only) execution.** Primitive done: `place_limit_order`
   (post-only 'Alo'), `round_price_to`, `has_resting_order` + tests. **Remaining
   (B2b):** async resting-order fill reconciliation across ticks, then route live
@@ -64,8 +64,9 @@ Keep it ruthlessly prioritized: the top item should always be the highest-levera
 
 ## P3 — capital formation (Path C)
 
-- [ ] **B15 — Public-grade track-record export.** Equity curve + Sharpe/DD/edge
-  to a shareable artifact (CSV/JSON + chart) for vault/depositor due diligence.
+- [x] **B15 — Public-grade track-record export.** Done: `reports/track_record.py`
+  + `hlbot track-record` → track_record.{json,md} (equity curve, Sharpe/DD/edge,
+  per-agent). Chart export still TODO. (Iteration 2.)
 - [ ] **B16 — Hyperliquid vault evaluation.** Spike: requirements, fees, risk of
   running an HL vault; gate behind a real track record (G3).
 - [ ] **B17 — Moonshot sleeve spec.** Design the ring-fenced, loss-bounded Path B
@@ -84,3 +85,9 @@ Keep it ruthlessly prioritized: the top item should always be the highest-levera
 - [x] **B2 (primitive) — post-only maker order path** + tick rounding + tests.
   Async fill reconciliation tracked as B2b. (Iteration 1.)
 - [x] **B14 — docs/GO_LIVE.md** go-live runbook. (Iteration 1.)
+- [x] **B1a — offline history cache** + backtest-fetch CLI. (Iteration 2.)
+- [x] **B15 — track-record export** + track-record CLI. (Iteration 2.)
+- [x] **Pilot prep** — twap_mr_regime_v1 wired into the live roster (paper
+  default), registered for attribution/reporting, with a goals config. The
+  operator-only live switch is documented in docs/GO_LIVE.md. (Iteration 2.)
+- [x] **Unattended docs** — ralph/README "Unattended operation". (Iteration 2.)

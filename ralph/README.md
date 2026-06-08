@@ -39,6 +39,34 @@ permission posture via `CLAUDE_MODEL` / `CLAUDE_FLAGS` (see `loop.sh` header).
 - **Evidence before edge claims.** A strategy change isn't "done" without a
   backtest number recorded in `PROGRESS.md`.
 
+## Unattended operation
+
+To let it run without you in the chat:
+
+**Prerequisites**
+- `claude` CLI authenticated (Claude Max/OAuth or `ANTHROPIC_API_KEY`).
+- `uv` available (tests/lint gate).
+- **Outbound network to `api.hyperliquid.xyz`** so the loop can fetch real
+  history for backtests (the sandbox this was built in blocks it; a normal host
+  doesn't). Run `uv run hlbot backtest-fetch` once to seed the offline cache, then
+  backtests run cache-only.
+- **No exchange keys are needed or wanted** — the loop does research only and is
+  forbidden from live trading. Do not expose the API-wallet env to it.
+
+**Run it under tmux / nohup**
+```bash
+tmux new -s ralph 'RALPH_ITERS=200 RALPH_PUSH=1 ralph/loop.sh'   # detach with C-b d
+# or
+nohup env RALPH_ITERS=200 RALPH_PUSH=1 ralph/loop.sh > ralph/loop.out 2>&1 &
+touch ralph/STOP   # graceful stop after the current iteration
+```
+
+**Or as a systemd service** (oneshot + timer, or a long-running unit). Keep it on
+a dev branch with `RALPH_PUSH=1`; review the commits before merging to `main`.
+
+The loop is green-gated and live-trading-safe, so unattended runs can only ever
+improve the repo or no-op — never place an order.
+
 ## How it connects to the goal
 
 The loop is the engine that grinds [`../docs/ROADMAP_TO_1M.md`](../docs/ROADMAP_TO_1M.md):

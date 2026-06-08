@@ -75,3 +75,45 @@ The regime TWAP is the leading G0 candidate.
 B2b (async maker entries) — together they let the regime/carry strategies be
 backtested *and* executed as makers, which is the whole ballgame for a positive
 live edge.
+
+---
+
+## Iteration 2 — 2026-06-08 — all four go-live tracks, offline pieces
+
+**Context.** Operator picked all four paths (prove-edge-first, tiny-live-pilot,
+capital/AUM, run-loop-unattended). Each track's network/keys-gated final step is
+the operator's; I built every offline piece for all four, green-gated.
+
+**Changed (3 commits).**
+- **B1a — offline history cache** (*prove-edge-first* + *unattended*).
+  `save_frames`/`load_cached_frames`/`cached_or_fetch` (gzipped JSON under
+  `data/backtest_cache/`, gitignored); `hlbot backtest-fetch`; `hlbot backtest
+  --cache` runs without network. Makes backtests reproducible and the loop
+  runnable unattended. Tested: cache round-trip + identical fresh-vs-cached score.
+- **B15 — track-record export** (*capital/AUM*). `reports/track_record.py` +
+  `hlbot track-record` → `track_record.{json,md}`: account equity curve +
+  per-agent net/edge/Sharpe/$DD via the live `score_agent`. The artifact a vault
+  depositor/allocator needs. Tested.
+- **Pilot prep** (*tiny-live-pilot*). Wired `twap_mr_regime_v1` into the live
+  roster (paper unless explicitly enabled), registered it for attribution/
+  reporting, added `configs/twap_mr_regime_v1.yaml` with conservative gates.
+  Operator flips one switch (docs/GO_LIVE.md). Nothing went live.
+- **Unattended docs** — `ralph/README` "Unattended operation" (tmux/systemd,
+  network/keys requirements, STOP file).
+
+**Evidence.** 56 → **59 tests pass**; `ruff check .` clean each commit; all 4
+goals configs validate; CLI imports clean with the 5-agent roster.
+
+**Operator actions to advance each track (need your env/keys):**
+1. *Prove edge first:* in an HL-reachable host, `uv run hlbot backtest-fetch
+   --coins BTC,ETH,SOL,HYPE --days 120` then `uv run hlbot backtest --agent
+   twap_mr_regime_v1 --compare`. Read the taker→maker gap + net edge. If positive
+   → B2b, then promote via the gate.
+2. *Tiny live pilot:* after a paper window, enable in agent_state per
+   docs/GO_LIVE.md (`twap_mr_regime_v1` → live_small), watch the first ticks.
+3. *Capital/AUM:* `uv run hlbot track-record` to produce the shareable record.
+4. *Unattended:* run `ralph/loop.sh` under tmux/systemd on that host.
+
+**What's next (loop).** B2b (async maker fill reconciliation + route live entries
+to maker) — the payoff half of B2 — and B6/B7 (per-agent funding + Sharpe) so the
+gates measure truth.
