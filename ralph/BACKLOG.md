@@ -23,10 +23,11 @@ Keep it ruthlessly prioritized: the top item should always be the highest-levera
   `regime_allows_fade`; closes plumbed through Frame + live `_enrich_view`;
   backtest tests prove it beats baseline on a trend. Thresholds need real-data
   tuning under B1. (Wires REVIEW C3.)
-- [ ] **B2b — Async maker fill reconciliation + route live entries to maker.**
-  Track resting orders across ticks, reconcile fills from `userFills`/`open_orders`,
-  cancel stale quotes, then switch live *entries* to `place_limit_order` (exits
-  stay taker). The payoff half of B2.
+- [x] **B2b — Maker live execution.** Done: cross-tick resting-order lifecycle
+  (`exec/maker.py`: rest → fill-detect → place / cancel-stale), `cancel_order`,
+  and `femr_tick --execution maker` (default taker; exits stay taker). Logic
+  unit-tested offline; first live use needs watching at tiny size. Next: book-aware
+  limit pricing (post at touch/microprice, not mid).
 - [x] **B4 — Maker carry strategies.** Done: `funding_carry_v1` (single-name
   hold-to-collect, no TP churn) and `xfund_carry_v1` (market-neutral
   cross-sectional). Engine `liquidate_at_end` folds held funding into the realized
@@ -54,8 +55,11 @@ Keep it ruthlessly prioritized: the top item should always be the highest-levera
 
 ## P2 — cadence, structure, devops
 
-- [ ] **B10 — WebSocket market view** for fast strategies (sub-minute), keeping
-  the cron only for low-frequency carry. (REVIEW C7; README roadmap.)
+- [ ] **B10 — WebSocket market view** (`wss://api.hyperliquid.xyz/ws`): l2Book,
+  trades (→ real liquidations, fixes C6), allMids, activeAssetCtx, userFills.
+  Highest-value free signal upgrade. (REVIEW C7; docs/INFRA.md.)
+- [ ] **B-book — Book-aware maker pricing.** Post at touch/microprice using L2
+  depth (needs B10) instead of mid; raises maker fill rate.
 - [ ] **B11 — Retire or feed liq_cascade.** Source real liquidation data (WS
   trades liquidation flag) or disable the agent until it can be fed. (REVIEW C6.)
 - [ ] **B12 — Consolidate execution paths.** `runtime.run_tick` vs `femr_tick`
@@ -95,3 +99,10 @@ Keep it ruthlessly prioritized: the top item should always be the highest-levera
   default), registered for attribution/reporting, with a goals config. The
   operator-only live switch is documented in docs/GO_LIVE.md. (Iteration 2.)
 - [x] **Unattended docs** — ralph/README "Unattended operation". (Iteration 2.)
+- [x] **B5 — confirmation harness** (`hlbot confirm`, walk-forward + cost ladder).
+  (Iteration 3.)
+- [x] **B4 — carry strategies** xfund_carry_v1 + funding_carry_v1 + engine
+  liquidate-at-end. (Iteration 3.)
+- [x] **B2b — maker live execution lifecycle** + `--execution maker`. (Iteration 4.)
+- [x] **B-INFRA — docs/INFRA.md** 24/7 deploy + signal/execution investment guide.
+  (Iteration 4.)

@@ -160,3 +160,37 @@ Confirmed agents earn the paper roster, then the live gate in docs/GO_LIVE.md.
 
 **What's next (loop).** B2b (async maker live execution) and B6/B7 (honest
 per-agent funding + Sharpe so the gates measure truth).
+
+---
+
+## Iteration 4 — 2026-06-08 — maker live execution + infra
+
+**Context.** "Keep going, get it to production" + an infra question. Built the
+remaining real execution piece (B2b) and the deployment/infra guide.
+
+**Changed (2 commits).**
+- **B2b — maker live execution.** Maker orders rest across ticks, so added the
+  lifecycle state machine `exec/maker.py` (rest → fill-detect → place /
+  cancel-stale), `cancel_order`, the `rest` decision action, and
+  `femr_tick --execution maker` (default stays taker; exits stay taker for
+  urgency). Ownership still keys off 'place', so a resting quote isn't a position
+  until it fills. Logic fully unit-tested offline (in-memory DB); the live
+  exchange calls can't be validated in CI, so first live use must be watched at
+  tiny size. Next: book-aware limit pricing (needs WS L2, B10/B-book).
+- **docs/INFRA.md** — 24/7 deployment (systemd, Litestream, monitoring), infra
+  tiers + costs, and what to invest in for signal (WebSocket = highest-value free
+  upgrade; fixes liq_cascade) and execution (maker first; latency/colo only once a
+  strategy needs it). Honest headline: at current cadence, edge+capital are the
+  bottleneck, not latency.
+
+**Evidence.** 65 → **69 tests pass**; lint clean.
+
+**Production status.** The *code path* to live maker execution now exists and is
+gated. Still NOT live: needs (1) a strategy confirmed on real history (B1/B4-RUN),
+(2) one watched live-small run per docs/GO_LIVE.md, (3) Tier-0 infra from
+docs/INFRA.md. The build side of all four slate strategies is done; the gating
+steps are operator/network actions.
+
+**What's next (loop).** B10 (WebSocket market view — sub-second mids, L2 depth,
+real liquidations), B6/B7 (per-agent funding + Sharpe), B-book (book-aware maker
+pricing), B14a (codify systemd/Litestream deploy in-repo).
