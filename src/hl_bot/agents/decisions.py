@@ -12,7 +12,7 @@ import time
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
-Action = Literal["place", "cancel", "hold", "flatten", "error"]
+Action = Literal["place", "cancel", "hold", "flatten", "error", "rest"]
 
 
 @dataclass

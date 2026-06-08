@@ -1,0 +1,24 @@
+[Unit]
+Description=hl-bot Ralph self-improvement loop (research/backtest/propose only)
+After=network-online.target
+Wants=network-online.target
+
+# NOT enabled by install.sh. Start deliberately once `claude` CLI is authed and HL
+# history is reachable:  systemctl enable --now hlbot-loop
+# The loop never enables live trading (see ralph/PROMPT.md); it only improves the
+# repo and commits on green. RALPH_PUSH=1 pushes to the dev branch.
+
+[Service]
+Type=simple
+User=hlbot
+WorkingDirectory=/opt/hl-bot
+EnvironmentFile=/etc/hl-bot/env
+Environment=RALPH_ITERS=1000
+Environment=RALPH_PUSH=0
+ExecStart=/opt/hl-bot/ralph/loop.sh
+Restart=on-failure
+RestartSec=30
+NoNewPrivileges=true
+
+[Install]
+WantedBy=multi-user.target

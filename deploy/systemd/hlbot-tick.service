@@ -1,0 +1,19 @@
+[Unit]
+Description=hl-bot trading tick (ingest + agents + supervisor + health)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=hlbot
+WorkingDirectory=/opt/hl-bot
+EnvironmentFile=/etc/hl-bot/env
+ExecStart=/opt/hl-bot/deploy/run-tick.sh
+# Don't pile up overlapping runs if one is slow.
+TimeoutStartSec=300
+# Hardening
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/opt/hl-bot/data
+PrivateTmp=true

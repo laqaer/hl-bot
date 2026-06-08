@@ -1,0 +1,23 @@
+[Unit]
+Description=hl-bot WebSocket market-data feed (writes a snapshot the tick reads)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=hlbot
+WorkingDirectory=/opt/hl-bot
+EnvironmentFile=/etc/hl-bot/env
+# Long-running: maintains live state, writes an atomic snapshot every ~1s. The
+# tick overlays it when fresh (HLBOT_WS_SNAPSHOT) and falls back to REST if stale.
+ExecStart=/usr/bin/env bash -lc 'uv run hlbot ws --coins "$${HLBOT_WS_COINS:-BTC,ETH,SOL,HYPE}" --snapshot "$${HLBOT_WS_SNAPSHOT:-/opt/hl-bot/data/ws_snapshot.json}"'
+Restart=always
+RestartSec=10
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/opt/hl-bot/data
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

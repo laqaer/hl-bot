@@ -15,11 +15,14 @@ from rich.table import Table
 from ..agents.basis import BasisAgent
 from ..agents.femr import FemrAgent
 from ..agents.funding_arb import FundingArbAgent
+from ..agents.funding_carry import FundingCarryAgent
 from ..agents.liq_cascade import LiqCascadeAgent
 from ..agents.meta_allocator import MetaAllocator, MetaAllocatorConfig
 from ..agents.runtime import run_tick
 from ..agents.twap_mr import TwapMrAgent
+from ..agents.twap_mr_regime import TwapMrRegimeAgent
 from ..agents.veto import VetoAgent
+from ..agents.xfund_carry import XFundCarryAgent
 from ..config import CONFIG_DIR, Settings
 from ..db.schema import init_db
 from ..ingest.hyperliquid import ingest_fills, ingest_funding, snapshot_equity
@@ -214,6 +217,7 @@ def _enrich_view(view, api_url: str, vol: dict[str, float]) -> None:
     top_coins = [c for c, _ in top]
 
     candles_1h: dict[str, dict] = {}
+    closes_by_coin: dict[str, list[float]] = {}
     spot_mids: dict[str, float] = {}
     liquidations: list[dict] = []
 
@@ -248,6 +252,7 @@ def _enrich_view(view, api_url: str, vol: dict[str, float]) -> None:
                 var = sum((p - mean) ** 2 for p in pxs) / len(pxs)
                 sigma = var ** 0.5
                 candles_1h[coin] = {"vwap": vwap, "sigma": sigma, "n": len(pxs)}
+                closes_by_coin[coin] = pxs
             except Exception:  # noqa: BLE001
                 continue
 
@@ -326,12 +331,13 @@ def _enrich_view(view, api_url: str, vol: dict[str, float]) -> None:
             pass
 
     view.extra["candles_1h"] = candles_1h
+    view.extra["closes"] = closes_by_coin
     view.extra["spot_mids"] = spot_mids
     view.extra["liquidations"] = liquidations
 
 
 @app.command()
-def femr_tick(live: bool = False):
+def femr_tick(live: bool = False, execution: str = "taker"):
     """Run FEMR (Funding Extremes Mean Reversion) one tick.
 
     paper (default): log decisions only, no orders placed.
@@ -410,6 +416,7 @@ def femr_tick(live: bool = False):
             "funding_exit_per_hr": 0.00005,
         }), conn=conn),
         TwapMrAgent(config=_cfg("twap_mr_v1", {}), conn=conn),
+        TwapMrRegimeAgent(config=_cfg("twap_mr_regime_v1", {}), conn=conn),
         LiqCascadeAgent(config=_cfg("liq_cascade_v1", {}), conn=conn),
         BasisAgent(config=_cfg("basis_v1", {}), conn=conn),
     ]
@@ -469,6 +476,25 @@ def femr_tick(live: bool = False):
 
     view = fetch_market_view(s.hl_api_url, [])
     _enrich_view(view, s.hl_api_url, view.extra.get("day_ntl_vlm", {}))
+
+    # Overlay a fresh WS snapshot if available (sub-second mids, L2 book, and a
+    # REAL liquidations feed for liq_cascade). Purely additive; REST is the
+    # fallback when no fresh snapshot exists. Opt-in via HLBOT_WS_SNAPSHOT.
+    import os as _os
+    ws_path = _os.environ.get("HLBOT_WS_SNAPSHOT")
+    if ws_path:
+        from ..ingest.ws import load_fresh_snapshot
+        snap = load_fresh_snapshot(ws_path, max_age_s=30.0)
+        if snap is not None:
+            view.mids.update(snap.mids)
+            view.funding.update(snap.funding)
+            if snap.book_top:
+                view.book_top.update(snap.book_top)
+            liqs = snap.extra.get("liquidations") or []
+            if liqs:
+                view.extra["liquidations"] = liqs
+            console.print(f"[dim]ws snapshot overlaid: {len(snap.mids)} mids, "
+                          f"{len(liqs)} liqs[/dim]")
 
     # Build position list from HL truth
     all_positions = []
@@ -560,6 +586,31 @@ def femr_tick(live: bool = False):
     else:
         console.print(f"[green]guardrails[/green]: {why}")
 
+    # Maker execution prep: refresh fills, promote filled resting orders to owned,
+    # cancel stale quotes. Entries below then rest post-only instead of crossing.
+    if execution == "maker":
+        from ..exec.maker import (
+            log_cancel,
+            log_rest,
+            reconcile_maker_fills,
+            stale_working,
+            working_orders,
+        )
+        from ..exec.orders import cancel_order, place_limit_order
+        from ..ingest.hyperliquid import ingest_fills
+        ingest_fills(conn, s.hl_address, s.hl_api_url)  # so cloid fills are visible
+        for a in agents:
+            working = working_orders(conn, a.name)
+            got = reconcile_maker_fills(conn, a.name, working)
+            for o in stale_working(working):
+                if o["coin"] in got or o.get("oid") is None:
+                    continue
+                cancel_order(exchange, o["coin"], o["oid"])
+                log_cancel(conn, a.name, o)
+            if got:
+                console.print(f"[green]maker fills[/green] {a.name}: {got}")
+        conn.commit()
+
     # Execute
     agent_names = {a.name for a in agents}
     for d in all_decisions:
@@ -574,11 +625,35 @@ def femr_tick(live: bool = False):
                 console.print(f"[dim]SKIP {d.agent} {d.coin}: in cooldown[/dim]")
                 continue
             is_buy = (d.side == "B")
+            if execution == "maker":
+                # Already have a working quote on this coin? leave it.
+                if d.coin in working_orders(conn, d.agent):
+                    console.print(f"[dim]SKIP {d.agent} {d.coin}: maker quote already resting[/dim]")
+                    continue
+                res = place_limit_order(exchange, d.coin, is_buy, d.sz, d.px or 0,
+                                        post_only=True, cloid=d.cloid)
+                if res.status == "resting":
+                    console.print(f"[cyan]RESTING[/cyan] {d.coin} {'BUY' if is_buy else 'SELL'} {d.sz} @ ${d.px} oid={res.oid}")
+                    log_rest(conn, d.agent, d.coin, d.side, d.sz, d.px or 0, d.cloid, res.oid)
+                elif res.ok:  # filled immediately (rare for post-only)
+                    console.print(f"[bold green]FILLED(maker)[/bold green] {d.coin} @ ${res.avg_px}")
+                    if res.avg_px:
+                        d.px = res.avg_px
+                    log_decision(conn, d)
+                else:
+                    console.print(f"[red]MAKER REJECT[/red] {d.coin}: {res.status} — {res.error}")
+                conn.commit()
+                continue
             res = place_market_order(exchange, d.coin, is_buy, d.sz,
                                      slippage_pct=0.01, cloid=d.cloid)
             if res.ok:
                 console.print(f"[bold green]FILLED[/bold green] {d.coin} {'BUY' if is_buy else 'SELL'} {res.filled_sz} @ ${res.avg_px}")
-                # Log place ONLY after fill confirmed
+                # Log place ONLY after fill confirmed, with the REAL fill px/sz
+                # (not the pre-trade mid) so downstream stops/TPs key off truth.
+                if res.avg_px:
+                    d.px = res.avg_px
+                if res.filled_sz:
+                    d.sz = res.filled_sz
                 log_decision(conn, d)
             else:
                 console.print(f"[red]REJECT[/red] {d.coin}: {res.status} — {res.error}")
@@ -593,11 +668,257 @@ def femr_tick(live: bool = False):
             if res.ok:
                 console.print(f"[bold]CLOSED[/bold] {d.coin} @ ${res.avg_px}")
                 # Log the flatten immediately so ownership clears this tick rather
-                # than waiting for next-tick reconciliation.
+                # than waiting for next-tick reconciliation. Record the real exit px.
+                if res.avg_px:
+                    d.px = res.avg_px
                 log_decision(conn, d)
                 conn.commit()
             else:
                 console.print(f"[red]CLOSE FAILED[/red] {d.coin}: {res.error}")
+
+
+@app.command()
+def backtest_fetch(
+    coins: str = "BTC,ETH,SOL",
+    interval: str = "1h",
+    days: int = 30,
+    refresh: bool = False,
+):
+    """Fetch + cache HL candle/funding history for offline, reproducible backtests.
+
+    Writes a gzipped frame dataset under data/backtest_cache/ (gitignored).
+    Run this once where HL is reachable; then `hlbot backtest` runs without network.
+    """
+    from ..backtest.data import cached_or_fetch, default_cache_path
+
+    _, s = _conn()
+    coin_list = [c.strip() for c in coins.split(",") if c.strip()]
+    path = default_cache_path(coin_list, interval, days)
+    console.print(f"[dim]fetching {days}d {interval} for {coin_list}…[/dim]")
+    try:
+        frames = cached_or_fetch(coin_list, interval=interval, days=days,
+                                 base_url=s.hl_api_url, refresh=refresh)
+    except Exception as e:  # noqa: BLE001
+        console.print(f"[red]fetch failed: {e}[/red]")
+        raise typer.Exit(2) from e
+    console.print(f"[green]✓[/green] cached {len(frames)} frames → {path}")
+
+
+@app.command()
+def backtest(
+    agent: str = "twap_mr_v1",
+    coins: str = "BTC,ETH,SOL",
+    interval: str = "1h",
+    days: int = 30,
+    maker: bool = False,
+    compare: bool = True,
+    starting_capital: float = 1000.0,
+    cache: bool = True,
+):
+    """Replay an agent over real Hyperliquid history with an explicit cost model.
+
+    Fetches candle + funding history (network), drives the agent's real
+    ``decide()``, simulates fills (taker by default), and scores the run with the
+    same code used live. With ``--compare`` (default) it runs taker AND maker so
+    you can see how much of the edge the spread is eating — the central question
+    for this book. Places no orders; purely offline analysis.
+    """
+    from ..backtest.data import cached_or_fetch, load_frames
+    from ..backtest.engine import Backtester, CostModel
+
+    _, s = _conn()
+    coin_list = [c.strip() for c in coins.split(",") if c.strip()]
+
+    factories = {
+        "twap_mr_v1": lambda conn: TwapMrAgent(config={}, conn=conn),
+        "twap_mr_regime_v1": lambda conn: TwapMrRegimeAgent(config={}, conn=conn),
+        "femr_v1": lambda conn: FemrAgent(config={}, conn=conn),
+        "funding_carry_v1": lambda conn: FundingCarryAgent(config={}, conn=conn),
+        "xfund_carry_v1": lambda conn: XFundCarryAgent(config={}, conn=conn),
+        "liq_cascade_v1": lambda conn: LiqCascadeAgent(config={}, conn=conn),
+        "basis_v1": lambda conn: BasisAgent(config={}, conn=conn),
+    }
+    if agent not in factories:
+        console.print(f"[red]unknown agent {agent}; choose from {list(factories)}[/red]")
+        raise typer.Exit(1)
+
+    console.print(f"[dim]loading {days}d of {interval} candles for {coin_list} "
+                  f"({'cache' if cache else 'network'})…[/dim]")
+    try:
+        frames = (cached_or_fetch(coin_list, interval=interval, days=days, base_url=s.hl_api_url)
+                  if cache else
+                  load_frames(coin_list, interval=interval, days=days, base_url=s.hl_api_url))
+    except Exception as e:  # noqa: BLE001
+        console.print(f"[red]failed to load history: {e}[/red]")
+        raise typer.Exit(2) from e
+    if not frames:
+        console.print("[red]no frames built (insufficient history)[/red]")
+        raise typer.Exit(2)
+    console.print(f"[dim]{len(frames)} frames[/dim]")
+
+    per_year = {"1m": 525_600, "5m": 105_120, "15m": 35_040,
+                "1h": 8_760, "4h": 2_190, "1d": 365}.get(interval, 8_760)
+
+    modes = [False, True] if compare else [maker]
+    table = Table(title=f"Backtest {agent} ({days}d {interval})")
+    for col in ("exec", "net_pnl", "edge_bps", "trades", "win", "sharpe", "maxDD"):
+        table.add_column(col)
+    for is_maker in modes:
+        from ..db.schema import init_db as _init
+        conn = _init(":memory:")
+        bt = Backtester(CostModel(maker=is_maker), conn=conn,
+                        starting_capital=starting_capital)
+        res = bt.run(factories[agent](conn), frames)
+        # recompute curve stats at the right cadence
+        from ..backtest.engine import _curve_stats
+        sh, dd, _ = _curve_stats(res.equity_curve, periods_per_year=per_year)
+        sc = res.scorecard
+        table.add_row(
+            "maker" if is_maker else "taker",
+            f"{sc.net_pnl:+.2f}",
+            "—" if sc.edge_bps is None else f"{sc.edge_bps:+.1f}",
+            str(sc.n_trades),
+            f"{sc.win_rate*100:.0f}%",
+            "—" if sh is None else f"{sh:+.2f}",
+            "—" if dd is None else f"{dd*100:+.1f}%",
+        )
+    console.print(table)
+    console.print("[dim]taker→maker gap ≈ the spread/fee tax this strategy is paying.[/dim]")
+
+
+@app.command()
+def confirm(
+    agent: str = "twap_mr_regime_v1",
+    coins: str = "BTC,ETH,SOL,HYPE",
+    interval: str = "1h",
+    days: int = 120,
+    prefer: str = "taker",
+    min_edge_bps: float = 3.0,
+    min_sharpe: float = 1.0,
+    cache: bool = True,
+):
+    """Confirm a strategy through the G0 gate: walk-forward + cost stress.
+
+    Prints an explicit PASS/FAIL. A strategy must clear this on real history
+    before it is eligible for paper→live promotion (see docs/GO_LIVE.md).
+    """
+    from ..backtest.confirm import confirm_strategy
+    from ..backtest.data import cached_or_fetch, load_frames
+
+    _, s = _conn()
+    coin_list = [c.strip() for c in coins.split(",") if c.strip()]
+    factories = {
+        "twap_mr_v1": lambda conn: TwapMrAgent(config={}, conn=conn),
+        "twap_mr_regime_v1": lambda conn: TwapMrRegimeAgent(config={}, conn=conn),
+        "femr_v1": lambda conn: FemrAgent(config={}, conn=conn),
+        "funding_carry_v1": lambda conn: FundingCarryAgent(config={}, conn=conn),
+        "xfund_carry_v1": lambda conn: XFundCarryAgent(config={}, conn=conn),
+        "liq_cascade_v1": lambda conn: LiqCascadeAgent(config={}, conn=conn),
+        "basis_v1": lambda conn: BasisAgent(config={}, conn=conn),
+    }
+    if agent not in factories:
+        console.print(f"[red]unknown agent {agent}; choose from {list(factories)}[/red]")
+        raise typer.Exit(1)
+    per_year = {"1m": 525_600, "5m": 105_120, "15m": 35_040,
+                "1h": 8_760, "4h": 2_190, "1d": 365}.get(interval, 8_760)
+    try:
+        frames = (cached_or_fetch(coin_list, interval=interval, days=days, base_url=s.hl_api_url)
+                  if cache else
+                  load_frames(coin_list, interval=interval, days=days, base_url=s.hl_api_url))
+    except Exception as e:  # noqa: BLE001
+        console.print(f"[red]failed to load history: {e}[/red]")
+        raise typer.Exit(2) from e
+    res = confirm_strategy(
+        factories[agent], frames, prefer=prefer,
+        min_edge_bps=min_edge_bps, min_sharpe=min_sharpe, periods_per_year=per_year,
+    )
+    console.print(res.summary())
+    if not res.confirmed:
+        raise typer.Exit(1)
+
+
+@app.command()
+def ws(
+    coins: str = "BTC,ETH,SOL,HYPE",
+    snapshot: Path = Path("data/ws_snapshot.json"),
+    seconds: float = 0.0,
+):
+    """Run the WebSocket market-data service: maintain live state, write a snapshot.
+
+    Long-running (supervise via systemd). The tick reads the snapshot when fresh
+    (set HLBOT_WS_SNAPSHOT) for sub-second mids, L2 depth, and live liquidations.
+    seconds=0 runs forever.
+    """
+    from ..ingest.ws import run_ws
+
+    _, s = _conn()
+    coin_list = [c.strip() for c in coins.split(",") if c.strip()]
+    console.print(f"[green]ws[/green] subscribing {coin_list} → {snapshot} (every 1s)")
+    run_ws(coin_list, snapshot, base_url=s.hl_api_url, duration_s=(seconds or None))
+
+
+@app.command()
+def health(max_tick_age_s: int = 900, heartbeat: bool = True):
+    """Assess bot health (tick/ingest freshness, equity, paused agents, 24h PnL).
+
+    Pings HEALTHCHECK_URL when healthy (dead-man switch) and Telegram-alerts when
+    not. Designed to run on a timer alongside the tick.
+    """
+    import os
+
+    from ..ops.health import assess_health, ping_heartbeat
+
+    conn, s = _conn()
+    rep = assess_health(conn, max_tick_age_s=max_tick_age_s)
+    console.print(rep.render())
+    if heartbeat:
+        ping_heartbeat(os.environ.get("HEALTHCHECK_URL"), ok=rep.ok)
+    if not rep.ok:
+        with contextlib.suppress(Exception):
+            from ..exec.orders import telegram_alert
+            telegram_alert(rep.render())
+        raise typer.Exit(1)
+
+
+@app.command()
+def doctor(require_live: bool = False):
+    """Preflight: env, DB, configs, API-wallet perms, HL reachability.
+
+    Exit non-zero if any critical check fails. Run before enabling live and in CI.
+    """
+    from pathlib import Path as _Path
+
+    from ..exec.orders import DEFAULT_API_WALLET_ENV
+    from ..ops.doctor import render, run_doctor
+
+    _, s = _conn()
+    checks = run_doctor(
+        hl_address=s.hl_address,
+        api_url=s.hl_api_url,
+        db_path=s.db_path,
+        config_dir=_Path(CONFIG_DIR),
+        api_wallet_path=DEFAULT_API_WALLET_ENV,
+        require_live=require_live,
+    )
+    text, ok = render(checks)
+    console.print(text)
+    if not ok:
+        raise typer.Exit(1)
+
+
+@app.command()
+def track_record(out: Path = Path("data/track_record")):
+    """Export a public-grade track record (equity curve, Sharpe, DD, per-agent).
+
+    Writes track_record.{json,md} for capital/AUM due diligence (Path C) and the
+    go-live gates. Read-only on the DB.
+    """
+    from ..reports.track_record import export
+
+    conn, _ = _conn()
+    jp, mp = export(conn, out)
+    console.print(mp.read_text())
+    console.print(f"[green]✓[/green] wrote {jp} and {mp}")
 
 
 @app.command()

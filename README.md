@@ -87,10 +87,54 @@ Supported metrics: anything on `Scorecard` (`net_pnl`, `sharpe`,
 0  9 * * * cd ~/projects/hl-bot && uv run hlbot report --send
 ```
 
+## Backtesting
+
+```bash
+# Replay an agent over real HL history with an explicit cost model.
+# --compare runs taker AND maker so you can see how much edge the spread eats.
+uv run hlbot backtest --agent twap_mr_v1 --coins BTC,ETH,SOL --days 30 --compare
+```
+
+The engine (`src/hl_bot/backtest/`) drives each agent's real `decide()`, simulates
+fills with fee + slippage + funding, and scores via the same `score_agent` used
+live — so backtest and production numbers can never silently disagree.
+
+## Strategy, review & the self-improvement loop
+
+- [`docs/REVIEW.md`](docs/REVIEW.md) — full code/system review and findings.
+- [`docs/ROADMAP_TO_1M.md`](docs/ROADMAP_TO_1M.md) — the numbers-first path to a
+  $1M portfolio and the promotion gates.
+- [`ralph/`](ralph/) — an autonomous loop that works the prioritized
+  [`ralph/BACKLOG.md`](ralph/BACKLOG.md): research → backtest → propose. Going
+  live stays human-gated.
+
+## Deploy
+
+One-command, idempotent 24/7 deploy (systemd timers, Litestream backups,
+health/heartbeat, optional self-improvement loop). Defaults to **paper**; going
+live is gated. See [`deploy/README.md`](deploy/README.md) and
+[`docs/INFRA.md`](docs/INFRA.md).
+
+```bash
+# Any Ubuntu host:
+sudo REPO_URL=https://github.com/<you>/hl-bot.git BRANCH=main bash deploy/install.sh
+# AWS (one apply -> EC2 already running paper): see deploy/aws/
+#   cd deploy/aws && terraform init && terraform apply -var key_name=... -var hl_address=0x...
+uv run hlbot doctor    # preflight: env, DB, configs, API-wallet, HL reachability
+uv run hlbot health    # ok/warn/down + heartbeat ping
+uv run hlbot ws        # WebSocket market-data service (writes a snapshot)
+```
+End-to-end runbook: [`docs/HOST_QUICKSTART.md`](docs/HOST_QUICKSTART.md). AWS:
+[`deploy/aws/README.md`](deploy/aws/README.md).
+
 ## Roadmap
 
-- [ ] Live order adapter (signed `hyperliquid-python-sdk` exchange.order) — gated behind `HL_SECRET_KEY` + `mode != paper`.
-- [ ] Per-agent position attribution from fills (replay engine).
-- [ ] WebSocket market view for sub-second ticks.
-- [ ] Backtest harness re-using the same scoring code.
+- [x] Backtest harness re-using the same scoring code.
+- [x] Strategy confirmation gate (`hlbot confirm` — walk-forward + cost stress).
+- [x] Maker (post-only) execution + cross-tick fill lifecycle (`--execution maker`).
+- [x] WebSocket market view + live liquidations feed (`hlbot ws`).
+- [x] 24/7 deployment automation + health/heartbeat + preflight.
+- [x] Carry strategies: `xfund_carry_v1` (market-neutral), `funding_carry_v1`.
+- [ ] Per-agent position attribution + funding from fills (replay engine) — B6/B7.
+- [ ] Book-aware maker pricing (post at touch/microprice using WS L2) — B-book.
 - [ ] LLM-reasoning agent template with auto-captured thought traces.

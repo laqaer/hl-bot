@@ -16,7 +16,7 @@ import urllib.request
 from pathlib import Path
 
 DB = Path(os.environ.get("HLBOT_DB", Path.home() / "hl-bot" / "data" / "hlbot.sqlite"))
-AGENTS = ["femr_v1", "twap_mr_v1", "liq_cascade_v1", "basis_v1"]
+AGENTS = ["femr_v1", "twap_mr_v1", "twap_mr_regime_v1", "liq_cascade_v1", "basis_v1"]
 
 
 def _windows(days: int) -> int:
@@ -55,7 +55,7 @@ def per_agent(conn, agent: str, days: int) -> dict:
         sharpe = None
 
     by_coin: dict[str, dict] = {}
-    for _, coin, sz, px, p, fee in fills:
+    for _, coin, _sz, _px, p, fee in fills:
         c = by_coin.setdefault(coin, {"n": 0, "net": 0.0})
         c["n"] += 1
         c["net"] += float(p or 0) - float(fee or 0)
@@ -66,7 +66,8 @@ def per_agent(conn, agent: str, days: int) -> dict:
 
 def acct_value() -> float:
     """Read live spot+perp from HL."""
-    addr = "0x5C3a67932Ca4026A6ABC18822Dc601BeD44f45a3"
+    addr = (os.environ.get("HL_TRADER_ADDRESS") or os.environ.get("HL_ADDRESS")
+            or "0x5C3a67932Ca4026A6ABC18822Dc601BeD44f45a3")
     try:
         with urllib.request.urlopen(urllib.request.Request(
             "https://api.hyperliquid.xyz/info",

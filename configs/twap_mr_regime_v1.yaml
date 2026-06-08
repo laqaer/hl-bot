@@ -1,0 +1,37 @@
+agent: twap_mr_regime_v1
+description: >-
+  TWAP mean-reversion guarded by a trend/regime filter — fades >2-sigma
+  deviations only when the local regime is choppy/range, never against a strong
+  breakout. The leading G0 candidate; baseline twap_mr bleeds by fading trends.
+mode: paper
+
+# Per-agent metrics only (sharpe/max_drawdown are account-level). Thresholds sized
+# for the small pilot notional. This agent must PROVE it beats baseline on real
+# sample before it earns size.
+goals:
+  primary:
+    metric: edge_bps
+    window: 7d
+    op: ">="
+    threshold: 0
+  secondary:
+    - {metric: net_pnl, window: 30d, op: ">=", threshold: 0}
+    - {metric: win_rate, window: 30d, op: ">=", threshold: 0.50}
+
+guardrails:
+  - {metric: net_pnl,  window: 24h, op: ">=", threshold: -30,
+     action: pause,  reason: "24h realized loss > $30"}
+  - {metric: edge_bps, window: 7d,  op: ">=", threshold: -10,
+     action: demote, reason: "7d realized edge < -10 bps after costs"}
+  - {metric: edge_bps, window: 24h, op: ">=", threshold: -40,
+     action: alert,  reason: "24h edge < -40 bps"}
+
+# paper -> live_small ONLY, behind strong sample + edge gates. Never auto-promotes
+# to full live. Enabling live is a human action (see docs/GO_LIVE.md).
+promotion:
+  from: paper
+  to: live_small
+  conditions:
+    - {metric: edge_bps, window: 30d, op: ">=", threshold: 5}
+    - {metric: net_pnl,  window: 30d, op: ">=", threshold: 50}
+    - {metric: n_trades, window: 30d, op: ">=", threshold: 200}

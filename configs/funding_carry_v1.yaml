@@ -1,0 +1,30 @@
+agent: funding_carry_v1
+description: >-
+  Single-name maker funding carry — enter the carry-collecting side on extreme
+  funding and HOLD to collect (no take-profit churn), exit on normalization /
+  wide stop / max-hold. The fixed-economics replacement for taker FEMR. Must pass
+  the G0 confirmation gate on real history before live wiring.
+mode: paper
+
+goals:
+  primary:
+    metric: edge_bps
+    window: 7d
+    op: ">="
+    threshold: 0
+  secondary:
+    - {metric: net_pnl, window: 30d, op: ">=", threshold: 0}
+
+guardrails:
+  - {metric: net_pnl,  window: 24h, op: ">=", threshold: -20,
+     action: pause,  reason: "24h realized loss > $20"}
+  - {metric: edge_bps, window: 7d,  op: ">=", threshold: -10,
+     action: demote, reason: "7d realized edge < -10 bps after costs"}
+
+promotion:
+  from: paper
+  to: live_small
+  conditions:
+    - {metric: edge_bps, window: 30d, op: ">=", threshold: 5}
+    - {metric: net_pnl,  window: 30d, op: ">=", threshold: 40}
+    - {metric: n_trades, window: 30d, op: ">=", threshold: 80}
