@@ -1,4 +1,4 @@
-"""Auto-tuner: read 7d fills, ask DeepSeek to propose param tweaks, apply if safe.
+"""Auto-tuner: read 7d fills, ask Claude Code Opus 4.8 Max for tweaks, apply if safe.
 
 Runs on demand / scheduled by Hermes cron. Reads the configured HLBOT_DB
 (synced from EC2). Writes proposed/applied tweaks to:
@@ -16,9 +16,9 @@ from __future__ import annotations
 import json
 import os
 import sqlite3
+import subprocess
 import sys
 import time
-import urllib.request
 from pathlib import Path
 
 DB = Path(os.environ.get("HLBOT_DB", Path.home() / "projects/hl-bot/data/hlbot-aws.sqlite"))
@@ -53,6 +53,10 @@ MAX_PER_TRADE_BY_AGENT = {
 }
 
 AGENTS = ["femr_v1", "twap_mr_v1", "liq_cascade_v1", "basis_v1"]
+CLAUDE_CODE_BIN = os.environ.get("CLAUDE_CODE_BIN", "claude")
+CLAUDE_CODE_MODEL = os.environ.get("CLAUDE_CODE_MODEL", "claude-opus-4-8")
+CLAUDE_CODE_EFFORT = os.environ.get("CLAUDE_CODE_EFFORT", "max")
+CLAUDE_CODE_TIMEOUT_S = int(os.environ.get("CLAUDE_CODE_TIMEOUT_S", "300"))
 
 
 def per_agent_summary(conn: sqlite3.Connection, agent: str) -> dict:
@@ -125,11 +129,7 @@ def current_params(agent: str) -> dict:
     return params
 
 
-def ask_deepseek(summaries: list[dict], current: dict[str, dict]) -> dict:
-    key = os.environ.get("OPENROUTER_API_KEY") or _read_env("OPENROUTER_API_KEY")
-    if not key:
-        return {"error": "OPENROUTER_API_KEY not set"}
-
+def ask_claude_code(summaries: list[dict], current: dict[str, dict]) -> dict:
     system = (
         "You are a quant strategist analyzing 7 days of live trading agent results "
         "to propose parameter tweaks. Output STRICT JSON only with this exact shape:\n"
@@ -149,44 +149,66 @@ def ask_deepseek(summaries: list[dict], current: dict[str, dict]) -> dict:
         "current_params": current,
         "param_bounds": {k: list(v) for k, v in BOUNDS.items()},
     }, default=str)
-
-    body = json.dumps({
-        "model": "deepseek/deepseek-v4-pro",
-        "messages": [
-            {"role": "system", "content": system},
-            {"role": "user", "content": user},
-        ],
-        "response_format": {"type": "json_object"},
-        "max_tokens": 1500,
-        "temperature": 0,
-    }).encode()
-    req = urllib.request.Request(
-        "https://openrouter.ai/api/v1/chat/completions",
-        data=body,
-        headers={
-            "Authorization": f"Bearer {key}",
-            "Content-Type": "application/json",
-            "HTTP-Referer": "https://github.com/laqaer/hl-bot",
-            "X-Title": "hl-bot-auto-tuner",
+    schema = json.dumps({
+        "type": "object",
+        "additionalProperties": {
+            "type": "object",
+            "additionalProperties": {"type": "number"},
         },
-    )
-    with urllib.request.urlopen(req, timeout=120) as r:
-        resp = json.loads(r.read())
-    content = resp["choices"][0]["message"]["content"]
-    return json.loads(content)
+    })
+    cmd = [
+        CLAUDE_CODE_BIN,
+        "-p",
+        "--model", CLAUDE_CODE_MODEL,
+        "--effort", CLAUDE_CODE_EFFORT,
+        "--tools", "",
+        "--output-format", "json",
+        "--json-schema", schema,
+        "--no-session-persistence",
+        "--system-prompt", system,
+    ]
 
+    # Force Claude Code to use its stored Claude Max/OAuth login rather than any
+    # Anthropic API key env vars that might be present in a cron shell.
+    env = os.environ.copy()
+    for key in ("ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_BASE_URL"):
+        env.pop(key, None)
 
-def _read_env(key: str) -> str | None:
-    """Best-effort env loader from ~/.env.hermes."""
-    env_path = Path.home() / ".env.hermes"
-    if not env_path.exists():
-        return None
-    for line in env_path.read_text().splitlines():
-        if "=" in line and not line.strip().startswith("#"):
-            k, v = line.split("=", 1)
-            if k.strip() == key:
-                return v.strip()
-    return None
+    try:
+        proc = subprocess.run(
+            cmd,
+            input=user,
+            text=True,
+            capture_output=True,
+            timeout=CLAUDE_CODE_TIMEOUT_S,
+            env=env,
+            check=False,
+        )
+    except FileNotFoundError:
+        return {"error": f"Claude Code binary not found: {CLAUDE_CODE_BIN}"}
+    except subprocess.TimeoutExpired:
+        return {"error": f"Claude Code timed out after {CLAUDE_CODE_TIMEOUT_S}s"}
+
+    if proc.returncode != 0:
+        detail = (proc.stderr or proc.stdout).strip().splitlines()[-3:]
+        return {"error": "Claude Code failed: " + " | ".join(detail)}
+
+    try:
+        wrapper = json.loads(proc.stdout)
+    except json.JSONDecodeError as exc:
+        return {"error": f"Claude Code returned non-JSON wrapper: {exc}"}
+    if wrapper.get("is_error"):
+        return {"error": f"Claude Code error: {wrapper.get('result') or wrapper}"}
+    content = wrapper.get("result")
+    if not isinstance(content, str):
+        return {"error": "Claude Code wrapper did not include a string result"}
+    try:
+        proposal = json.loads(content)
+    except json.JSONDecodeError as exc:
+        return {"error": f"Claude Code returned invalid proposal JSON: {exc}: {content[:300]}"}
+    if not isinstance(proposal, dict):
+        return {"error": "Claude Code proposal was not a JSON object"}
+    return proposal
 
 
 def validate_proposal(agent: str, current: dict, proposed: dict, summary: dict) -> tuple[dict, list[str]]:
@@ -270,8 +292,8 @@ def main() -> int:
         )
     lines.append("")
 
-    # Ask the model
-    proposal = ask_deepseek(summaries, current)
+    # Ask Claude Code / Claude Max.
+    proposal = ask_claude_code(summaries, current)
     if "error" in proposal:
         lines.append(f"⚠️ model call failed: {proposal['error']}")
         print("\n".join(lines))
