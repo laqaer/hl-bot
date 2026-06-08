@@ -68,6 +68,15 @@ def test_place_limit_order_requires_cloid():
     assert not res.ok and "cloid" in (res.error or "")
 
 
+def test_maker_limit_price():
+    from hl_bot.exec.orders import maker_limit_price
+    assert maker_limit_price(99.0, 101.0, True, 100.0) == 99.0     # buy joins best bid
+    assert maker_limit_price(99.0, 101.0, False, 100.0) == 101.0   # sell joins best ask
+    assert maker_limit_price(None, None, True, 100.0) == 100.0     # no book -> fallback mid
+    assert maker_limit_price(0, 0, False, 50.0) == 50.0            # bad book -> fallback
+    assert maker_limit_price(101.0, 99.0, True, 100.0) == 100.0    # crossed -> fallback (never cross)
+
+
 def test_resolve_trader_address(monkeypatch):
     from hl_bot.exec.orders import _resolve_trader_address
     monkeypatch.delenv("HL_TRADER_ADDRESS", raising=False)

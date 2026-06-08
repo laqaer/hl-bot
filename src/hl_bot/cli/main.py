@@ -596,7 +596,7 @@ def femr_tick(live: bool = False, execution: str = "taker"):
             stale_working,
             working_orders,
         )
-        from ..exec.orders import cancel_order, place_limit_order
+        from ..exec.orders import cancel_order, maker_limit_price, place_limit_order
         from ..ingest.hyperliquid import ingest_fills
         ingest_fills(conn, s.hl_address, s.hl_api_url)  # so cloid fills are visible
         for a in agents:
@@ -630,11 +630,14 @@ def femr_tick(live: bool = False, execution: str = "taker"):
                 if d.coin in working_orders(conn, d.agent):
                     console.print(f"[dim]SKIP {d.agent} {d.coin}: maker quote already resting[/dim]")
                     continue
-                res = place_limit_order(exchange, d.coin, is_buy, d.sz, d.px or 0,
+                bt = (view.book_top or {}).get(d.coin)
+                limit_px = maker_limit_price(
+                    bt[0] if bt else None, bt[1] if bt else None, is_buy, d.px or 0.0)
+                res = place_limit_order(exchange, d.coin, is_buy, d.sz, limit_px,
                                         post_only=True, cloid=d.cloid)
                 if res.status == "resting":
-                    console.print(f"[cyan]RESTING[/cyan] {d.coin} {'BUY' if is_buy else 'SELL'} {d.sz} @ ${d.px} oid={res.oid}")
-                    log_rest(conn, d.agent, d.coin, d.side, d.sz, d.px or 0, d.cloid, res.oid)
+                    console.print(f"[cyan]RESTING[/cyan] {d.coin} {'BUY' if is_buy else 'SELL'} {d.sz} @ ${limit_px} oid={res.oid}")
+                    log_rest(conn, d.agent, d.coin, d.side, d.sz, limit_px, d.cloid, res.oid)
                 elif res.ok:  # filled immediately (rare for post-only)
                     console.print(f"[bold green]FILLED(maker)[/bold green] {d.coin} @ ${res.avg_px}")
                     if res.avg_px:

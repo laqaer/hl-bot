@@ -440,6 +440,19 @@ def _round_price(exchange: Exchange, coin: str, px: float) -> float:
     return round_price_to(px, _SZ_DECIMALS_CACHE.get(coin, 5))
 
 
+def maker_limit_price(
+    bid: float | None, ask: float | None, is_buy: bool, fallback: float
+) -> float:
+    """Passive limit price that rests as a maker by joining the near touch:
+    best bid for a buy, best ask for a sell. Falls back to ``fallback`` (e.g. the
+    mid) when the L2 book isn't available or is crossed, so the order never
+    crosses the spread and stays post-only-valid.
+    """
+    if bid and ask and bid > 0 and ask > 0 and bid < ask:
+        return bid if is_buy else ask
+    return fallback
+
+
 def place_limit_order(
     exchange: Exchange, coin: str, is_buy: bool, sz: float, limit_px: float,
     *, post_only: bool = True, reduce_only: bool = False, cloid: str | None = None,
