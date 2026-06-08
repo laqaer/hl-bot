@@ -194,3 +194,39 @@ steps are operator/network actions.
 **What's next (loop).** B10 (WebSocket market view — sub-second mids, L2 depth,
 real liquidations), B6/B7 (per-agent funding + Sharpe), B-book (book-aware maker
 pricing), B14a (codify systemd/Litestream deploy in-repo).
+
+---
+
+## Iteration 5 — 2026-06-08 — automate everything + deployable
+
+**Context.** "Automate everything; get it to deployment." Built the ops layer, the
+one-command deploy, and the WebSocket signal upgrade.
+
+**Changed (3 commits).**
+- **Ops automation.** `hlbot health` (ok/warn/down from tick/ingest freshness,
+  equity, paused agents, 24h PnL) pings a HEALTHCHECK_URL dead-man switch +
+  Telegram-alerts; `hlbot doctor` preflight (env, DB, configs, API-wallet perms,
+  HL reachability) gates deploy/go-live. (`ops/health.py`, `ops/doctor.py`, tests.)
+- **Deployment automation (B14a).** `deploy/install.sh` — idempotent one-command
+  install on a fresh Ubuntu host (uv, locked-down hlbot user, systemd timers,
+  /etc/hl-bot/env 600, optional Litestream S3 backups, doctor preflight). Units:
+  hlbot-tick (5m: ingest→agents→supervisor→health), hlbot-report (daily),
+  hlbot-loop (Ralph loop, manual-enable). PAPER by default; live = HLBOT_TICK_ARGS
+  + agent_state per GO_LIVE. `deploy/README.md`, Makefile check/deploy.
+- **B10 — WebSocket market view.** `ingest/ws.py` MarketState + `hlbot ws` service
+  → snapshot; live tick overlays it for sub-second mids, L2 book_top, and a real
+  liquidations feed (fixes the dead liq_cascade, C6), REST fallback. State machine
+  unit-tested with synthetic frames.
+
+**Evidence.** 69 → **82 tests pass**; lint clean; CLI imports; shell scripts
+`bash -n` clean.
+
+**Deployability.** The repo is now **turnkey-deployable to run 24/7 in paper**:
+`bash deploy/install.sh` → systemd timers + monitoring + backups + WS feed. Going
+live remains the gated sequence in docs/GO_LIVE.md (confirm a strategy on real
+history → API wallet → enable agent → set live args). The autonomous loop can run
+as a service to keep improving the repo.
+
+**What's next (loop).** B6/B7 (per-agent funding attribution + Sharpe so gates
+measure truth), B-book (book-aware maker pricing using WS L2), userFills WS for
+instant maker-fill detection, and B4-RUN (confirm carry strategies on real data).

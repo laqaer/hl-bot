@@ -55,9 +55,10 @@ Keep it ruthlessly prioritized: the top item should always be the highest-levera
 
 ## P2 — cadence, structure, devops
 
-- [ ] **B10 — WebSocket market view** (`wss://api.hyperliquid.xyz/ws`): l2Book,
-  trades (→ real liquidations, fixes C6), allMids, activeAssetCtx, userFills.
-  Highest-value free signal upgrade. (REVIEW C7; docs/INFRA.md.)
+- [x] **B10 — WebSocket market view.** Done: `ingest/ws.py` MarketState +
+  `hlbot ws` service writes a snapshot; live tick overlays it (HLBOT_WS_SNAPSHOT)
+  for sub-second mids, L2 book_top, and a real liquidations feed (fixes C6), with
+  REST fallback. Next: userFills WS for instant maker-fill detection. (Iteration 5.)
 - [ ] **B-book — Book-aware maker pricing.** Post at touch/microprice using L2
   depth (needs B10) instead of mid; raises maker fill rate.
 - [ ] **B11 — Retire or feed liq_cascade.** Source real liquidation data (WS
@@ -106,3 +107,8 @@ Keep it ruthlessly prioritized: the top item should always be the highest-levera
 - [x] **B2b — maker live execution lifecycle** + `--execution maker`. (Iteration 4.)
 - [x] **B-INFRA — docs/INFRA.md** 24/7 deploy + signal/execution investment guide.
   (Iteration 4.)
+- [x] **Ops automation — `hlbot health` (heartbeat) + `hlbot doctor` (preflight).**
+  (Iteration 5.)
+- [x] **B14a — deployment automation** (`deploy/`: install.sh, systemd units,
+  Litestream, loop service, run-tick). (Iteration 5.)
+- [x] **B10 — WebSocket market view + live liquidations.** (Iteration 5.)

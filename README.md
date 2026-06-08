@@ -108,11 +108,28 @@ live — so backtest and production numbers can never silently disagree.
   [`ralph/BACKLOG.md`](ralph/BACKLOG.md): research → backtest → propose. Going
   live stays human-gated.
 
+## Deploy
+
+One-command, idempotent 24/7 deploy (systemd timers, Litestream backups,
+health/heartbeat, optional self-improvement loop). Defaults to **paper**; going
+live is gated. See [`deploy/README.md`](deploy/README.md) and
+[`docs/INFRA.md`](docs/INFRA.md).
+
+```bash
+sudo REPO_URL=https://github.com/<you>/hl-bot.git BRANCH=main bash deploy/install.sh
+uv run hlbot doctor    # preflight: env, DB, configs, API-wallet, HL reachability
+uv run hlbot health    # ok/warn/down + heartbeat ping
+uv run hlbot ws        # WebSocket market-data service (writes a snapshot)
+```
+
 ## Roadmap
 
 - [x] Backtest harness re-using the same scoring code.
-- [ ] Maker (post-only) execution — quantify and kill the taker tax.
-- [ ] Live order adapter hardening — gated behind `HL_SECRET_KEY` + `mode != paper`.
-- [ ] Per-agent position attribution + funding from fills (replay engine).
-- [ ] WebSocket market view for sub-second ticks.
+- [x] Strategy confirmation gate (`hlbot confirm` — walk-forward + cost stress).
+- [x] Maker (post-only) execution + cross-tick fill lifecycle (`--execution maker`).
+- [x] WebSocket market view + live liquidations feed (`hlbot ws`).
+- [x] 24/7 deployment automation + health/heartbeat + preflight.
+- [x] Carry strategies: `xfund_carry_v1` (market-neutral), `funding_carry_v1`.
+- [ ] Per-agent position attribution + funding from fills (replay engine) — B6/B7.
+- [ ] Book-aware maker pricing (post at touch/microprice using WS L2) — B-book.
 - [ ] LLM-reasoning agent template with auto-captured thought traces.
