@@ -385,6 +385,92 @@ def close_position(exchange: Exchange, coin: str, cloid: str | None = None) -> O
 
 
 # ---------------------------------------------------------------------------
+# Maker (post-only) execution
+# ---------------------------------------------------------------------------
+#
+# The book bleeds because every entry crosses the spread as a taker. Passive
+# (post-only / "Alo") limit orders earn the spread instead of paying it. A
+# post-only order that would cross is rejected rather than filled, so it can
+# never accidentally become a taker. It also won't fill immediately — callers
+# must track resting orders across ticks (see has_resting_order); the synchronous
+# market path stays the default until that async handling lands.
+
+
+def round_price_to(px: float, sz_decimals: int, max_decimals: int = 6) -> float:
+    """Round a price to Hyperliquid's tick rules.
+
+    HL accepts prices with at most 5 significant figures AND at most
+    ``max_decimals - sz_decimals`` decimal places (max_decimals is 6 for perps,
+    8 for spot); integer prices are always valid. Returns ``px`` unchanged for
+    non-positive input.
+    """
+    if px <= 0:
+        return px
+    sig = 5
+    if px >= 1:
+        int_digits = math.floor(math.log10(px)) + 1
+        dec_for_sig = max(0, sig - int_digits)
+    else:
+        dec_for_sig = sig + (-math.floor(math.log10(px)) - 1)
+    decimals = max(0, min(dec_for_sig, max_decimals - sz_decimals))
+    return round(px, decimals)
+
+
+def _round_price(exchange: Exchange, coin: str, px: float) -> float:
+    if coin not in _SZ_DECIMALS_CACHE:
+        meta = _retry(lambda: exchange.info.meta()) or {}
+        for asset in meta.get("universe", []) or []:
+            name = asset.get("name")
+            if name:
+                _SZ_DECIMALS_CACHE[str(name)] = int(asset.get("szDecimals", 5) or 0)
+    return round_price_to(px, _SZ_DECIMALS_CACHE.get(coin, 5))
+
+
+def place_limit_order(
+    exchange: Exchange, coin: str, is_buy: bool, sz: float, limit_px: float,
+    *, post_only: bool = True, reduce_only: bool = False, cloid: str | None = None,
+) -> OrderResult:
+    """Place a resting limit order (post-only by default -> always maker).
+
+    A post-only order returns status ``resting`` when it rests as a maker (the
+    expected path) and ``rejected`` if it would have crossed. It does NOT fill
+    immediately; track it via has_resting_order and reconcile fills on a later
+    tick.
+    """
+    if not cloid:
+        return OrderResult(ok=False, status="error", error="SAFETY: cloid required")
+    rounded_sz = _round_order_size(exchange, coin, sz)
+    if rounded_sz <= 0:
+        return OrderResult(ok=False, status="error", error=f"rounded size is zero: requested {sz}")
+    rounded_px = _round_price(exchange, coin, limit_px)
+    if rounded_px <= 0:
+        return OrderResult(ok=False, status="error", error=f"bad limit px: {limit_px}")
+    tif = "Alo" if post_only else "Gtc"
+    try:
+        res = _retry(lambda: exchange.order(
+            name=coin, is_buy=is_buy, sz=rounded_sz, limit_px=rounded_px,
+            order_type={"limit": {"tif": tif}},
+            reduce_only=reduce_only, cloid=_as_cloid(cloid),
+        ))
+    except Exception as e:  # noqa: BLE001
+        log.exception("place_limit_order failed")
+        return OrderResult(ok=False, status="error", error=str(e))
+    return _parse_response(res or {})
+
+
+def has_resting_order(info: Info, coin: str, address: str = HL_TRADER_ADDRESS) -> bool:
+    """True if the account already has an open (resting) order on ``coin``.
+
+    Used to avoid stacking duplicate maker orders while one is still working.
+    """
+    try:
+        orders = _retry(lambda: info.open_orders(address)) or []
+    except Exception:  # noqa: BLE001
+        return False
+    return any((o or {}).get("coin") == coin for o in orders)
+
+
+# ---------------------------------------------------------------------------
 # Telegram alerts (best-effort; failures don't break the bot)
 # ---------------------------------------------------------------------------
 
