@@ -19,6 +19,7 @@ from ..agents.liq_cascade import LiqCascadeAgent
 from ..agents.meta_allocator import MetaAllocator, MetaAllocatorConfig
 from ..agents.runtime import run_tick
 from ..agents.twap_mr import TwapMrAgent
+from ..agents.twap_mr_regime import TwapMrRegimeAgent
 from ..agents.veto import VetoAgent
 from ..config import CONFIG_DIR, Settings
 from ..db.schema import init_db
@@ -214,6 +215,7 @@ def _enrich_view(view, api_url: str, vol: dict[str, float]) -> None:
     top_coins = [c for c, _ in top]
 
     candles_1h: dict[str, dict] = {}
+    closes_by_coin: dict[str, list[float]] = {}
     spot_mids: dict[str, float] = {}
     liquidations: list[dict] = []
 
@@ -248,6 +250,7 @@ def _enrich_view(view, api_url: str, vol: dict[str, float]) -> None:
                 var = sum((p - mean) ** 2 for p in pxs) / len(pxs)
                 sigma = var ** 0.5
                 candles_1h[coin] = {"vwap": vwap, "sigma": sigma, "n": len(pxs)}
+                closes_by_coin[coin] = pxs
             except Exception:  # noqa: BLE001
                 continue
 
@@ -326,6 +329,7 @@ def _enrich_view(view, api_url: str, vol: dict[str, float]) -> None:
             pass
 
     view.extra["candles_1h"] = candles_1h
+    view.extra["closes"] = closes_by_coin
     view.extra["spot_mids"] = spot_mids
     view.extra["liquidations"] = liquidations
 
@@ -578,7 +582,12 @@ def femr_tick(live: bool = False):
                                      slippage_pct=0.01, cloid=d.cloid)
             if res.ok:
                 console.print(f"[bold green]FILLED[/bold green] {d.coin} {'BUY' if is_buy else 'SELL'} {res.filled_sz} @ ${res.avg_px}")
-                # Log place ONLY after fill confirmed
+                # Log place ONLY after fill confirmed, with the REAL fill px/sz
+                # (not the pre-trade mid) so downstream stops/TPs key off truth.
+                if res.avg_px:
+                    d.px = res.avg_px
+                if res.filled_sz:
+                    d.sz = res.filled_sz
                 log_decision(conn, d)
             else:
                 console.print(f"[red]REJECT[/red] {d.coin}: {res.status} — {res.error}")
@@ -593,7 +602,9 @@ def femr_tick(live: bool = False):
             if res.ok:
                 console.print(f"[bold]CLOSED[/bold] {d.coin} @ ${res.avg_px}")
                 # Log the flatten immediately so ownership clears this tick rather
-                # than waiting for next-tick reconciliation.
+                # than waiting for next-tick reconciliation. Record the real exit px.
+                if res.avg_px:
+                    d.px = res.avg_px
                 log_decision(conn, d)
                 conn.commit()
             else:
@@ -626,6 +637,7 @@ def backtest(
 
     factories = {
         "twap_mr_v1": lambda conn: TwapMrAgent(config={}, conn=conn),
+        "twap_mr_regime_v1": lambda conn: TwapMrRegimeAgent(config={}, conn=conn),
         "femr_v1": lambda conn: FemrAgent(config={}, conn=conn),
         "liq_cascade_v1": lambda conn: LiqCascadeAgent(config={}, conn=conn),
         "basis_v1": lambda conn: BasisAgent(config={}, conn=conn),
