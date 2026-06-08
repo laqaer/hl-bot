@@ -27,12 +27,16 @@ Keep it ruthlessly prioritized: the top item should always be the highest-levera
   Track resting orders across ticks, reconcile fills from `userFills`/`open_orders`,
   cancel stale quotes, then switch live *entries* to `place_limit_order` (exits
   stay taker). The payoff half of B2.
-- [ ] **B4 — Maker carry strategy.** A hold-to-collect funding strategy that
-  enters maker, holds while |funding| stays extreme, and only collects (no tight
-  TP/SL churn). Backtest with funding folded in. (Fixes FEMR's economics.)
-- [ ] **B5 — Walk-forward + cost-stress harness.** Add a helper that splits
-  frames into in/out-of-sample windows and re-runs the cost model at 1×/2×/3×
-  slippage, so "edge" must survive realistic stress before G0.
+- [x] **B4 — Maker carry strategies.** Done: `funding_carry_v1` (single-name
+  hold-to-collect, no TP churn) and `xfund_carry_v1` (market-neutral
+  cross-sectional). Engine `liquidate_at_end` folds held funding into the realized
+  scorecard. Confirmed on synthetic funding; need real-data G0 (B1). (Iteration 3.)
+- [x] **B5 — Confirmation harness (G0 as code).** Done: `backtest/confirm.py`
+  walk-forward + cost ladder (maker/taker 1×/2×/3×) → PASS/FAIL; `hlbot confirm`.
+  (Iteration 3.)
+- [ ] **B4-RUN — Confirm carry strategies on real history.** Run `hlbot confirm
+  --agent xfund_carry_v1 --prefer maker` (and funding_carry_v1) on a net host;
+  promote to the paper roster if confirmed. Blocked by B1 network.
 
 ## P1 — honest measurement (so the supervisor can trust itself)
 

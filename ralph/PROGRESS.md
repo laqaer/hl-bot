@@ -117,3 +117,46 @@ goals configs validate; CLI imports clean with the 5-agent roster.
 **What's next (loop).** B2b (async maker fill reconciliation + route live entries
 to maker) — the payoff half of B2 — and B6/B7 (per-agent funding + Sharpe) so the
 gates measure truth.
+
+---
+
+## Iteration 3 — 2026-06-08 — new strategies + the confirmation gate
+
+**Context.** Operator approved the full strategy slate. Built the confirmation
+machinery first (so "confirm a strategy" is one rigorous command), then the two
+highest-conviction NEW strategies and confirmed their mechanics on synthetic
+funding scenarios. Real-history confirmation is one command on a net host (B1).
+
+**Changed (2 commits).**
+- **B5 — confirmation harness (G0 as code).** `backtest/confirm.py`: walk-forward
+  (in-sample vs held-out OOS) + cost stress (maker, taker 1×/2×/3× slippage) →
+  explicit PASS/FAIL with 2×-slippage robustness. `hlbot confirm`. Tests prove it
+  confirms a real range-bound MR edge and rejects a trend-fader.
+- **B4 — two maker/carry strategies (slate #1, #2).**
+  - `xfund_carry_v1`: market-neutral cross-sectional funding carry (short top-K
+    highest-funding, long bottom-K most-negative; dollar-neutral). Highest
+    conviction; best fit for capital/AUM.
+  - `funding_carry_v1`: single-name maker carry (hold to collect, no TP churn,
+    wide stop) — fixed-economics replacement for taker FEMR.
+  - Engine `liquidate_at_end` so held-carry funding lands in the realized
+    scorecard. Both registered in backtest/confirm factories + KNOWN_AGENTS +
+    gated goals configs. Confirm-only until they pass G0 on real data.
+
+**Evidence.** 62 → **65 tests pass**; lint clean; all 6 goals configs validate.
+Synthetic: single-name carry collects funding from an extreme coin; x-sectional
+is two-sided and skips calm-funding coins; harness confirms MR-maker and rejects
+trend-taker.
+
+**Slate status.** #1 xfund_carry ✅ built+confirmed(synthetic). #2 funding_carry
+✅ built+confirmed(synthetic). #3 regime-maker MR — the *strategy* is built and
+confirmable via `confirm --prefer maker`; the live maker *execution* plumbing is
+B2b (next, scoped carefully — it touches the live order path so I won't rush it).
+#4 basis — already an agent and confirmable via the harness; low conviction.
+
+**Operator action (advances all four):** on an HL-reachable host —
+`uv run hlbot backtest-fetch --coins BTC,ETH,SOL,HYPE,AVAX,LINK --days 120` then
+`uv run hlbot confirm --agent xfund_carry_v1 --prefer maker` (repeat per agent).
+Confirmed agents earn the paper roster, then the live gate in docs/GO_LIVE.md.
+
+**What's next (loop).** B2b (async maker live execution) and B6/B7 (honest
+per-agent funding + Sharpe so the gates measure truth).
