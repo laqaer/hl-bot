@@ -29,6 +29,62 @@ This guide assumes you've never used AWS. ~30–45 min, mostly waiting.
 
 ---
 
+## FAST PATH — come up live-armed (you accept the risk)
+
+Skips the paper-first dance: the box boots already armed for live (a strategy
+enabled, maker execution, self-improvement on). It places **no trades until you
+add the API wallet** (one command after boot), so it's "fast but not reckless".
+Make the repo public first (above). Launch EC2 (Ubuntu **Arm**, t4g.small, SSH=My
+IP, 20 GB) and paste this **User data**, changing the two CHANGE_ME lines:
+
+```bash
+#!/usr/bin/env bash
+set -eux
+apt-get update -y && apt-get install -y git curl
+mkdir -p /etc/hl-bot
+cat >/etc/hl-bot/env <<'ENV'
+HL_ADDRESS=0xCHANGE_ME_FUNDED_ADDRESS
+HL_TRADER_ADDRESS=0xCHANGE_ME_FUNDED_ADDRESS
+HL_API_URL=https://api.hyperliquid.xyz
+HLBOT_DB=/opt/hl-bot/data/hlbot.sqlite
+HLBOT_HOME=/opt/hl-bot
+HLBOT_PAPER=1
+HLBOT_AUTO_UPDATE=1
+HLBOT_TICK_ARGS=--live --execution maker
+HLBOT_WS_SNAPSHOT=/opt/hl-bot/data/ws_snapshot.json
+HLBOT_WS_COINS=BTC,ETH,SOL,HYPE
+ANTHROPIC_API_KEY=sk-ant-CHANGE_ME_OR_LEAVE_BLANK
+HEALTHCHECK_URL=
+TG_BOT_TOKEN=
+TG_CHAT_ID=
+ENV
+git clone -b main https://github.com/laqaer/hl-bot.git /tmp/hl-bot-src
+REPO_URL=https://github.com/laqaer/hl-bot.git BRANCH=main bash /tmp/hl-bot-src/deploy/install.sh
+sudo -u hlbot tee /opt/hl-bot/_arm.py >/dev/null <<'PY'
+from hl_bot.config import Settings
+from hl_bot.db.schema import init_db
+c = init_db(Settings.from_env().db_path)
+c.execute("INSERT INTO agent_state(agent,mode,enabled) VALUES('twap_mr_regime_v1','live_small',1) "
+          "ON CONFLICT(agent) DO UPDATE SET mode='live_small',enabled=1")
+print("armed twap_mr_regime_v1 live_small")
+PY
+sudo -u hlbot bash -lc 'cd /opt/hl-bot && uv run python _arm.py'
+systemctl enable --now hlbot-loop || true
+```
+
+Then after ~4 min, EC2 → Connect, and paste the **one** command that gives it the
+trading key (HL app → More → API → create an API/agent wallet — trade-only):
+```bash
+sudo -u hlbot mkdir -p /home/hlbot/.config/hermes
+sudo -u hlbot bash -c 'printf "HL_BOT_API_PRIVATE_KEY=0xYOURKEY\nHL_BOT_API_WALLET_ADDRESS=0xYOURADDR\n" > /home/hlbot/.config/hermes/hl-bot-api-wallet.env'
+sudo chmod 600 /home/hlbot/.config/hermes/hl-bot-api-wallet.env
+```
+It starts trading (tiny, guardrailed) on the next 5-minute tick. Off switch:
+`sudo sed -i 's|^HLBOT_TICK_ARGS=.*|HLBOT_TICK_ARGS=|' /etc/hl-bot/env && sudo systemctl restart hlbot-tick.timer`.
+
+> Strongly recommended 2-min sanity check before/while it runs (read-only):
+> `sudo -u hlbot bash -lc 'cd /opt/hl-bot && uv run hlbot confirm --agent twap_mr_regime_v1 --prefer taker'`.
+
 ## Part A — Deploy (paper, ~15 min)
 
 ### A1. Launch a server (AWS Console — easiest)
