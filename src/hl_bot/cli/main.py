@@ -414,6 +414,7 @@ def femr_tick(live: bool = False):
             "funding_exit_per_hr": 0.00005,
         }), conn=conn),
         TwapMrAgent(config=_cfg("twap_mr_v1", {}), conn=conn),
+        TwapMrRegimeAgent(config=_cfg("twap_mr_regime_v1", {}), conn=conn),
         LiqCascadeAgent(config=_cfg("liq_cascade_v1", {}), conn=conn),
         BasisAgent(config=_cfg("basis_v1", {}), conn=conn),
     ]

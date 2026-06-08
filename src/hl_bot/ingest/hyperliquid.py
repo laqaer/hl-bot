@@ -31,6 +31,7 @@ KNOWN_AGENTS = [
     "femr_v1",
     "funding_arb_v1",
     "twap_mr_v1",
+    "twap_mr_regime_v1",
     "liq_cascade_v1",
     "basis_v1",
     "veto_v1",

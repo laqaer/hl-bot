@@ -16,7 +16,7 @@ import urllib.request
 from pathlib import Path
 
 DB = Path(os.environ.get("HLBOT_DB", Path.home() / "hl-bot" / "data" / "hlbot.sqlite"))
-AGENTS = ["femr_v1", "twap_mr_v1", "liq_cascade_v1", "basis_v1"]
+AGENTS = ["femr_v1", "twap_mr_v1", "twap_mr_regime_v1", "liq_cascade_v1", "basis_v1"]
 
 
 def _windows(days: int) -> int:
