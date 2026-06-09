@@ -171,7 +171,7 @@ def ask_claude_code(summaries: list[dict], current: dict[str, dict]) -> dict:
     # Force Claude Code to use its stored Claude Max/OAuth login rather than any
     # Anthropic API key env vars that might be present in a cron shell.
     env = os.environ.copy()
-    for key in ("ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_BASE_URL"):
+    for key in ("ANTHROPIC_API_KEY", "ANTHROPIC_TOKEN", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_BASE_URL"):
         env.pop(key, None)
 
     try:
