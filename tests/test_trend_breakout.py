@@ -119,3 +119,75 @@ def test_trailing_channel_exits_on_reversal():
     actions = [r[0] for r in conn.execute(
         "SELECT action FROM agent_decisions WHERE action IN ('place','flatten') ORDER BY ts_ms").fetchall()]
     assert "place" in actions and "flatten" in actions
+
+
+def _decisions(view) -> set[tuple[str, str | None, str | None]]:
+    """(action, coin, side) tuples the agent emits on `view`, no open positions."""
+    conn = init_db(":memory:")
+    out = TrendBreakoutAgent(config={}, conn=conn).decide(view)
+    return {(d.action, d.coin, d.side) for d in out}
+
+
+def test_live_closes_loader_matches_backtest_frame_and_decisions():
+    """Live deployment parity: the `build_closes_1h` loader must feed the agent the
+    SAME 1h close series the backtester scores on, so the paper agent reproduces the
+    G0-confirmed signal (B1d-trend-deploy Slice 2 — "evidence before capital").
+
+    Construct one set of raw 1h candles, then derive `closes` two ways — the live
+    path (`build_closes_1h`) and the backtest path (`build_frames` -> last Frame) —
+    and assert (a) the per-coin series are byte-identical and (b) the agent emits the
+    SAME entry/exit decisions on each. Series length (260) exceeds `closes_window`
+    (240) so the window cap is actually exercised, and the off-by-one current-bar
+    inclusion (both must end on the latest close) is what a wiring bug would break.
+    Volume + mids are held constant across both views to isolate the closes series —
+    the only input Slice 1 changed and the actual deployment risk.
+    """
+    from hl_bot.agents.base import MarketView
+    from hl_bot.backtest.data import build_closes_1h, build_frames
+
+    n = 260
+    window = 240
+    # BTC ramps to a new high on the last bar (long breakout); SOL ramps down to a
+    # new low (short breakout); ETH is flat (no breakout) — covers entry + no-entry.
+    rows = {
+        "BTC": [{"t": i * HOUR, "c": 100.0 + i, "v": 1.0} for i in range(n)],
+        "ETH": [{"t": i * HOUR, "c": 500.0, "v": 1.0} for i in range(n)],
+        "SOL": [{"t": i * HOUR, "c": 1000.0 - i, "v": 1.0} for i in range(n)],
+    }
+    now_ms = (n - 1) * HOUR + HOUR // 2  # just after the latest bar opens
+
+    # --- live path ---
+    def post_fn(payload):
+        req = payload["req"]
+        coin = req["coin"]
+        s, e = req["startTime"], req["endTime"]
+        return [r for r in rows.get(coin, []) if s <= r["t"] <= e]
+
+    live_closes = build_closes_1h(
+        post_fn, ["BTC", "ETH", "SOL"], closes_window=window, now_ms=now_ms)
+
+    # --- backtest path: closes_window matches the live loader's default (240) ---
+    frames = build_frames(rows, vwap_window=10, closes_window=window, warmup=10)
+    last = frames[-1]
+    bt_closes = {k: list(v) for k, v in last.closes.items()}
+
+    # (a) the two closes series are identical per coin
+    assert set(live_closes) == set(bt_closes)
+    for coin in bt_closes:
+        assert live_closes[coin] == bt_closes[coin], f"{coin} closes diverge live vs sim"
+        assert len(bt_closes[coin]) == window, "window cap exercised (series was longer)"
+        assert bt_closes[coin][-1] == rows[coin][-1]["c"], "both end on the latest close"
+
+    # (b) the agent makes the SAME decisions on each view (volume + mids held equal)
+    vol = {c: 50_000_000.0 for c in rows}
+    mids = dict(last.mids)
+    live_view = MarketView(ts_ms=now_ms, mids=mids,
+                           extra={"closes": live_closes, "day_ntl_vlm": vol})
+    bt_view = MarketView(ts_ms=last.ts_ms, mids=mids,
+                         extra={"closes": bt_closes, "day_ntl_vlm": vol})
+    live_d = _decisions(live_view)
+    bt_d = _decisions(bt_view)
+    assert live_d == bt_d, f"live vs sim decisions diverge: {live_d} != {bt_d}"
+    # and the signal actually fired (not a vacuous both-empty match)
+    assert ("place", "BTC", "B") in live_d   # new-high long
+    assert ("place", "SOL", "A") in live_d   # new-low short

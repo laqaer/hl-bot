@@ -1562,3 +1562,56 @@ roster over the ~20 liquid coins (config done Iter 30), and add a parity check t
 live signal on a captured view matches the backtest signal on the equivalent frame.
 Then the G1 paper clock starts (>=30d, edge>=+5bps, >=150 trades). Secondary unchanged:
 a longer-history (>90d) confirm for G0 stability across more regime cycles.
+
+---
+
+## Iteration 32 — 2026-06-08 — B1d-trend-deploy Slice 2: trend_breakout wired to the PAPER roster + live-vs-sim closes-parity proof — the G0-confirmed engine starts its G1 paper clock.
+
+**Context.** Iter 30 cleared G0 with `trend_breakout_v1` (20-coin breadth, CONFIRMED
+maker+taker, cost-robust to taker-3×). Iter 31 (Slice 1) removed the deployment
+blocker by making the live `_enrich_view` feed `view.extra['closes']` real **1h**
+bars via `build_closes_1h` (was 60×1m). Slice 2 is the actual roster wiring + the
+"evidence before capital" parity check it was gated on: prove the live agent
+reproduces the backtested signal before the paper track record can be trusted.
+
+**Changed (1 commit).**
+- **`cli/main.py::femr_tick`** — added `TrendBreakoutAgent(config=_cfg(
+  "trend_breakout_v1", {}), conn=conn)` to the agent roster (after the two TWAP
+  agents). `{}` defaults = the agent's G0-confirmed params (24/12 Donchian, 0.05
+  stop, 96h max-hold, 100/300/4 notional); operator can override via
+  agent_overrides.json. The roster already runs on the **top-20-by-volume** universe
+  `_enrich_view` builds, and (since Slice 1) feeds it real 1h closes — so the paper
+  agent consumes the SAME universe + series the backtest confirmed on. **Paper by
+  default**; in `--live` it is filtered out by `_filter_live_agents_by_state` unless
+  an `agent_state` row enables it in live_small/live (a human action, docs/GO_LIVE.md)
+  — so this wiring touches no capital.
+- **`tests/test_trend_breakout.py`** (+1) —
+  `test_live_closes_loader_matches_backtest_frame_and_decisions`: from one set of raw
+  1h candles (260 bars > 240 window, so the cap is exercised), derive `closes` two
+  ways — live `build_closes_1h` vs backtest `build_frames`→last `Frame.closes` — and
+  assert (a) the per-coin series are **byte-identical** (and both end on the latest
+  close: the off-by-one a wiring bug would break), and (b) the agent emits **identical**
+  (action, coin, side) decisions on each view (volume + mids held equal to isolate the
+  closes series, the only input Slice 1 changed). The signal actually fires on both
+  (BTC new-high → long, SOL new-low → short; ETH flat → no entry), so it is not a
+  vacuous both-empty match. (157 → **158 tests pass**.)
+
+**Evidence (tests/lint).** 158 pass; `ruff check src tests scripts` clean. The parity
+test is the deployment evidence: live path == sim path on identical inputs, so the
+paper agent runs the exact strategy that cleared G0 (no re-confirmation of edge here —
+edge numbers stand from Iter 30's `hlbot confirm`).
+
+**Why it matters.** The mission's candidate engine (Iter 30) is now actually *running*
+in paper on the roster, not just confirmed in a backtest. This starts the **G1 paper
+gate** clock: >=30d live-paper, edge >= +5bps, >=150 trades, no guardrail breach
+(`configs/trend_breakout_v1.yaml`). G1 is the first gate that measures the edge on
+*forward, unseen* data at real cadence — the honest test the carry overfits never
+survived. Live promotion stays human-gated.
+
+**What's next (loop).** Let the paper clock run; surface a per-agent paper scorecard
+for trend_breakout (edge_bps / n_trades / win_rate over the trailing window) so G1
+progress is observable without re-deriving it by hand — the `track-record` / supervisor
+plumbing already computes per-agent edge, so this is wiring, not new math. Secondary
+(unchanged): a longer-history (>90d) confirm for G0 stability across more regime cycles;
+and the remaining B1d candidate (i) spot-vs-perp basis at funding deciles if a second
+uncorrelated edge is wanted.

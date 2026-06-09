@@ -17,7 +17,7 @@ Keep it ruthlessly prioritized: the top item should always be the highest-levera
   ex-top still +$87.77 — not a single-name artifact. (Iteration 30, numbers in
   PROGRESS.) The 4-major and 10-coin universes do NOT clear it (in-sample +1.1 /
   −5.2bps) — the edge REQUIRES the wide universe.
-- [~] **B1d-trend-deploy — Wire trend_breakout to PAPER on the 20-coin universe.**
+- [x] **B1d-trend-deploy — Wire trend_breakout to PAPER on the 20-coin universe.**
   G0→paper is the next gate. **BLOCKER (honest):** live `cli/main.py::_enrich_view`
   fills `view.extra['closes']` with **60×1-MINUTE** candles (the VWAP feed), but the
   backtested trend signal consumes **1-HOUR bars** (`entry_lookback=24` = 24 *hours*).
@@ -28,10 +28,16 @@ Keep it ruthlessly prioritized: the top item should always be the highest-levera
   the backtester's own `paginate_by_time`+`_closes_vols` so live == sim; unit-tested
   offline. `_enrich_view` now populates `view.extra['closes']` from it (was 1m). This
   also aligns the *other* closes consumers (twap_mr_regime, xfund_carry) with their
-  backtest contract. **Slice 2 (remaining):** add `TrendBreakoutAgent` (with
-  `configs/trend_breakout_v1.yaml`, done Iter 30) to the paper roster over ~20 liquid
-  coins; verify it produces the same signal as the backtest. Live stays human-gated.
-  Then the G1 paper clock starts (>=30d, edge>=+5bps, >=150 trades).
+  backtest contract. **Slice 2 — DONE (Iter 32):** `TrendBreakoutAgent` added to the
+  `femr_tick` paper roster with `_cfg("trend_breakout_v1", {})` (its G0-confirmed
+  defaults), consuming the top-20-by-volume 1h-closes universe `_enrich_view` already
+  builds. Paper by default; live-gated by `agent_state` (`_filter_live_agents_by_state`),
+  so no capital is touched. Parity proven by a new test: given one set of raw 1h
+  candles, the live `build_closes_1h` loader and the backtest `build_frames`→last-Frame
+  path yield **byte-identical** per-coin `closes` series (window-cap + latest-bar
+  inclusion exercised) and the agent emits **identical** entry/exit decisions on each
+  (BTC new-high long + SOL new-low short fire on both). The G1 paper clock now starts
+  (>=30d, edge>=+5bps, >=150 trades); promotion to live_small stays human-gated.
 
 - [x] **B1 — Quantify the taker tax on every agent.** Done (Iteration 20, network
   reachable on this host). 90d 1h, BTC/ETH/SOL/HYPE: twap_mr_v1 taker −10.0bps →

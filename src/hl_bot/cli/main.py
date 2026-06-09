@@ -446,6 +446,12 @@ def femr_tick(live: bool = False, execution: str = "taker"):
         }), conn=conn),
         TwapMrAgent(config=_cfg("twap_mr_v1", {}), conn=conn),
         TwapMrRegimeAgent(config=_cfg("twap_mr_regime_v1", {}), conn=conn),
+        # G0-confirmed (Iter 30): trend_breakout earns its paper track record on the
+        # top-20-by-volume universe `_enrich_view` already feeds it (real 1h closes
+        # since Slice 1). Defaults reproduce the confirmed backtest config; paper by
+        # default and live-gated by agent_state, so this starts the G1 paper clock
+        # without touching capital.
+        TrendBreakoutAgent(config=_cfg("trend_breakout_v1", {}), conn=conn),
         LiqCascadeAgent(config=_cfg("liq_cascade_v1", {}), conn=conn),
         BasisAgent(config=_cfg("basis_v1", {}), conn=conn),
     ]
