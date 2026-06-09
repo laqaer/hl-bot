@@ -113,10 +113,27 @@ Keep it ruthlessly prioritized: the top item should always be the highest-levera
   negative, and `confirm` FAILs (in-sample +49.8 → OOS −52.5bps → overfit, no
   robust edge). **Single-name funding carry is structurally negative on liquid
   alts even restricted to the moderate band.** Lever kept (default off, tested).
-  **Remaining B1d candidates: (i) spot-vs-perp basis at funding deciles, (ii)
-  slower trend/regime overlay on majors.** Carry-class signals on liquid alts are
-  now thoroughly pruned (xfund all levers + single-name band) → next slice should
-  be a *non-carry* signal: lean toward (ii) trend/regime on majors.
+  **Candidate (ii) — trend-follow on majors — FIRST POSITIVE NET-OF-COST SIGNAL
+  (Iter 27).** New `trend_breakout_v1` (Donchian N-bar high/low breakout, trade
+  *with* the move; trailing shorter-channel exit + wide stop + max-hold; default
+  off-roster, backtest-only). On BTC/ETH/SOL/HYPE 90d 1h: **maker +11.2bps / +1.87
+  sharpe, taker +5.7bps / +0.98**, and **cost-robust all the way to taker-3× +1.7bps**
+  (robust-to-2× True) — the first signal in the entire hunt that survives costs.
+  BUT `confirm` is **NOT CONFIRMED**: walk-forward splits time-unstable — the OOS
+  (recent ~27d) is strongly positive (maker +35.6bps/+4.60sh, taker +30.1/+3.89)
+  while the in-sample (older 63d) is flat/negative (maker +1.1bps, taker −4.4bps),
+  so it fails G0's "both halves ≥+3bps" rule. This is the *opposite* of the carry
+  overfits (there in-sample was great, OOS collapsed) — here the edge is real and
+  cost-robust but **regime-concentrated in the recent trend**, not yet time-stable.
+  **Not promoted, not tuned-to-gate** (tuning params to pass G0 = overfitting the
+  gate). Numbers in PROGRESS.
+- [ ] **B1d-trend — Make trend_breakout's edge time-stable enough to clear G0.**
+  The signal is positive net-of-cost & cost-robust but its in-sample (older) half
+  is flat. Investigate whether (a) the older period was genuinely range-bound (a
+  trend-follower *should* be flat in chop — then the honest move is a regime/vol
+  filter that sits out chop, not a param tweak), or (b) lookback/stop params are
+  mis-set. Test ONE hypothesis per slice; confirm; do NOT overfit to the gate.
+  **Remaining other B1d candidate: (i) spot-vs-perp basis at funding deciles.**
 
 ## P1 — honest measurement (so the supervisor can trust itself)
 

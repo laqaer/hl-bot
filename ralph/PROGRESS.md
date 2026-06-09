@@ -1201,3 +1201,68 @@ Given carry-on-alts is exhausted, the next slice should be a *non-carry* signal 
 toward **(ii) trend/regime on majors** (BTC/ETH/SOL/HYPE cache already exists; the
 `twap_mr_regime_v1` regime machinery is reusable, but as a *trend-follow* rather than a
 *fade* this time). Backtest, confirm. Then resume B12 consolidation.
+
+---
+
+## Iteration 27 — 2026-06-08 — B1d(ii): trend-follow on majors — FIRST positive net-of-cost signal (cost-robust, but not yet time-stable → not confirmed).
+
+**Context.** Network up (majors cache present). B1c + B1d(iii) closed the entire
+*carry* signal class on liquid alts (every lever negative net-of-cost). B1d pivots
+to a **non-carry, non-fade** signal. Took candidate **(ii): pure trend-following on
+the majors** — the mirror of TWAP-MR (ride breakouts instead of fading them).
+
+**Changed (1 commit).**
+- **`agents/trend_breakout.py`** (new) — `TrendBreakoutAgent` / `trend_breakout_v1`:
+  a Donchian-channel breakout trend-follower. Entry: go LONG on a strictly-new
+  `entry_lookback`-bar high, SHORT on a new low (ranked by breakout strength).
+  Exit: opposite shorter `exit_lookback`-bar channel (trailing stop) OR wide
+  `stop_loss_pct` OR `max_hold_hours`. Reads `view.extra['closes']` (populated by
+  the backtest loader and live `_enrich_view`); standalone `_open_positions` from
+  the decision log (same pattern as funding_carry). Defaults: entry 24 / exit 12 /
+  stop 5% / max-hold 96h / ≤4 concurrent / $100 per / $300 total.
+- **`cli/main.py`** — import + register `trend_breakout_v1` in `_backtest_factories`
+  (backtest/confirm only; NOT added to the live roster — paper/gated by omission).
+- **`tests/test_trend_breakout.py`** (new, +4) — directional evidence: goes LONG &
+  profits on an uptrend (and beats TWAP fading the same rip), goes SHORT on a
+  downtrend, makes ZERO trades in a fixed oscillation band (strict-breakout
+  semantics: `mid > hi`, not `>=`, so touching the prior high is not a breakout),
+  and the trailing channel flattens on a sharp reversal. (148 → **152 tests pass**.)
+
+**Evidence (tests/lint).** 152 tests pass; `ruff check src tests scripts` clean.
+Caches stay gitignored.
+
+**Backtest (trend_breakout_v1, BTC/ETH/SOL/HYPE 90d 1h, 2161 frames, 552 trades).**
+| exec | net | edge | sharpe |
+|------|-----|------|--------|
+| maker     | +$56.87 | **+11.2bps** | +1.87 |
+| taker-1×   | +$29.01 | **+5.7bps**  | +0.98 |
+| taker-2×   | +$18.88 | +3.7bps  | +0.66 |
+| taker-3×   | +$8.75  | +1.7bps  | +0.34 |
+
+**This is the FIRST signal in the entire hunt that is positive net-of-cost AND
+cost-robust** — it survives even 3× taker slippage (+1.7bps) and is robust-to-2×.
+
+**Confirm (G0) — NOT CONFIRMED, on a time-stability fail (not an overfit).**
+- prefer maker: in-sample(63d) +1.1bps/+0.27sh/390tr · **OOS(27d) +35.6bps/+4.60sh/164tr** · robust-2× True · fails: in-sample edge +1.1 < +3.
+- prefer taker: in-sample −4.4bps/−0.77sh · **OOS +30.1bps/+3.89sh** · robust-2× True · fails: in-sample −4.4 < +3.
+
+The OOS (recent ~27d) half is *strongly* positive while the older in-sample half is
+flat/negative, so G0's "both halves ≥+3bps" rule fails. Crucially this is the
+**opposite shape** of the pruned carry artifacts (there in-sample looked great and
+OOS collapsed → classic overfit). Here the edge is real and cost-robust but
+**regime-concentrated in the recent trending period** — a trend-follower is
+*supposed* to be flat in chop, so a flat older half is consistent with the older
+window being range-bound rather than the strategy being fake.
+
+**Why it matters (the finding).** Carry-on-alts was a dead class; the pivot to
+trend-follow-on-majors immediately produced the first cost-robust positive edge,
+validating the B1d pivot. But it is **not yet G0-confirmed** because the edge isn't
+time-stable. **Not promoted; not wired to live; not tuned to the gate** (fitting
+params to pass G0 would just overfit the gate — the same trap, one level up).
+
+**What's next (loop).** New backlog item **B1d-trend**: make the edge time-stable
+*honestly*. First hypothesis to test next slice — was the older in-sample window
+genuinely range-bound? If so the right move is a **regime/vol gate that sits out
+chop** (a trend-follower earning nothing in chop is correct behavior), NOT a
+lookback/stop tweak. One hypothesis per slice, re-confirm each, do not overfit the
+gate. Other remaining B1d candidate: (i) spot-vs-perp basis at funding deciles.

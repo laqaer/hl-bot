@@ -19,6 +19,7 @@ from ..agents.funding_arb import FundingArbAgent
 from ..agents.funding_carry import FundingCarryAgent
 from ..agents.liq_cascade import LiqCascadeAgent
 from ..agents.runtime import run_tick
+from ..agents.trend_breakout import TrendBreakoutAgent
 from ..agents.twap_mr import TwapMrAgent
 from ..agents.twap_mr_regime import TwapMrRegimeAgent
 from ..agents.veto import VetoAgent
@@ -621,6 +622,7 @@ def _backtest_factories(cfg: dict[str, Any]):
     return {
         "twap_mr_v1": lambda conn: TwapMrAgent(config=cfg, conn=conn),
         "twap_mr_regime_v1": lambda conn: TwapMrRegimeAgent(config=cfg, conn=conn),
+        "trend_breakout_v1": lambda conn: TrendBreakoutAgent(config=cfg, conn=conn),
         "femr_v1": lambda conn: FemrAgent(config=cfg, conn=conn),
         "funding_carry_v1": lambda conn: FundingCarryAgent(config=cfg, conn=conn),
         "xfund_carry_v1": lambda conn: XFundCarryAgent(config=cfg, conn=conn),
