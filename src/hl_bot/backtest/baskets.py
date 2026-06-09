@@ -82,6 +82,24 @@ def resolve_pairs(spec: str) -> str:
     return "|".join(out)
 
 
+def leave_one_pair_out(spec: str) -> list[tuple[str, str]]:
+    """For a multi-pair spec, the ``(dropped_pair, remaining_spec)`` for each pair.
+
+    The leave-pairs-out robustness probe (the pairs analogue of leave-one-coin-out):
+    if a multi-pair basket's edge survives dropping *any* single pair, no one
+    relationship carries the whole result alone. ``remaining_spec`` is a canonical
+    ``'A/B|C/D'`` string (itself resolvable); ``dropped_pair`` is the one held out.
+    Returns ``[]`` for a spec with <2 pairs (nothing to leave out).
+    """
+    pairs = [p for p in resolve_pairs(spec).split("|") if p]
+    if len(pairs) < 2:
+        return []
+    return [
+        (pairs[i], "|".join(pairs[:i] + pairs[i + 1:]))
+        for i in range(len(pairs))
+    ]
+
+
 def coins_in_pairs(spec: str) -> list[str]:
     """Flat, deduped, order-preserving coin list for every leg in a pairs spec.
 

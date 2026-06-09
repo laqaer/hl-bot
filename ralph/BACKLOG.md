@@ -45,12 +45,24 @@ Keep it ruthlessly prioritized: the top item should always be the highest-levera
   the same cross-window sign-flip that hand-pruned the six earlier theses. This is a major fragilization:
   the only candidate to ever clear the bar clears it **only on the basket it was specified with**. Not yet
   a full prune (the default basket genuinely passes the bar and the plateau), but the strategy-class
-  generalization claim is **dead**. Numbers in PROGRESS.md Iteration 31. Remaining slices (re-prioritized):
-  (4) **leave-one-pair-out within the default basket** — is the whole +5.3 just ETH/BTC? (run ETH/BTC,
-  SOL/AVAX, LINK/AAVE each alone + the 3 leave-one-out triples; if it collapses to one pair the lead is a
-  single-relationship bet, not a strategy) — *now the decisive test*; (5) longer per-window `--days`
-  (boundary-artifact check, pruned B-horizon); (6) intraday cadence (15m/5m). The held-out failure makes
-  (4) the gating question before any paper-deploy talk: a one-pair edge is not a deployable book.
+  generalization claim is **dead**. Numbers in PROGRESS.md Iteration 31. **Slice 4 DONE (Iteration 32):
+  leave-one-pair-out within the default basket — DURABILITY IS A 3-PAIR COMBINATION EFFECT, NOT a one-pair
+  bet, but it BREAKS UNDER ANY LEAVE-ONE-OUT.** Added pure `leave_one_pair_out` + a one-command `confirm
+  --leave-one-out` flag (loads history once, runs the bar on the full basket / each single pair / each
+  leave-one-out subset), +3 tests. Result (exact Iter-29 config, maker, 120d×2): the full 3-pair basket is
+  the **only** durable variant (+5.3/+8.2); **no single pair and no leave-one-out triple is durable**.
+  Crucially it is **not "just ETH/BTC"** (ETH/BTC alone is the *weakest* relevant single +3.0; SOL/AVAX
+  alone strongest +15.3/+6.9) — that hypothesis is disproved — but the PASS survives **only** when all
+  three spreads are pooled (LINK/AAVE alone and the ETH/BTC|LINK/AAVE pair-out even *sign-flip*). That is a
+  **portfolio/averaging effect**: pooling 3 imperfectly-correlated spreads smooths the walk-forward enough
+  to pass even though no constituent does. **Net: the canonical-bar PASS is a single-basket knife-edge** —
+  conditioned on lb∈[48,56] AND entry_z≈2.0 AND exactly these 3 pairs (all required), and it fails on
+  disjoint liquid pairs (slice 3). A heavily over-conditioned point, **not a deployable book**. Numbers in
+  PROGRESS.md Iteration 32. **The durability-robustness investigation is closed: the pairs lead is a
+  fragile, basket-and-param-specific PASS, not a generalizable edge.** Remaining slices (5) longer `--days`
+  and (6) intraday 15m/5m would at best widen the param plateau, not fix the basket-specificity, so they
+  are **deprioritized below a fresh structurally-different thesis** (or reframing pairs as an explicitly
+  *diversified, pre-committed larger* pair book — the inverse of leave-one-out). Pairs stays maker-only paper.
 - [x] **B1 — Quantify the taker tax on every agent.** DONE (Iteration 16, network
   open). 120d/1h over BTC,ETH,SOL,HYPE,AVAX,LINK: taker tax ≈ **5.7 bps round-trip**,
   ~**73% of the TWAP bleed** (twap_mr −7.7→−2.0 bps taker→maker; regime −8.0→−2.3).

@@ -914,6 +914,7 @@ def confirm(
     windows: int = 1,
     params: str = "",
     sweep: str = "",
+    leave_one_out: bool = False,
 ):
     """Confirm a strategy through the G0 gate: walk-forward + cost stress.
 
@@ -934,6 +935,12 @@ def confirm(
     ``--windows``) at each value and emits a single PLATEAU / NO-PLATEAU verdict:
     a robust edge passes on a *contiguous run* of neighbouring values, not at one
     knife-edge point. History is loaded once and reused across all values.
+
+    ``--leave-one-out`` (pairs agents, ``--windows>=2``) runs the durability bar on
+    the full pairs basket, each single pair alone, and each leave-one-pair-out
+    subset (loading history once). It answers whether a multi-pair edge is carried
+    by the whole basket or collapses onto one relationship — the pairs analogue of
+    leave-one-coin-out.
     """
     import time as _time
 
@@ -1023,6 +1030,45 @@ def confirm(
         sr = sweep_param(sweep_param_name, sweep_values, _evaluate)
         console.print(sr.summary())
         if not sr.plateau:
+            raise typer.Exit(1)
+        return
+
+    if leave_one_out:
+        from ..backtest.baskets import leave_one_pair_out, resolve_pairs
+        if windows < 2:
+            console.print("[red]--leave-one-out requires --windows >= 2[/red]")
+            raise typer.Exit(1)
+        base_spec = cfg["pairs"] if isinstance(cfg.get("pairs"), str) else resolve_pairs(
+            "pairs_default"
+        )
+        base_pairs = [p for p in base_spec.split("|") if p]
+        if len(base_pairs) < 2:
+            console.print("[red]--leave-one-out needs a basket of >=2 pairs[/red]")
+            raise typer.Exit(1)
+        variants: list[tuple[str, str]] = [(f"full: {base_spec}", base_spec)]
+        variants += [(f"only {p}", p) for p in base_pairs]
+        variants += [(f"drop {dropped}", rem) for dropped, rem in leave_one_pair_out(base_spec)]
+        specs = _window_specs(windows, days, int(_time.time() * 1000))
+        try:
+            loaded_windows = [(label, _load(end_ms)) for label, end_ms in specs]
+        except Exception as e:  # noqa: BLE001
+            console.print(f"[red]failed to load history: {e}[/red]")
+            raise typer.Exit(2) from e
+        durable_any = False
+        for vlabel, vspec in variants:
+            merged = {**cfg, "pairs": vspec}
+            mw = confirm_across_windows(
+                _factory_for(merged), loaded_windows, prefer=prefer,
+                min_edge_bps=min_edge_bps, min_sharpe=min_sharpe, periods_per_year=per_year,
+            )
+            durable_any = durable_any or mw.durable
+            verdict = "✅ DURABLE    " if mw.durable else "❌ NOT DURABLE"
+            edges = "  ".join(
+                "n/a" if w.full_sample_edge_bps is None else f"{w.full_sample_edge_bps:+.1f}"
+                for w in mw.windows
+            )
+            console.print(f"{verdict}  {vlabel:30s} full[{edges}]bps")
+        if not durable_any:
             raise typer.Exit(1)
         return
 

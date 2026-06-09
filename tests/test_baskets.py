@@ -11,6 +11,7 @@ from hl_bot.backtest.baskets import (
     BASKETS,
     PAIR_BASKETS,
     coins_in_pairs,
+    leave_one_pair_out,
     resolve_basket,
     resolve_pairs,
 )
@@ -94,3 +95,27 @@ def test_pair_basket_values_are_canonical():
     # Every shipped pair basket already resolves to itself (no drift / typos).
     for spec in PAIR_BASKETS.values():
         assert resolve_pairs(spec) == spec
+
+
+def test_leave_one_pair_out_drops_each_pair():
+    # For the 3-pair default basket: one (dropped, remaining) per pair, each
+    # remaining spec the canonical 2-pair complement (order-preserving).
+    assert leave_one_pair_out("pairs_default") == [
+        ("ETH/BTC", "SOL/AVAX|LINK/AAVE"),
+        ("SOL/AVAX", "ETH/BTC|LINK/AAVE"),
+        ("LINK/AAVE", "ETH/BTC|SOL/AVAX"),
+    ]
+
+
+def test_leave_one_pair_out_resolves_and_dedupes_input():
+    # Input is resolved/uppercased first, so bare/dup specs behave canonically.
+    assert leave_one_pair_out("eth/btc|sol/avax|eth/btc") == [
+        ("ETH/BTC", "SOL/AVAX"),
+        ("SOL/AVAX", "ETH/BTC"),
+    ]
+
+
+def test_leave_one_pair_out_needs_two_pairs():
+    # Nothing to leave out of a single pair (or an empty spec).
+    assert leave_one_pair_out("ETH/BTC") == []
+    assert leave_one_pair_out("") == []

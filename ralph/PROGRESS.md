@@ -1808,3 +1808,75 @@ survives. Either way, **slice (4) gates any paper-deploy talk** — a one-pair e
 machinery. Lower priority after that: (5) longer per-window `--days` (boundary-artifact check); (6)
 intraday cadence (15m/5m). The pairs thesis is now a *narrow, possibly single-pair* lead, no longer "the
 first durable signal" without the basket caveat.
+
+---
+
+## Iteration 32 — 2026-06-08 — B-pairs slice 4: leave-one-pair-out within the default basket — DURABILITY IS A 3-PAIR COMBINATION EFFECT, breaks under any leave-one-out (not a one-pair bet, but a single-basket knife-edge)
+
+**Context.** Slice 3 (Iter 31) showed the only signal ever to clear the canonical 120d×2-window durability
+bar — `pairs_reversion_v1` on the default basket (ETH/BTC|SOL/AVAX|LINK/AAVE, lb=48, entry_z=2.0, maker) —
+**does not generalize**: a disjoint liquid pair set sign-flips. That made slice 4 the decisive gating
+question for any paper-deploy talk: **is the +5.3bps DURABLE just ETH/BTC (the strongest cointegration),
+or do multiple pairs carry it?** A one-relationship bet is not a deployable book.
+
+**Code increment (committed, with tests).** Made leave-one-pair-out a one-command, reproducible probe
+(mirrors `--windows`/`--sweep`):
+- New pure `leave_one_pair_out(spec)` in `backtest/baskets.py` → for a multi-pair spec, the
+  `(dropped_pair, remaining_spec)` for each pair (canonical, resolved/deduped first; `[]` for <2 pairs).
+  The pairs analogue of leave-one-coin-out. +3 unit tests (`tests/test_baskets.py`): drops each pair with
+  the correct 2-pair complement, resolves+dedupes bare input, needs ≥2 pairs.
+- New `confirm --leave-one-out` flag (pairs agents, `--windows>=2`): loads history **once**, then runs the
+  durability bar on the **full basket**, **each single pair alone**, and **each leave-one-pair-out subset**,
+  printing a per-variant DURABLE/NOT-DURABLE verdict + each window's full-sample edge. Reuses the existing
+  `_window_specs`/`_load`/`confirm_across_windows` plumbing; exits 1 only if no variant is durable.
+
+**Evidence — slice 4 run (real HL history, network; ETH,BTC,SOL,AVAX,LINK,AAVE, 1h, 120d, `--windows 2`,
+`--prefer maker`, lb=48, entry_z=2.0 — the exact Iter-29 config; full = [trailing, older] window
+full-sample maker edge bps):**
+
+```
+✅ DURABLE      full: ETH/BTC|SOL/AVAX|LINK/AAVE   full[+5.3  +8.2]
+❌ NOT DURABLE  only ETH/BTC                       full[+3.0  +8.7]   (both +, sign-stable; fails walk-fwd)
+❌ NOT DURABLE  only SOL/AVAX                      full[+15.3 +6.9]   (both +, strongest single; fails walk-fwd)
+❌ NOT DURABLE  only LINK/AAVE                     full[-8.8  +11.6]  (SIGN-FLIPS — the artifact signature)
+❌ NOT DURABLE  drop ETH/BTC  (SOL/AVAX|LINK/AAVE) full[+4.8  +9.5]   (both +, sign-stable; fails walk-fwd)
+❌ NOT DURABLE  drop SOL/AVAX (ETH/BTC|LINK/AAVE)  full[-2.6  +10.3]  (SIGN-FLIPS)
+❌ NOT DURABLE  drop LINK/AAVE(ETH/BTC|SOL/AVAX)   full[+9.5  +7.8]   (both +, sign-stable; fails walk-fwd)
+```
+
+**Honest read — the durability is an emergent property of the *specific 3-pair combination*, and it is
+not robust to leave-one-out.** Two results matter:
+1. **It is NOT "just ETH/BTC."** ETH/BTC alone is the *weakest* durable-relevant single (+3.0 trailing,
+   not durable); SOL/AVAX alone is the strongest (+15.3/+6.9). So the lead is not a single-relationship
+   bet — that hypothesis is **disproved**.
+2. **But NO subset clears the bar — only the exact 3-pair basket does.** Every single pair and every
+   leave-one-out triple is NOT DURABLE; two of them (LINK/AAVE alone, and the ETH/BTC|LINK/AAVE pair-out)
+   even **sign-flip** (the artifact signature). The DURABLE verdict survives **only** when all three pairs
+   are pooled together. This is the textbook signature of a **portfolio/averaging effect**: pooling three
+   imperfectly-correlated spreads smooths the walk-forward just enough to pass, even though no constituent
+   passes on its own. Remove any one pair and the smoothing is gone.
+
+**Net.** Slice 4 *replaces* "is it one pair?" with a sharper, worse answer: the canonical-bar PASS is a
+**single-basket knife-edge**. The lead now clears the bar only under the full conjunction —
+**lb∈[48,56] (slice-2 plateau) AND entry_z≈2.0 (slice-2 knife-edge) AND exactly these 3 pairs, all
+required (slice 4) — and it fails on disjoint liquid pairs (slice 3).** That is a heavily over-conditioned
+single point in (param × basket) space, with the durability resting on a 3-spread averaging effect rather
+than any robust per-pair edge. **It is not a deployable book.** The `pairs_reversion_v1` agent is real,
+well-tested, and stays in the roster for paper/measurement, but the "first signal to clear the durability
+bar" claim must now carry the irreducible caveat that the PASS is **specific to the exact default basket
+and parameter point** and does not survive either leave-pairs-out (slice 3) or leave-one-pair-out (slice
+4). Maker-only, nothing touches capital, no live change.
+
+**Evidence (gate).** `uv run pytest -q` → **186 passed** (+3); `ruff check src tests scripts` → clean.
+All confirm numbers are measurement (cached candles, no `data/` writes committed). No strategy in the live
+roster changed; no live mode enabled.
+
+**What's next (loop).** Slice 4 effectively closes the durability-robustness investigation of the pairs
+lead: it is characterized as a fragile, basket-and-param-specific PASS, not a generalizable edge. The seven
+structurally-different theses are now all either pruned or (pairs) reduced to a single over-conditioned
+point. Remaining lower-value pairs slices — (5) longer per-window `--days` (boundary-artifact check) and
+(6) intraday 15m/5m cadence — would at best widen the param plateau, not fix the basket-specificity that
+slices 3+4 established, so they are **deprioritized below a fresh structurally-different thesis**. The
+highest-leverage next move is a new orthogonal edge hypothesis (or to reframe pairs-reversion as an
+explicitly multi-pair *diversified* book and test whether a *larger, pre-committed* pair set is durable —
+the inverse of leave-one-out — rather than chasing the 3-pair point). Pairs stays maker-only paper.
