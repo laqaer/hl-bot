@@ -156,27 +156,32 @@ def ask_claude_code(summaries: list[dict], current: dict[str, dict]) -> dict:
             "additionalProperties": {"type": "number"},
         },
     })
-    cmd = [
-        CLAUDE_CODE_BIN,
-        "-p",
-        "--model", CLAUDE_CODE_MODEL,
-        "--effort", CLAUDE_CODE_EFFORT,
-        "--tools", "",
-        "--output-format", "json",
-        "--json-schema", schema,
-        "--no-session-persistence",
-        "--system-prompt", system,
-    ]
+    def build_cmd(effort: str) -> list[str]:
+        return [
+            CLAUDE_CODE_BIN,
+            "-p",
+            "--model", CLAUDE_CODE_MODEL,
+            "--effort", effort,
+            "--tools", "",
+            "--output-format", "json",
+            "--json-schema", schema,
+            "--no-session-persistence",
+            "--system-prompt", system,
+        ]
 
-    # Force Claude Code to use its stored Claude Max/OAuth login rather than any
-    # Anthropic API key env vars that might be present in a cron shell.
+    # Force Claude Code to use Claude.ai Max/OAuth rather than direct Anthropic
+    # API billing. Do not read ANTHROPIC_TOKEN as an OAuth fallback: Anthropic
+    # SDKs/providers may treat that env name as direct API auth.
     env = os.environ.copy()
-    for key in ("ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_BASE_URL"):
+    oauth_token = env.get("CLAUDE_CODE_OAUTH_TOKEN")
+    for key in ("ANTHROPIC_API_KEY", "ANTHROPIC_TOKEN", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_BASE_URL"):
         env.pop(key, None)
+    if oauth_token:
+        env["CLAUDE_CODE_OAUTH_TOKEN"] = oauth_token
 
-    try:
-        proc = subprocess.run(
-            cmd,
+    def run_claude(effort: str) -> subprocess.CompletedProcess[str]:
+        return subprocess.run(
+            build_cmd(effort),
             input=user,
             text=True,
             capture_output=True,
@@ -184,10 +189,21 @@ def ask_claude_code(summaries: list[dict], current: dict[str, dict]) -> dict:
             env=env,
             check=False,
         )
+
+    try:
+        proc = run_claude(CLAUDE_CODE_EFFORT)
     except FileNotFoundError:
         return {"error": f"Claude Code binary not found: {CLAUDE_CODE_BIN}"}
     except subprocess.TimeoutExpired:
         return {"error": f"Claude Code timed out after {CLAUDE_CODE_TIMEOUT_S}s"}
+
+    if proc.returncode != 0 and CLAUDE_CODE_EFFORT == "max":
+        detail_text = (proc.stderr or proc.stdout).strip()
+        if "Effort level \"max\" is not available" in detail_text:
+            try:
+                proc = run_claude("high")
+            except subprocess.TimeoutExpired:
+                return {"error": f"Claude Code timed out after {CLAUDE_CODE_TIMEOUT_S}s on high-effort fallback"}
 
     if proc.returncode != 0:
         detail = (proc.stderr or proc.stdout).strip().splitlines()[-3:]
