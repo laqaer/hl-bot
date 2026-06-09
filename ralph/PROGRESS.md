@@ -1541,3 +1541,43 @@ daily/hourly price-momentum and funding-carry variant is now pruned; (c) revisit
 bar itself should accept a **regime-conditional** deployment (only trade the signal in its confirmed
 regime) rather than demanding unconditional every-window confirmation — but that needs a *causal* regime
 detector that the Iter-26 drawdown gate already failed to provide, so it's research, not a quick win.
+
+---
+
+## Iteration 28 — 2026-06-08 — B-femr-regime DONE: femr retired from the live roster (auditable hard-block), kept paper-evaluated
+
+**Context.** Six structurally-different theses are now pruned after the out-of-time durability bar
+(Iter 27); no agent passes G0 on any universe tried. The top unchecked P0 backlog item was
+**B-femr-regime** — a clean honesty/hygiene win: femr is dormant on majors (its 130%-APR funding
+entry never trips on liquid coins, B1) and funding *carry* has no net-of-cost edge even on
+high-funding alts (B1-alt), so widening the same funding-driven thesis to alts can't help. The
+honest move is to retire femr from the *live* roster until a universe+variant earns a G0 PASS.
+
+**Change (tightening-only, with tests).** Added `RETIRED_LIVE_AGENTS` to `cli/main.py`: a documented
+name→reason registry of agents that may keep evaluating in **paper** (for ongoing measurement) but
+are **hard-blocked from the live execution roster regardless of `agent_state`**. `_filter_live_agents_by_state`
+now skips any retired agent up front with its audit reason, so even an accidental `live_small`/`live`
+promotion of femr can no longer place a live order. `femr_v1` is the sole entry, annotated with the
+B1/B1-alt evidence. femr stays in the paper roster (line ~400) so it keeps producing scorecards; only
+its path to *capital* is closed. Consistent with the hard rule that risk changes are tightening-only.
+
+- **`tests/test_live_agent_state.py`:** added `test_retired_agent_blocked_from_live_regardless_of_state`
+  — femr promoted to `live`/enabled still yields an empty live roster and the retirement skip reason.
+  Re-pointed the existing `test_live_roster_requires_enabled_live_mode` off femr (now retired) onto
+  `twap_mr_regime_v1` so it still asserts the enabled+live_small gate for a non-retired agent.
+
+**Why this and not new-edge work.** It was the highest-priority *unblocked* backlog item and a pure
+hygiene/honesty win with zero edge-discovery risk: an honest live roster shouldn't carry a dormant,
+edgeless agent that could be promoted by mistake. New-signal-class work (basis/term-structure,
+intraday microstructure) remains the higher-leverage but larger next direction.
+
+**Evidence (gate).** `uv run pytest -q` → **155 passed** (+1); `ruff check src tests scripts` → clean.
+No strategy/sizing change; no live mode enabled (the opposite — femr's live path is closed). No secrets.
+
+**What's next (loop).** With the price-momentum and funding-carry families exhausted and femr retired,
+the honest frontier is a **genuinely new signal class** the 5-min loop can capture: (a) **basis /
+term-structure** (perp-vs-spot or funding term structure as a carry signal distinct from raw funding
+level — note M5 flags the spot-scaling fragility, so it needs a careful data path); (b) an **intraday
+microstructure** edge at WS cadence (REVIEW C7) rather than the daily/hourly bars every pruned thesis
+used. Lower-priority hygiene: liq_cascade is similarly dormant unless WS-fed (B11) and is a retirement
+candidate by the same standard if it stays edgeless.

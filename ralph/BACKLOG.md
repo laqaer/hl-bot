@@ -133,11 +133,15 @@ Keep it ruthlessly prioritized: the top item should always be the highest-levera
   window's OOS tail is a smaller fraction (tests if the walk-forward failure is a boundary artifact);
   (5) **widen the majors basket** to see if the plateau + no-sign-flip hold on more coins. **Alts at 1d
   stay pruned.** majors-only. Numbers in PROGRESS.md Iteration 26. No live change.
-- [ ] **B-femr-regime — femr is dormant on majors; retire or repurpose.** femr's
-  130%-APR entry never trips on liquid coins (B1). B1-alt now shows funding *carry*
-  has no edge even where funding is high, so widening femr (also funding-driven) to
-  alts is unlikely to help — the honest move is to **retire it from the live roster**
-  until there's a universe+variant with a demonstrated G0 PASS. No live change either way.
+- [x] **B-femr-regime — femr retired from the live roster.** DONE (Iteration 28).
+  femr's 130%-APR entry never trips on liquid coins (B1) and funding carry has no
+  net-of-cost edge even on high-funding alts (B1-alt), so it's dormant and edgeless.
+  Added `RETIRED_LIVE_AGENTS` (in `cli/main.py`): a documented registry that hard-blocks
+  retired agents from the live execution roster **regardless of agent_state** (so even an
+  accidental live_small/live promotion can't place femr orders), surfacing an auditable
+  skip reason. femr stays in the roster for paper evaluation/ongoing measurement; this is
+  tightening-only. +1 test (retired agent blocked even when promoted to live/enabled);
+  existing live-gate test re-pointed off femr. Numbers in PROGRESS.md Iteration 28.
 - [x] **B-baskets — Canonical named coin baskets for reproducible backtests.** DONE (Iteration 27).
   Every recorded confirm/backtest number is only honest if its exact universe is known, but the search
   hand-types baskets (majors, alts_highfunding, alts_heldout, majors_wide) on every run — one typo

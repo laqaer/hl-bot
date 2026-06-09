@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from hl_bot.cli.main import _filter_live_agents_by_state
+from hl_bot.cli.main import RETIRED_LIVE_AGENTS, _filter_live_agents_by_state
 from hl_bot.db.schema import init_db
 
 
@@ -22,7 +22,7 @@ class DummyAgent:
 def test_live_roster_requires_enabled_live_mode(tmp_path):
     conn = init_db(tmp_path / "state.sqlite")
     conn.execute(
-        "INSERT INTO agent_state(agent, mode, enabled) VALUES('femr_v1', 'live_small', 1)"
+        "INSERT INTO agent_state(agent, mode, enabled) VALUES('twap_mr_regime_v1', 'live_small', 1)"
     )
     conn.execute(
         "INSERT INTO agent_state(agent, mode, enabled) VALUES('twap_mr_v1', 'paper', 1)"
@@ -31,14 +31,33 @@ def test_live_roster_requires_enabled_live_mode(tmp_path):
         "INSERT INTO agent_state(agent, mode, enabled) VALUES('basis_v1', 'live_small', 0)"
     )
 
-    agents = [DummyAgent("femr_v1"), DummyAgent("twap_mr_v1"), DummyAgent("basis_v1")]
+    agents = [
+        DummyAgent("twap_mr_regime_v1"),
+        DummyAgent("twap_mr_v1"),
+        DummyAgent("basis_v1"),
+    ]
     live_agents, skipped = _filter_live_agents_by_state(conn, agents)
 
-    assert [a.name for a in live_agents] == ["femr_v1"]
+    assert [a.name for a in live_agents] == ["twap_mr_regime_v1"]
     assert skipped == {
         "twap_mr_v1": "mode=paper enabled=1",
         "basis_v1": "mode=live_small enabled=0",
     }
+
+
+def test_retired_agent_blocked_from_live_regardless_of_state(tmp_path):
+    # femr is retired: even explicitly promoted to live_small/enabled, it must
+    # never enter the live execution roster (B-femr-regime).
+    assert "femr_v1" in RETIRED_LIVE_AGENTS
+    conn = init_db(tmp_path / "state.sqlite")
+    conn.execute(
+        "INSERT INTO agent_state(agent, mode, enabled) VALUES('femr_v1', 'live', 1)"
+    )
+
+    live_agents, skipped = _filter_live_agents_by_state(conn, [DummyAgent("femr_v1")])
+
+    assert live_agents == []
+    assert skipped == {"femr_v1": RETIRED_LIVE_AGENTS["femr_v1"]}
 
 
 def test_missing_agent_state_is_paper_by_default(tmp_path):

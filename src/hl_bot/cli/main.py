@@ -50,17 +50,33 @@ def _conn():
     return init_db(s.db_path), s
 
 
+# Agents retired from the LIVE execution roster: they keep evaluating in paper
+# for ongoing measurement, but are hard-blocked from placing live orders
+# regardless of their agent_state, until a universe+variant earns a G0 PASS.
+# Reason is surfaced in the skip log so the retirement is auditable.
+RETIRED_LIVE_AGENTS: dict[str, str] = {
+    # femr's 130%-APR funding entry never trips on liquid coins (B1), and funding
+    # carry shows no net-of-cost edge even on high-funding alts (B1-alt). Dormant
+    # and edgeless — retired from live until a demonstrated G0 PASS (B-femr-regime).
+    "femr_v1": "retired: dormant on majors, no G0 PASS (B1/B1-alt)",
+}
+
+
 def _filter_live_agents_by_state(conn, agents):
     """Return agents allowed to place live orders plus skipped reasons.
 
     Paper/default state is safe: an agent must be explicitly enabled and in
-    live_small/live mode before it enters the live execution roster.
+    live_small/live mode before it enters the live execution roster. Agents in
+    ``RETIRED_LIVE_AGENTS`` are hard-blocked from live regardless of state.
     """
     rows = conn.execute("SELECT agent, mode, enabled FROM agent_state").fetchall()
     state = {r["agent"]: (r["mode"], int(r["enabled"])) for r in rows}
     live_agents = []
     skipped: dict[str, str] = {}
     for agent in agents:
+        if agent.name in RETIRED_LIVE_AGENTS:
+            skipped[agent.name] = RETIRED_LIVE_AGENTS[agent.name]
+            continue
         mode, enabled = state.get(agent.name, ("paper", 1))
         if enabled == 1 and mode in ("live_small", "live"):
             live_agents.append(agent)
