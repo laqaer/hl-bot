@@ -424,3 +424,45 @@ disabled — no false signal, no silent inertia. No strategy/risk/live change.
 safe wrapper is what live uses — REVIEW M3), B7 (standardize remaining goal configs
 on per-agent metrics now that per-agent Sharpe exists — C5), B4-RUN (confirm carry
 on real history — still network-blocked at api.hyperliquid.xyz).
+
+---
+
+## Iteration 12 — 2026-06-08 — kill the last dead supervisor gate (B7/C5)
+
+**Context.** P0 is done or network-blocked; P1 honest-measurement is the top
+unblocked lane. Iteration 7 made per-agent Sharpe compute, but B7/C5 had a tail:
+`scoring.metrics.score_agent` still returns `max_drawdown`/`calmar` = `None` for
+every real agent (they need a capital base; only the synthetic `_account` has an
+equity curve). `funding_arb_v1.yaml` was the **one** config gating on
+`max_drawdown` — a 7d **demote** guardrail at −10% that could therefore *never
+fire*. Same "dead gate" defect as C5, but on a risk control rather than promotion.
+
+**Changed (1 commit).**
+- **`configs/funding_arb_v1.yaml`** — replaced the un-fireable `max_drawdown`
+  demote guardrail with an `edge_bps` (7d, ≥ −10 bps) demote, consistent with the
+  carry configs (`xfund_carry_v1`, `funding_carry_v1`). Tightening-only and now
+  actually computable for a real agent. Graduated response preserved: alert at
+  −5 bps, demote at −10 bps, pause on 24h net ≤ −$200.
+- **`supervisor/goals.py` docstring** — the canonical example used the same dead
+  `max_drawdown` guardrail; swapped it for `edge_bps` and added a note that
+  `max_drawdown`/`calmar` are `_account`-only, so real-agent gates must key on
+  net_pnl / edge_bps / sharpe / win_rate / n_trades.
+- **`tests/test_supervisor_configs.py`** (+2) — `test_no_config_gates_a_real_
+  agent_on_account_only_metrics` loads every config and asserts no real-agent goal/
+  guardrail/promotion/demotion references `max_drawdown`/`calmar` (codifies C5 as a
+  cross-config regression guard); `test_funding_arb_demote_fires_on_negative_edge`
+  proves the previously-dead guardrail now demotes a bleeding live_small agent to
+  paper.
+
+**Evidence.** `uv run pytest -q` → **106 passed** (+2). `ruff check src tests
+scripts` → clean. Measurement/governance-only — no strategy, sizing, or live change.
+
+**Deliberately NOT done.** Computing a real per-agent fractional maxDD/calmar
+needs a capital-base convention (the backtester anchors on `starting_capital`;
+live per-agent scoring has no base). Inventing one carelessly would feed a
+misleading number to a live demote gate, so it's parked as **B7-dd** pending a
+design decision, rather than rushed here.
+
+**What's next (loop).** B12 (consolidate `runtime.run_tick` vs `femr_tick` so the
+safe wrapper is what live uses — REVIEW M3), B7-dd (capital-base convention for
+per-agent drawdown), B4-RUN (confirm carry on real history — network-blocked).

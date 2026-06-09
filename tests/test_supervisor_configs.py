@@ -36,6 +36,71 @@ def _insert_fill(conn, agent, coin, t_ms, pnl, fee=0.1, sz=10.0, px=1.0):
     )
 
 
+# max_drawdown/calmar are computed only for the synthetic '_account' agent (they
+# need a capital base). For any real agent they are structurally N/A, so a config
+# that gates a real agent on them has a dead gate that can never fire (REVIEW C5).
+ACCOUNT_ONLY_METRICS = {"max_drawdown", "calmar"}
+
+
+def _referenced_metrics(g) -> set[str]:
+    metrics: set[str] = set()
+    primary = g.goals.get("primary")
+    if isinstance(primary, dict):
+        metrics.add(primary["metric"])
+    secondary = g.goals.get("secondary", []) or []
+    for s in secondary if isinstance(secondary, list) else []:
+        metrics.add(s["metric"])
+    for gr in g.guardrails:
+        metrics.add(gr.metric)
+    for promo in (g.promotion, g.demotion):
+        if promo:
+            for c in promo.conditions:
+                metrics.add(c.metric)
+    return metrics
+
+
+def test_no_config_gates_a_real_agent_on_account_only_metrics():
+    """Every config's gates must key on metrics computable for a real agent.
+
+    Regression for the C5 class of bug: funding_arb_v1 had a max_drawdown demote
+    guardrail that could never fire because per-agent max_drawdown is always None.
+    """
+    checked = 0
+    for path in sorted(CONFIG_DIR.glob("*.yaml")):
+        for g in load_goals(path):
+            if g.agent == "_account":
+                continue
+            bad = _referenced_metrics(g) & ACCOUNT_ONLY_METRICS
+            assert not bad, f"{path.name} ({g.agent}) gates on account-only {bad}"
+            checked += 1
+    assert checked >= 5  # all real-agent configs were actually inspected
+
+
+def test_funding_arb_demote_fires_on_negative_edge(conn):
+    """The funding_arb demote guardrail now keys on edge_bps (was max_drawdown,
+    which never fired). A bleeding live_small agent must be demoted to paper."""
+    now = int(time.time() * 1000)
+    conn.execute(
+        "INSERT INTO agent_state(agent, mode, enabled) "
+        "VALUES('funding_arb_v1', 'live_small', 1)"
+    )
+    # 20 fills, each $10 notional, net -$0.15 (pnl -0.05 - fee 0.10): edge ~ -150 bps
+    # over 7d (well past the -10 bps demote), while 24h net -$3 stays above the
+    # -$200 pause limit, so the agent is demoted rather than paused.
+    for i in range(20):
+        _insert_fill(conn, "funding_arb_v1", "SOL", now - (i + 1) * 1000,
+                     pnl=-0.05, fee=0.10)
+
+    goals = load_goals(CONFIG_DIR / "funding_arb_v1.yaml")
+    actions = run_once(conn, goals)
+
+    assert any("DEMOTE" in a for a in actions.get("funding_arb_v1", []))
+    state = conn.execute(
+        "SELECT mode FROM agent_state WHERE agent='funding_arb_v1'"
+    ).fetchone()
+    assert state["mode"] == "paper"
+
+
 def test_twap_and_femr_configs_load():
     twap = load_goals(CONFIG_DIR / "twap_mr_v1.yaml")
     femr = load_goals(CONFIG_DIR / "femr_v1.yaml")

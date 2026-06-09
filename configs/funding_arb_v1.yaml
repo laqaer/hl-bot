@@ -12,12 +12,15 @@ goals:
     - {metric: net_pnl,  window: 30d, op: ">=", threshold: 500}
     - {metric: win_rate, window: 30d, op: ">=", threshold: 0.55}
 
+# max_drawdown/calmar are account-only (need a capital base); for a real agent
+# they are always N/A, so a max_drawdown guardrail could never fire. Demote keys
+# off the per-agent-computable edge_bps instead, consistent with the carry configs.
 guardrails:
-  - {metric: net_pnl,      window: 24h, op: ">=", threshold: -200,
+  - {metric: net_pnl,  window: 24h, op: ">=", threshold: -200,
      action: pause,  reason: "24h loss limit -$200"}
-  - {metric: max_drawdown, window: 7d,  op: ">=", threshold: -0.10,
-     action: demote, reason: "7d drawdown > 10%"}
-  - {metric: edge_bps,     window: 7d,  op: ">=", threshold: -5,
+  - {metric: edge_bps, window: 7d,  op: ">=", threshold: -10,
+     action: demote, reason: "7d realized edge < -10 bps after costs"}
+  - {metric: edge_bps, window: 7d,  op: ">=", threshold: -5,
      action: alert,  reason: "edge_bps < -5 after costs"}
 
 promotion:

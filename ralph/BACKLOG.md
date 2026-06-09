@@ -51,10 +51,16 @@ Keep it ruthlessly prioritized: the top item should always be the highest-levera
 - [ ] **B6old — (superseded by B6/B7 above)** Map `funding_payments` to the agent
   holding the position at funding time (via cloid→position replay), so
   `scoring.metrics` includes funding in each agent's net. (REVIEW C4.)
-- [ ] **B7 — Per-agent equity curves + Sharpe/DD.** Reuse the backtest
-  equity-curve math (`engine._curve_stats`) to compute per-agent Sharpe/maxDD
-  from fills, so `funding_arb_v1.yaml`'s sharpe gate can actually evaluate.
-  Then standardize all goal configs. (REVIEW C5.)
+- [~] **B7 — Per-agent equity curves + Sharpe/DD.** Sharpe done (Iteration 7,
+  daily-PnL). **Configs standardized (Iteration 12):** removed the dead
+  `max_drawdown` demote guardrail from `funding_arb_v1.yaml` (max_drawdown/calmar
+  are account-only — always N/A for a real agent, so it could never fire); demote
+  now keys on the computable `edge_bps`. Added `test_no_config_gates_a_real_agent_
+  on_account_only_metrics` so no config can regress to a dead gate. **Remaining
+  (B7-dd):** a real per-agent maxDD/calmar needs a *capital-base convention*
+  (the backtest anchors on `starting_capital`; live per-agent scoring has none) —
+  design that before computing a fractional per-agent drawdown, or it'll mislead.
+  (REVIEW C5.)
 - [x] **B8 — Record actual fill price.** Done: `femr_tick` now logs the confirmed
   `res.avg_px`/`res.filled_sz` on fill so stops/TPs key off the real entry. (M1.)
 - [x] **B9 — fills→positions replay.** Done: `db/positions.py`

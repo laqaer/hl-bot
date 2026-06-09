@@ -17,8 +17,8 @@ Each agent has a contract:
   guardrails:
     - {metric: net_pnl, window: 24h, op: ">=", threshold: -200,
        action: pause, reason: "24h loss limit"}
-    - {metric: max_drawdown, window: 7d, op: ">=", threshold: -0.10,
-       action: demote, reason: "7d drawdown > 10%"}
+    - {metric: edge_bps, window: 7d, op: ">=", threshold: -10,
+       action: demote, reason: "7d realized edge < -10 bps"}
   promotion:
     from: paper
     to: live_small
@@ -27,7 +27,10 @@ Each agent has a contract:
       - {metric: n_trades, window: 30d, op: ">=", threshold: 100}
 
 Operators: '>', '>=', '<', '<=', '==', '!='.
-Metrics: any field on Scorecard (sharpe, net_pnl, win_rate, max_drawdown, ...).
+Metrics: any field on Scorecard. Note max_drawdown/calmar are computed only for
+the synthetic '_account' agent (they need a capital base); for a real agent they
+are always N/A, so gating a real agent on them means the gate can never fire.
+Real-agent gates should key on net_pnl / edge_bps / sharpe / win_rate / n_trades.
 """
 
 from __future__ import annotations
