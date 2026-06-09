@@ -1880,3 +1880,73 @@ slices 3+4 established, so they are **deprioritized below a fresh structurally-d
 highest-leverage next move is a new orthogonal edge hypothesis (or to reframe pairs-reversion as an
 explicitly multi-pair *diversified* book and test whether a *larger, pre-committed* pair set is durable —
 the inverse of leave-one-out — rather than chasing the 3-pair point). Pairs stays maker-only paper.
+
+---
+
+## Iteration 33 — 2026-06-08 — B-pairs slice 7: the "larger pre-committed diversified book" reframe — THE LAST RESCUE ANGLE FAILS (more diversification does NOT buy durability; pairs fully pruned)
+
+**Context.** Slices 3–4 (Iter 31–32) closed the durability-*robustness* investigation of the only signal
+ever to clear the canonical 120d×2-window bar — `pairs_reversion_v1` on the 3-pair default basket
+(ETH/BTC|SOL/AVAX|LINK/AAVE, lb=48, entry_z=2.0, maker): it does **not** survive leave-pairs-out (a disjoint
+liquid set sign-flips) **nor** leave-one-pair-out (no single pair / no triple subset is durable; the PASS is
+a 3-spread *portfolio/averaging* effect). That left exactly one un-tested rescue, named explicitly in the
+Iter-32 "what's next": **reframe pairs as an explicitly *diversified, pre-committed larger* pair book — the
+inverse of leave-one-out.** If slice 4's averaging is the mechanism, pooling *more* imperfectly-correlated
+spreads should make the book *more* durable, not less. This iteration tests that directly and decisively.
+
+**Code increment (committed, with tests).** Added a single pre-committed pair basket and pinned it so the
+result cites an auditable, hindsight-free universe:
+- `pairs_diversified` in `PAIR_BASKETS` = **the exact union of `pairs_default` ∪ `pairs_heldout`**
+  (`ETH/BTC|SOL/AVAX|LINK/AAVE|ARB/OP|APT/SUI|DOGE/WIF`) — 6 pairs, 12 distinct legs, six economic buckets
+  (cross-cap majors, L1 alts, DeFi, L2 govs, Move L1s, memes). Crucially it makes **ZERO new pair choices**:
+  both halves were already version-pinned in prior iterations, so this is the maximally-defensible inverse of
+  leave-one-out (pooling, not selecting). +2 unit tests (`tests/test_baskets.py`): it resolves to exactly
+  `resolve_pairs("pairs_default|pairs_heldout")`, and its 12 legs are all distinct (no leg reuse).
+
+**Evidence — slice 7 run (real HL history, network; the 12 legs, 1h, 120d, `--windows 2`, `--prefer maker`,
+lb=48, entry_z=2.0 — the exact Iter-29 config; full = window full-sample maker edge bps):**
+
+```
+❌ NOT DURABLE  pairs_reversion_v1  (2 windows, prefer=maker)
+  ❌ trailing 120d          full  -0.1bps   in -0.7  oos -1.4
+  ❌ 120d ending 120d ago   full  +3.4bps   in -0.1  oos +11.4
+  - full-sample edge FLIPS SIGN across windows (+3.4 … -0.1bps) — window-specific artifact, not a durable edge
+```
+
+**Honest read — the portfolio/averaging rescue is disproved; pairs is now fully pruned as a deployable
+edge.** Pooling *more* imperfectly-correlated spreads did **not** increase durability — it *reduced* it.
+The held-out half (ARB/OP|APT/SUI|DOGE/WIF, net-negative on the trailing window per slice 3) drags the
+6-pair pool's trailing full-sample edge down to ~zero/negative (−0.1bps, vs the 3-pair basket's +5.3), and
+the book **sign-flips across windows** (+3.4 → −0.1) — the exact artifact signature the bar exists to reject.
+So slice 4's smoothing was **specific to the three default pairs**, not a general "more diversification →
+more durable" property: averaging only helps when the pooled constituents are individually edge-bearing in
+the same direction, which the held-out pairs are not. This was the last structurally-distinct way the pairs
+lead could have become a deployable book, and it fails.
+
+**Net — the pairs investigation is CLOSED.** The only PASS that ever cleared the canonical durability bar
+(the 3-pair +5.3bps DURABLE) is a heavily over-conditioned single point in (param × basket) space:
+**lb∈[48,56] (slice-2 plateau) AND entry_z≈2.0 (slice-2 knife-edge) AND exactly the 3 default pairs, all
+required (slice 4)** — and it fails on disjoint liquid pairs (slice 3, sign-flip), on every leave-one-pair-out
+subset (slice 4), AND now on a pre-committed larger diversified book (slice 7, sign-flip). The remaining
+deferred slices (5) longer per-window `--days` and (6) intraday 15m/5m are **moot**: each could only widen the
+parameter plateau, neither can fix the basket-specificity that slices 3/4/7 jointly established. Seven
+structurally-different theses (FEMR/carry, cross-sectional momentum ±regime, time-series momentum,
+majors-1d momentum, and pairs-reversion) are now all pruned or reduced to an over-conditioned point after the
+out-of-time durability bar. `pairs_reversion_v1` is real, well-tested, and stays in the roster for
+paper/measurement only. **Maker-only, nothing touches capital, no live change.**
+
+**Evidence (gate).** `uv run pytest -q` → **188 passed** (+2); `ruff check src tests scripts` → clean. The
+confirm numbers are measurement (cached candles, no `data/` writes committed). No strategy in the live roster
+changed; no live mode enabled.
+
+**What's next (loop).** With the pairs lead closed, the highest-leverage move is no longer another pairs
+slice but a **fresh, structurally-different edge hypothesis** that the existing durability machinery
+(`confirm --windows 2+`, `--sweep`, `--leave-one-out`, named baskets) can adjudicate cheaply. The seven
+pruned theses share a failure mode worth learning from: each is a *price/funding-derived directional or
+relative signal* that proves window-specific under walk-forward. Candidate orthogonal directions that do
+**not** key off recent price/funding the same way: (a) a **cross-venue / micro-structure** signal (e.g.
+maker-rebate capture conditioned on realized spread vs queue position — an *execution* edge, not a
+*direction* edge, which is where REVIEW C1 says the structural money is); (b) a **calendar/funding-settlement
+timing** effect (deterministic funding accrual windows, not funding *level*); (c) **basis/term-structure**
+between perp and any available longer-horizon reference. The next iteration should pick one, specify it as a
+new agent, and run it through `confirm --windows 2` from the first run (never a single trailing window).

@@ -47,6 +47,16 @@ PAIR_BASKETS: dict[str, str] = {
     # — two L2 govs (ARB/OP), two Move L1s (APT/SUI), two memes (DOGE/WIF). The
     # leave-pairs-out analogue of the leave-one-coin-out test.
     "pairs_heldout": "ARB/OP|APT/SUI|DOGE/WIF",
+    # Pre-committed *larger diversified* book (B-pairs slice 7): the exact union of
+    # pairs_default ∪ pairs_heldout — 6 pairs, every leg distinct, spanning six
+    # economic buckets (cross-cap majors, L1 alts, DeFi, L2 govs, Move L1s, memes).
+    # It introduces ZERO new pair choices (both halves were already pinned), so it
+    # is the maximally-defensible *inverse of leave-one-out*: slice 4 showed the
+    # 3-pair PASS is a portfolio/averaging effect, so the honest test is whether
+    # pooling MORE imperfectly-correlated spreads (pre-committed, not hindsight)
+    # makes the book MORE durable — or whether the held-out half's negativity drags
+    # the pool down. Either answer is decisive; neither is basket selection.
+    "pairs_diversified": "ETH/BTC|SOL/AVAX|LINK/AAVE|ARB/OP|APT/SUI|DOGE/WIF",
 }
 
 

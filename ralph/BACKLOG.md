@@ -7,7 +7,7 @@ Keep it ruthlessly prioritized: the top item should always be the highest-levera
 
 ## P0 — find an edge (the whole point)
 
-- [~] **B-pairs — Pairs / relative-value mean-reversion (the seventh, structurally-different
+- [x] **B-pairs — Pairs / relative-value mean-reversion (the seventh, structurally-different
   thesis): THE FIRST SIGNAL TO CLEAR THE CANONICAL DURABILITY BAR.** Slice 1 DONE (Iteration 29).
   New `pairs_reversion_v1`: market-neutral statistical arbitrage on the **log-ratio spread** of a coin
   pair (ETH/BTC, SOL/AVAX, LINK/AAVE) vs its rolling-z mean — SHORT the rich leg / LONG the cheap leg,
@@ -58,11 +58,20 @@ Keep it ruthlessly prioritized: the top item should always be the highest-levera
   to pass even though no constituent does. **Net: the canonical-bar PASS is a single-basket knife-edge** —
   conditioned on lb∈[48,56] AND entry_z≈2.0 AND exactly these 3 pairs (all required), and it fails on
   disjoint liquid pairs (slice 3). A heavily over-conditioned point, **not a deployable book**. Numbers in
-  PROGRESS.md Iteration 32. **The durability-robustness investigation is closed: the pairs lead is a
-  fragile, basket-and-param-specific PASS, not a generalizable edge.** Remaining slices (5) longer `--days`
-  and (6) intraday 15m/5m would at best widen the param plateau, not fix the basket-specificity, so they
-  are **deprioritized below a fresh structurally-different thesis** (or reframing pairs as an explicitly
-  *diversified, pre-committed larger* pair book — the inverse of leave-one-out). Pairs stays maker-only paper.
+  PROGRESS.md Iteration 32. **Slice 7 DONE (Iteration 33): the "larger pre-committed diversified book"
+  reframe — THE LAST RESCUE ANGLE FAILS.** Added `pairs_diversified` (= the exact union of pairs_default ∪
+  pairs_heldout, 6 pairs / 12 distinct legs / six economic buckets; ZERO new pair choices, the
+  maximally-defensible inverse of leave-one-out) + 2 tests, and ran the canonical 120d×2-window maker bar on
+  it. **❌ NOT DURABLE and it SIGN-FLIPS** (trailing full −0.1bps in −0.7/oos −1.4; older +3.4 in −0.1/oos
+  +11.4). Pooling *more* imperfectly-correlated spreads does **not** increase durability — the held-out
+  half's negativity drags the pool to ~zero on the trailing window and reintroduces the artifact sign-flip.
+  This **disproves the portfolio/averaging rescue**: slice 4's smoothing was specific to the 3 default
+  pairs, not a general "more pairs = more durable" property. **Conclusion: pairs-reversion is now fully
+  pruned as a deployable edge.** The only PASS (the 3-pair +5.3) is a heavily over-conditioned single point
+  (lb∈[48,56] AND entry_z≈2.0 AND exactly those 3 pairs); it fails leave-pairs-out (3), leave-one-pair-out
+  (4), AND pre-committed diversification (7). Remaining slices (5)/(6) are moot — they could only widen the
+  param plateau, never fix basket-specificity. Numbers in PROGRESS.md Iteration 33. **Pairs stays maker-only
+  paper; the next move is a fresh structurally-different thesis.** Pairs investigation CLOSED.
 - [x] **B1 — Quantify the taker tax on every agent.** DONE (Iteration 16, network
   open). 120d/1h over BTC,ETH,SOL,HYPE,AVAX,LINK: taker tax ≈ **5.7 bps round-trip**,
   ~**73% of the TWAP bleed** (twap_mr −7.7→−2.0 bps taker→maker; regime −8.0→−2.3).

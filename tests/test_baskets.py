@@ -86,6 +86,19 @@ def test_coins_in_pairs_flattens_legs_order_preserving():
     assert coins_in_pairs("pairs_heldout") == ["ARB", "OP", "APT", "SUI", "DOGE", "WIF"]
 
 
+def test_diversified_basket_is_exact_union_of_default_and_heldout():
+    # The pre-committed larger book (slice 7) is default ∪ heldout with no new
+    # pair choices — it must equal concatenating the two pinned baskets exactly.
+    assert resolve_pairs("pairs_diversified") == resolve_pairs("pairs_default|pairs_heldout")
+
+
+def test_diversified_basket_legs_are_all_distinct():
+    # Six pairs, twelve distinct legs (no leg reused across pairs).
+    legs = coins_in_pairs("pairs_diversified")
+    assert len(legs) == 12
+    assert len(set(legs)) == 12
+
+
 def test_resolve_basket_expands_pair_basket_to_legs():
     # --coins pairs_heldout fetches exactly the pair legs, deduped/order-preserving.
     assert resolve_basket("pairs_heldout") == ["ARB", "OP", "APT", "SUI", "DOGE", "WIF"]
