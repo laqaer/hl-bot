@@ -104,21 +104,21 @@ Keep it ruthlessly prioritized: the top item should always be the highest-levera
   structurally-different theses now pruned after the out-of-time bar. Numbers in
   PROGRESS.md Iteration 23.
 - [ ] **B-horizon — Push the majors 1d cross-sectional-momentum lead over G0.** LEAD PERSISTS,
-  still NOT DURABLE (Iteration 25). Slice (1) **1d lookback sweep** DONE via the new `--params`
-  flag: the default `lookback_bars=24` is 1h-tuned; a **12–15-bar plateau** (≈2wk daily lookback)
-  CONFIRMS the **trailing** 240d window (lb=14: in +49.1/oos +42.7bps/sh+1.48–1.49) and is
-  **taker-survivable across the whole ladder** (maker +46.2 → taker-3x +36.7bps). It is NOT a
-  knife-edge: lb 12/13/14/15 all confirm trailing, 10→+0.4 and 16 just-misses on sharpe.
-  **Durability bar (`--windows 2`) still NOT DURABLE** — but for a *new, weaker* reason than the
-  five prunes: full-sample edge is **positive in BOTH disjoint windows** (lb14 +46.2 & +8.3; lb13
-  +47.0 & +16.0) → **no sign flip** (the artifact signature is absent). The block is the *older*
-  240d window's **walk-forward**: its OOS tail reverses (lb14 oos −94.2 while in +55.6) so that
-  window isn't individually confirmed. Next slices: (2) **regime-gate at 1d** (Iteration-19 gate) —
-  the older window's in-sample is strongly +; a causal regime filter may stand the book aside
-  during its OOS-tail reversal. (3) **`--windows 3`** + **widen the majors basket** to see if the
-  no-sign-flip property and the plateau hold on more history/coins. (4) longer per-window `--days`
-  so the OOS tail is a smaller fraction. **Alts at 1d stay pruned** (full −50.4/−122.0bps);
-  majors-only. Numbers in PROGRESS.md Iteration 25. No live change.
+  still NOT DURABLE (Iteration 26). Slice (1) **1d lookback sweep** DONE (Iteration 25): a **12–15-bar
+  plateau** CONFIRMS the **trailing** 240d window (lb=14: in +49.1/oos +42.7bps) and is
+  **taker-survivable** (maker +46.2 → taker-3x +36.7bps). Slice (2) **regime-gate at 1d** DONE
+  (Iteration 26): the Iteration-19 causal `regime_gate` (a market-drawdown filter) **does NOT rescue
+  the older window** at any `regime_lookback` (12/24/36/48) — its OOS tail still reverses (rl24 older
+  oos −16.3 even as in jumps to +211.7), and rl12 *breaks* the trailing window (sign flip). The older
+  window's failure is a **momentum crash on a market rebound**, which a stand-aside-in-drawdown gate
+  structurally can't catch. Slice (3) **`--windows 3`** DONE (Iteration 26): full-sample edge is
+  **positive in ALL THREE disjoint 240d windows** (+46.2 / +8.3 / +11.6 — ~2yr, **no sign flip**),
+  but windows 2 & 3 each fail their own walk-forward (a regime inversion in one half). The harness now
+  **distinguishes this failure mode** (sign-stable lead) from the artifact sign-flip via a new
+  `sign_stable` diagnostic + explicit NOTE. Remaining slices: (4) **longer per-window `--days`** so each
+  window's OOS tail is a smaller fraction (tests if the walk-forward failure is a boundary artifact);
+  (5) **widen the majors basket** to see if the plateau + no-sign-flip hold on more coins. **Alts at 1d
+  stay pruned.** majors-only. Numbers in PROGRESS.md Iteration 26. No live change.
 - [ ] **B-femr-regime — femr is dormant on majors; retire or repurpose.** femr's
   130%-APR entry never trips on liquid coins (B1). B1-alt now shows funding *carry*
   has no edge even where funding is high, so widening femr (also funding-driven) to

@@ -1367,3 +1367,91 @@ majors basket** to test whether the plateau and the no-sign-flip property surviv
 (3) **longer `--days`** per window so the OOS tail is a smaller fraction of each window. If the
 regime gate confirms both (then three) windows across the cost ladder → the first G0-class candidate,
 and only then widen + stress before any paper talk. Alts at 1d stay pruned; majors-only.
+
+---
+
+## Iteration 26 — 2026-06-08 — B-horizon slices 2 & 3: the regime gate can't rescue the older 1d window; momentum is sign-stable across 3 disjoint windows yet fails each window's walk-forward — harness now names this failure mode (sign-stable lead ≠ artifact)
+
+**Context.** Iteration 25 found the strongest non-prune lead of the whole search: majors
+`xsect_momentum_v1` at **1d**, lookback 12–15 bars, CONFIRMS the trailing 240d window across the
+full cost ladder and — uniquely among every candidate — **does not sign-flip** across two disjoint
+windows. It fails `--windows 2` only on the *older* window's walk-forward (in +55.6 / oos −94.2bps:
+an OOS-tail momentum-crash reversal). The backlog laid out the next slices: (2) regime-gate at 1d,
+(3) `--windows 3` + widen basket, (4) longer `--days`. This iteration ran (2) and (3) as
+measurement and shipped the tested code increment they motivated.
+
+**Experiment — slice (2): regime-gate at 1d (measurement; caches gitignored).** The Iteration-19
+causal `regime_gate` stands the dollar-neutral book aside when the equal-weighted universe's
+trailing return over `regime_lookback` bars is < `regime_min_return`. It was built precisely for an
+OOS-tail reversal, and the `--params` flag makes it sweepable. Ran `confirm --windows 2 --prefer
+maker --params lookback_bars=14,regime_gate=true,regime_lookback=N`:
+
+| regime_lookback | trailing full / in / oos | older full / in / oos | verdict |
+|---|---|---|---|
+| 12 | −4.2 / −0.4 / −9.0 ❌ | +61.1 / +139.9 / −65.0 ❌ | NOT DURABLE + **sign FLIP** |
+| 24 | +60.0 / +44.9 / +73.0 ✅ | +113.3 / +211.7 / **−16.3** ❌ | NOT DURABLE |
+| 36 | +16.7 / +5.9 / +23.3 ✅ | +74.7 / +183.0 / −56.8 ❌ | NOT DURABLE |
+| 48 (default) | +34.1 / −17.6 / +49.4 ❌ | +47.5 / +94.5 / −27.5 ❌ | NOT DURABLE |
+
+**The gate does NOT rescue the older window at any setting.** It lifts the older window's *in-sample*
+massively (rl24: +55.6 → +211.7bps) but its **OOS tail still reverses** (−16.3 to −65.0bps), so the
+window stays unconfirmed; and rl12 even *breaks* the previously-confirmed trailing window into a
+sign flip. The reason is structural: a momentum crash happens on a **market rebound** (the short-leg
+losers rebound hardest as the market turns *up* off a bottom), so a "stand aside when the market is
+*down*" filter is looking the wrong way — the crash is in a positive-return regime the gate keeps
+trading. Slice (2) is a clean negative: the existing regime gate is the wrong tool for this failure.
+
+**Experiment — slice (3): `--windows 3` (measurement).** `confirm --windows 3 --prefer maker
+--params lookback_bars=14` (three disjoint, back-to-back 240d/1d windows, ~2yr of majors history):
+
+| window | full | in | oos | confirmed |
+|---|---|---|---|---|
+| trailing 240d | **+46.2** | +49.1 | +42.7 | ✅ |
+| 240d ending 240d ago | **+8.3** | +55.6 | −94.2 | ❌ |
+| 240d ending 480d ago | **+11.6** | −0.6 | +59.1 | ❌ |
+
+The full-sample maker edge is **positive in all three** disjoint windows — **no sign flip over ~2
+years**, stronger evidence of a real directional signal than the 2-window run. But windows 2 & 3
+each fail their *own* walk-forward (each has a regime inversion in one half: window 2 in its OOS
+tail, window 3 in its in-sample half). So the signal is **sign-stable but not every-window-confirmed**
+— a qualitatively different state from the five pruned theses, every one of which sign-*flipped*.
+
+**Code change (the committed increment, with tests).** The durability harness lumped these two
+NOT-DURABLE failure modes together: it surfaced the **sign-flip** ("window-specific artifact") but
+had no name for **sign-stable-but-walk-forward-blocked** — the exact, decision-relevant state this
+lead is in. Added to `backtest/confirm.py`:
+- **`MultiWindowResult.sign_stable: bool`** — True iff every window's preferred-execution
+  full-sample edge is present and shares one sign (no flip). Computed alongside the existing
+  `all_positive`/sign-flip logic; `durable` implies `sign_stable`.
+- **An explicit triage NOTE** in `reasons` when a run is NOT durable yet sign-stable, all-positive,
+  and blocked only by within-window walk-forward: *"full-sample edge is positive and sign-stable
+  across all N windows — blocked only by within-window walk-forward, i.e. regime-sensitive, not the
+  cross-window artifact signature (a lead to push, not an artifact to discard)."* This fires on the
+  real majors-1d data and is mutually exclusive with the sign-flip reason.
+- **`tests/test_confirm_windows.py` (+1 fn, edits):** a sign-stable-but-unconfirmed scenario (two
+  choppy windows, one too small to clear an unreachable sharpe bar) asserts `sign_stable` True, no
+  FLIPS-SIGN reason, and the regime-sensitive NOTE present; the existing sign-flip test now asserts
+  `sign_stable` False and that the NOTE does **not** fire on a genuine artifact; the durable test
+  asserts durable ⇒ sign_stable.
+
+**Honest conclusion.** The lead persists and is now better-characterized, not advanced past G0. Two
+results: (a) the existing regime gate **cannot** fix the failure — it targets drawdowns, but the
+failure is a rebound momentum-crash — so slice (2) is pruned as a fix; (b) the signal is
+**sign-stable across 3 disjoint windows (~2yr)**, which the harness now reports as a distinct,
+push-worthy state rather than burying under a bare NOT DURABLE. **NOT DURABLE still stands; nothing
+touches capital; majors-only.** The meta-lesson is refined: *the durability bar has two distinct
+failure modes — a cross-window sign flip (artifact, discard) and within-window walk-forward failure
+with a stable cross-window sign (regime-sensitive lead, keep pushing). Conflating them wastes the
+signal.* This candidate is firmly the second kind.
+
+**Evidence (gate).** `uv run pytest -q` → **147 passed** (+1); `ruff check src tests scripts` →
+clean. Committed increment is the `sign_stable` diagnostic + NOTE + tests (pure, offline); all
+confirm numbers are measurement (caches gitignored). No strategy/sizing/live-mode change.
+
+**What's next (loop).** B-horizon remaining slices, now that the regime-gate fix is ruled out:
+(4) **longer per-window `--days`** (e.g. 360–480) so each window's OOS tail is a smaller fraction —
+tests whether windows 2 & 3's walk-forward failures are boundary/fraction artifacts of the 240d cut
+rather than genuine regime breaks; (5) **widen the majors basket** (add DOGE/XRP/LTC/BNB/etc.) to
+see if the plateau and the (now 3-window) no-sign-flip property strengthen with more cross-sectional
+breadth. If a longer-window or wider-basket run gets *every* window individually confirmed while
+keeping the sign-stable property → first G0-class candidate. Alts at 1d stay pruned; majors-only.

@@ -190,6 +190,14 @@ class MultiWindowResult:
     prefer: str
     windows: list[WindowResult] = field(default_factory=list)
     reasons: list[str] = field(default_factory=list)
+    # The preferred-execution full-sample edge keeps the *same sign* in every
+    # window (no flip). This is the diagnostic that separates the two NOT-DURABLE
+    # failure modes: a sign flip is the artifact signature (the five pruned
+    # theses), whereas a sign-stable-but-not-confirmed candidate is blocked only
+    # by *within-window* walk-forward — a regime-sensitive lead worth pushing,
+    # not an artifact to discard. (Iteration 26: majors 1d momentum is positive
+    # in all 3 disjoint 240d windows yet fails each older window's walk-forward.)
+    sign_stable: bool = False
 
     def summary(self) -> str:
         verdict = "✅ DURABLE" if self.durable else "❌ NOT DURABLE"
@@ -256,13 +264,25 @@ def confirm_across_windows(
             "— window-specific artifact, not a durable edge"
         )
     all_positive = bool(edges) and all(e is not None and e > 0 for e in edges)
+    # Sign-stable = every window's full-sample edge is present and shares one sign
+    # (no flip). The decision-relevant half of "NOT DURABLE": a sign-stable lead
+    # that merely fails within-window walk-forward is regime-sensitive, not the
+    # cross-window artifact the sign-flip reason flags.
+    all_present = bool(edges) and all(e is not None for e in edges)
+    sign_stable = all_present and not (pos and neg)
 
     durable = not not_confirmed and all_positive
     if durable and not reasons:
         reasons.append(f"confirmed with positive {prefer} edge in all {len(results)} disjoint windows")
+    elif not durable and sign_stable and all_positive and not_confirmed:
+        reasons.append(
+            f"NOTE: full-sample edge is positive and sign-stable across all {len(results)} "
+            "windows — blocked only by within-window walk-forward, i.e. regime-sensitive, "
+            "not the cross-window artifact signature (a lead to push, not an artifact to discard)"
+        )
 
     return MultiWindowResult(agent=agent_name, durable=durable, prefer=prefer,
-                             windows=results, reasons=reasons)
+                             windows=results, reasons=reasons, sign_stable=sign_stable)
 
 
 def _fmt(v: float | None) -> str:

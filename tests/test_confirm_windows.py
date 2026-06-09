@@ -57,8 +57,26 @@ def test_durable_when_edge_survives_every_window():
         prefer="maker", min_sharpe=0.5,
     )
     assert res.durable
+    assert res.sign_stable          # durable implies sign-stable
     assert len(res.windows) == 2
     assert all(w.confirmation.confirmed for w in res.windows)
+
+
+def test_sign_stable_but_not_confirmed_is_flagged_as_a_lead_not_an_artifact():
+    # Both windows are choppy (mean-reversion is positive in each), so the
+    # full-sample edge keeps the same sign — but one window is too small to
+    # clear the walk-forward + sharpe bar, so it isn't individually confirmed.
+    # This is the regime-sensitive-lead failure mode, NOT the sign-flip artifact:
+    # the harness must say so explicitly rather than lumping it in with a flip.
+    res = confirm_across_windows(
+        _factory,
+        [("choppy-strong", _choppy(n=120, ts0=0)), ("choppy-weak", _choppy(n=12, ts0=400))],
+        prefer="maker", min_sharpe=99.0,   # unreachable sharpe -> never confirmed
+    )
+    assert not res.durable
+    assert res.sign_stable                                   # no sign flip
+    assert not any("FLIPS SIGN" in r for r in res.reasons)   # not the artifact
+    assert any("regime-sensitive" in r for r in res.reasons)
 
 
 def test_not_durable_when_sign_flips_across_windows():
@@ -70,8 +88,11 @@ def test_not_durable_when_sign_flips_across_windows():
         prefer="maker", min_sharpe=0.5,
     )
     assert not res.durable
+    assert not res.sign_stable        # a flip is, by definition, not sign-stable
     assert any("FLIPS SIGN" in r for r in res.reasons)
     assert any("uptrend" in r for r in res.reasons)
+    # the regime-sensitive-lead note must NOT fire on a genuine artifact flip
+    assert not any("regime-sensitive" in r for r in res.reasons)
 
 
 def test_single_window_is_never_durable():
