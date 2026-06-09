@@ -7,10 +7,11 @@ Keep it ruthlessly prioritized: the top item should always be the highest-levera
 
 ## P0 — find an edge (the whole point)
 
-- [B] **B1 — Quantify the taker tax on every agent.** Run
-  `hlbot backtest --agent <a> --compare` over ≥90d for twap_mr/femr; record the
-  taker vs maker net/edge in `PROGRESS.md`. _Blocked in CI sandbox: outbound to
-  api.hyperliquid.xyz is 403. Run where HL history is reachable, or add B1a._
+- [x] **B1 — Quantify the taker tax on every agent.** Done (Iteration 20, network
+  reachable on this host). 90d 1h, BTC/ETH/SOL/HYPE: twap_mr_v1 taker −10.0bps →
+  maker −4.6bps (tax ≈5.4bps); twap_mr_regime_v1 −9.8→−4.5 (regime filter nearly
+  inert at 1h on majors); femr_v1 0 trades on majors (funding too small). Numbers
+  in `PROGRESS.md`. _Was blocked on network; now unblocked here._
 - [x] **B1a — Offline history cache.** Done: `hlbot backtest-fetch` +
   save/load/cached_or_fetch under `data/backtest_cache/` (gzipped JSON,
   gitignored); `hlbot backtest --cache` runs without network. (Iteration 2.)
@@ -35,9 +36,25 @@ Keep it ruthlessly prioritized: the top item should always be the highest-levera
 - [x] **B5 — Confirmation harness (G0 as code).** Done: `backtest/confirm.py`
   walk-forward + cost ladder (maker/taker 1×/2×/3×) → PASS/FAIL; `hlbot confirm`.
   (Iteration 3.)
-- [ ] **B4-RUN — Confirm carry strategies on real history.** Run `hlbot confirm
-  --agent xfund_carry_v1 --prefer maker` (and funding_carry_v1) on a net host;
-  promote to the paper roster if confirmed. Blocked by B1 network.
+- [~] **B4-RUN — Confirm carry strategies on real history.** Run on a 10-coin
+  liquid-alt universe incl. ZEC (Iteration 20, network up). **NOT confirmed (FAIL
+  G0):** xfund_carry_v1 maker −4.3bps full-sample but OOS-maker +3.4bps/+0.60sh
+  (52 trades) — a faint recent-regime signal, in-sample −43.7bps; funding_carry_v1
+  maker −111bps (single-name carry run over by price on volatile alts); femr_v1
+  maker −27.9bps. Numbers in `PROGRESS.md`. **Prerequisite found+fixed:** HL
+  `fundingHistory` 500-row cap silently truncated >20d windows → all prior carry
+  backtests were invalid (saw only oldest ~20d of carried-forward funding); fixed
+  via `paginate_by_time`. **Next:** xfund is closest — try wider universe / longer
+  hold / tighter entry; do NOT promote (still negative).
+
+- [ ] **B1b — Paginate candle fetch too.** `fetch_candles` likely shares HL's
+  per-call row cap (~5000); 90d×1h = 2160 is safe but finer intervals (1m/5m) over
+  long windows will truncate the same way `fundingHistory` did (fixed in Iter 20
+  via `paginate_by_time`). Wrap `fetch_candles` in `paginate_by_time` keyed on `t`.
+- [ ] **B1c — Edge hunt on corrected funding.** Now that carry backtests are valid
+  (B4-RUN), xfund_carry maker is the closest to break-even. Explore: wider/auto
+  high-funding universe (rank by historical |funding|, filter by liquidity),
+  longer max-hold, tighter entry, funding-decile cross-section. Evidence-gated.
 
 ## P1 — honest measurement (so the supervisor can trust itself)
 

@@ -789,3 +789,67 @@ positive *live* maker edge; not itself an edge claim (still gated, still paper).
 **What's next (loop).** Finish B12 (fold the remaining femr_tick preamble into a
 reusable harness so `run_tick` == live path end-to-end), B4-RUN (confirm carry on
 real history — network-gated), B16 (HL vault eval for AUM).
+
+---
+
+## Iteration 20 — 2026-06-08 — fix funding-history truncation; B1 taker-tax + B4-RUN carry confirm on real history
+
+**Context.** Network to `api.hyperliquid.xyz` is reachable on this host (200 on a
+`meta` probe), so the long-blocked P0 edge work — B1 (quantify the taker tax) and
+B4-RUN (confirm carry on real history) — was finally unblocked. This is the whole
+point of the mission, so it took priority over the P2 B12 refactor treadmill.
+
+**B1 — taker tax (90d 1h, BTC/ETH/SOL/HYPE).** Real history, `--compare`:
+- `twap_mr_v1`: taker net −$128.67 / **−10.0bps** → maker −$60.74 / **−4.6bps**
+  (taker tax ≈ **5.4bps**; both still negative, 646 trades, ~47% win).
+- `twap_mr_regime_v1`: taker −9.8bps → maker −4.5bps. The regime filter is
+  **nearly inert at 1h on majors** — barely differs from baseline twap_mr.
+- `femr_v1`: **0 trades** on majors — funding never reaches the 1.5bps/hr enter
+  threshold (majors' |funding| absmax ~0.6bps/hr).
+
+**Diagnosis of the 0-trade carry/femr runs (the real find).** femr + both carry
+agents made **0 trades** over 90d even after adding liquid high-funding alts
+(ZEC, ADA, TRX, …). Root cause: **`fetch_funding_history` returned exactly 500
+rows** — HL's per-call page cap — covering only the *oldest* ~20.8 days of any 90d
+request (e.g. ZEC 2026-03-11→04-01); the recent ~69 days (incl. ZEC's current
+~1.6bps/hr funding spike) were silently dropped and then **carried forward as a
+stale constant** by `funding_rate_at`. So *every carry/FEMR backtest over >20d was
+invalid* — they never saw the funding regimes that make carry trade at all.
+
+**Fix (1 commit).**
+- **`backtest/data.py`** — new pure `paginate_by_time(page_fn, start, end, …)` that
+  walks a time-ordered, page-capped HL endpoint forward (re-request from last
+  row's `time`+1ms until a short page / window end / no-progress), de-duping by
+  time and returning sorted-ascending. `fetch_funding_history` now fetches via it.
+  Validated live: ZEC 90d now returns **2160 rows** spanning the full 90d, absmax
+  **2.67bps/hr**, 16 bars ≥1.5bps (was 500 rows / 20.8d / 0.54bps absmax).
+- **`tests/test_backtest.py`** — 2 unit tests: paginator clears a 500-row cap over
+  1200 rows in ≥3 pages (sorted, deduped); and stops after one page when the
+  endpoint ignores `startTime` (no-progress guard, no infinite loop).
+
+**B4-RUN — carry on corrected funding (90d 1h, 10 liquid coins incl. ZEC).** Now
+they trade, and the honest verdict is **still no edge**:
+- `xfund_carry_v1` (market-neutral cross-sectional): maker **−4.3bps** / taker
+  −9.8bps, 62 trades, maxDD −0.2%. `hlbot confirm --prefer maker` → **NOT
+  CONFIRMED**, but OOS-maker was faintly **+3.4bps / +0.60 Sharpe (52 trades)**
+  vs in-sample −43.7bps — a hint the *recent* funding regime (now captured) carries
+  a small market-neutral signal. Closest thing to break-even in the book.
+- `funding_carry_v1` (single-name hold-to-collect): maker **−111bps**, 20 trades,
+  30% win — price moves on volatile alts dwarf the funding collected. Worst.
+- `femr_v1`: maker −27.9bps, 32 trades.
+
+**Evidence.** 136 → **138 tests pass**; `ruff check src tests scripts` clean;
+caches stay gitignored (`data/`). Backtest tables above are reproducible via
+`hlbot backtest --agent <a> --coins <U> --days 90 --compare`.
+
+**Why it matters.** The carry/FEMR backtests were *silently wrong* — measuring the
+wrong 20 days and pretending it was 90 — so any prior "no edge" or "edge" claim on
+funding strategies was unfounded. With funding now fetched correctly, measurement
+is trustworthy and the answer is honest: no positive net-of-cost edge yet, with
+**market-neutral xfund-maker the only near-break-even candidate**. Not an edge
+claim; nothing promoted; everything still paper/gated.
+
+**What's next (loop).** B1c (edge hunt on corrected funding: rank a wider universe
+by historical |funding|×liquidity, longer hold / tighter entry / funding-decile
+cross-section for xfund), B1b (paginate `fetch_candles` for fine-interval long
+windows — same cap class), then resume B12 consolidation.

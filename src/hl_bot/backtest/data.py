@@ -56,6 +56,56 @@ def fetch_candles(
     return out if isinstance(out, list) else []
 
 
+def paginate_by_time(
+    page_fn: Any,
+    start_ms: int,
+    end_ms: int,
+    *,
+    page_limit: int = 500,
+    time_key: str = "time",
+    max_pages: int = 100,
+) -> list[dict[str, Any]]:
+    """Walk a time-ordered, page-capped HL endpoint forward to completion.
+
+    HL info endpoints (``fundingHistory``, candle snapshots) return at most
+    ``page_limit`` rows per call, oldest-first, starting at ``startTime``. A naive
+    single call over a 90d window therefore yields only the *oldest* ~20 days of
+    hourly funding and silently drops the rest — which made every carry/FEMR
+    backtest over >20d run on stale, carried-forward funding.
+
+    ``page_fn(start, end) -> list[dict]`` fetches one page. We re-request from the
+    last row's timestamp + 1ms until a short (``< page_limit``) page arrives, the
+    window is exhausted, or no forward progress is made (guard against an endpoint
+    that ignores ``startTime``). Rows are de-duplicated by ``time_key`` and
+    returned sorted ascending. Pure of network so it is unit-testable with a fake
+    ``page_fn`` that simulates the cap.
+    """
+    out: list[dict[str, Any]] = []
+    seen: set[int] = set()
+    cur = start_ms
+    for _ in range(max_pages):
+        page = page_fn(cur, end_ms)
+        if not page:
+            break
+        last_t = cur
+        for row in page:
+            try:
+                t = int(row.get(time_key, 0))
+            except (TypeError, ValueError):
+                continue
+            if t in seen:
+                continue
+            seen.add(t)
+            out.append(row)
+            if t > last_t:
+                last_t = t
+        if len(page) < page_limit or last_t <= cur or last_t >= end_ms:
+            break
+        cur = last_t + 1
+    out.sort(key=lambda r: int(r.get(time_key, 0) or 0))
+    return out
+
+
 def fetch_funding_history(
     coin: str,
     start_ms: int,
@@ -63,15 +113,23 @@ def fetch_funding_history(
     *,
     base_url: str = "https://api.hyperliquid.xyz",
 ) -> list[dict[str, Any]]:
-    """Raw funding rows: {coin, fundingRate, premium, time}."""
-    with httpx.Client(timeout=20) as client:
-        r = client.post(base_url + "/info", json={
-            "type": "fundingHistory", "coin": coin,
-            "startTime": start_ms, "endTime": end_ms,
-        })
-        r.raise_for_status()
-        out = r.json()
-    return out if isinstance(out, list) else []
+    """Raw funding rows: {coin, fundingRate, premium, time}, oldest-first.
+
+    Paginated: HL caps ``fundingHistory`` at 500 rows/call, so a multi-week
+    window must be walked forward (see :func:`paginate_by_time`) or the recent
+    funding is lost.
+    """
+    def _page(s: int, e: int) -> list[dict[str, Any]]:
+        with httpx.Client(timeout=20) as client:
+            r = client.post(base_url + "/info", json={
+                "type": "fundingHistory", "coin": coin,
+                "startTime": s, "endTime": e,
+            })
+            r.raise_for_status()
+            out = r.json()
+        return out if isinstance(out, list) else []
+
+    return paginate_by_time(_page, start_ms, end_ms)
 
 
 # ---------------------------------------------------------------------------

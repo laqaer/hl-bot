@@ -112,6 +112,43 @@ def test_build_frames_from_candles():
     assert last.candles_1h["TST"]["sigma"] > 0
 
 
+def test_paginate_by_time_walks_past_the_page_cap():
+    """A 500-row page cap must not truncate a long window (the funding bug)."""
+    from hl_bot.backtest.data import paginate_by_time
+
+    # Simulate an HL endpoint with hourly rows that returns at most 500 per call,
+    # oldest-first, honoring startTime. 1200 hourly rows total.
+    all_rows = [{"time": i * HOUR, "fundingRate": 0.0001} for i in range(1200)]
+    calls: list[int] = []
+
+    def page_fn(start: int, end: int) -> list[dict]:
+        calls.append(start)
+        window = [r for r in all_rows if start <= r["time"] <= end]
+        return window[:500]
+
+    got = paginate_by_time(page_fn, 0, 1200 * HOUR, page_limit=500)
+    assert len(got) == 1200, "all rows recovered across pages"
+    assert [r["time"] for r in got] == [r["time"] for r in all_rows], "sorted, deduped"
+    assert len(calls) >= 3, "needed multiple pages to clear the cap"
+
+
+def test_paginate_by_time_stops_without_progress():
+    """An endpoint that ignores startTime must not loop forever."""
+    from hl_bot.backtest.data import paginate_by_time
+
+    fixed = [{"time": 0, "fundingRate": 0.0} for _ in range(500)]
+    n_calls = 0
+
+    def page_fn(start: int, end: int) -> list[dict]:
+        nonlocal n_calls
+        n_calls += 1
+        return fixed
+
+    got = paginate_by_time(page_fn, 0, 10 * HOUR, page_limit=500)
+    assert len(got) == 1, "deduped by time"
+    assert n_calls == 1, "no forward progress -> stop after one page"
+
+
 def test_frame_cache_roundtrip(tmp_path):
     from hl_bot.backtest.data import load_cached_frames, save_frames
     frames = _mean_reversion_path()
