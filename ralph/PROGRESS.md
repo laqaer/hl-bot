@@ -693,3 +693,50 @@ clearinghouse fetch → risk-cap → view enrich — into a reusable harness so
 `run_tick` == live path end-to-end), userFills WS for instant maker-fill
 detection, B4-RUN (confirm carry on real history — network-gated), B16 (HL vault
 eval for AUM).
+
+---
+
+## Iteration 18 — 2026-06-08 — extract + test the bot-owned/manual partition (B12 / M3 / D2)
+
+**Context.** Structure/devops leverage, continuing B12. Iters 13–17 pulled the
+order-placement, decision-gathering, clearinghouse-parse/reconcile, allocator-cap,
+and WS-overlay loops out of `cli.femr_tick` into tested `runtime` functions. The
+next inlined, untested preamble block was the **bot-owned vs manual position
+partition**: union each roster agent's `bot_owned_coins` and split every live HL
+position into bot-owned vs manual. ~6 lines with zero direct coverage (REVIEW M3
+"two paths; the safe wrapper is dead code for live" + D2 "no coverage of the live
+path"). This is risk-relevant: `manual_coins` is the set of positions the bot must
+NOT touch (opened by hand or by a filtered-out, not-promoted agent), so the
+classification must be correct before the live path acts on it.
+
+**Changed (1 commit).**
+- **`agents/runtime.py`** — new `classify_position_ownership(conn, all_positions,
+  agent_names) -> PositionOwnership(owned_by_agent, owned_all, manual_coins)`: a
+  faithful move of the inlined per-agent `bot_owned_coins` union + manual split.
+  Ownership keys off each agent's CONFIRMED place/flatten decision log; a coin
+  owned by an agent NOT in `agent_names` (e.g. a not-promoted live agent) correctly
+  falls into `manual_coins`; `manual_coins` preserves `all_positions` order so the
+  CLI display is unchanged. `bot_owned_coins` imported locally (same pattern the
+  other runtime helpers use).
+- **`cli/main.py` `femr_tick`** — the inlined `owned_all` loop + `manual_coins`
+  partition is replaced by `classify_position_ownership(...)` + unpacking. The
+  femr-specific `live_positions` line (still derived from `bot_owned_coins(femr_v1)`
+  for the FEMR view) and the console display are unchanged. Added
+  `classify_position_ownership` to the runtime import.
+
+**Evidence.** 130 → **133 tests pass** (3 new in `test_tick_harness.py`:
+two-agent split with a manual SOL; a filtered-out agent's coin shows as manual
+with order preserved; place-then-flatten drops ownership → manual); `ruff check
+src tests scripts` clean; `from hl_bot.cli.main import app, femr_tick` imports OK.
+
+**Why it matters.** The live bot-owned/manual classification — which gates what the
+bot considers its own vs hands-off — now lives in one importable, unit-tested
+function instead of buried untested CLI code. Another prerequisite for trusting the
+live path with capital and the next slice of B12 toward `run_tick == femr_tick`
+end-to-end. Behavior-preserving; safety/structure plumbing, not an edge claim.
+
+**What's next (loop).** Finish B12 (fold the remaining femr_tick preamble —
+clearinghouse fetch → risk-cap → view enrich — into a reusable harness so
+`run_tick` == live path end-to-end), userFills WS for instant maker-fill
+detection, B4-RUN (confirm carry on real history — network-gated), B16 (HL vault
+eval for AUM).

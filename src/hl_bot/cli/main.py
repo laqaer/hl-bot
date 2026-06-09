@@ -355,6 +355,7 @@ def femr_tick(live: bool = False, execution: str = "taker"):
     """
     from ..agents.runtime import (
         apply_allocator_caps,
+        classify_position_ownership,
         fetch_market_view,
         gather_decisions,
         overlay_ws_snapshot,
@@ -489,10 +490,11 @@ def femr_tick(live: bool = False, execution: str = "taker"):
     bot_positions = [p for p in all_positions if p["coin"] in owned_femr]
     view.extra["live_positions"] = bot_positions
 
-    owned_all: set[str] = set()
-    for a in agents:
-        owned_all |= bot_owned_coins(conn, agent=a.name)
-    manual_coins = [p["coin"] for p in all_positions if p["coin"] not in owned_all]
+    # Partition live positions into bot-owned (any roster agent) vs manual via the
+    # shared, tested classification (agents.runtime).
+    ownership = classify_position_ownership(conn, all_positions, [a.name for a in agents])
+    owned_all = ownership.owned_all
+    manual_coins = ownership.manual_coins
     console.print(
         f"[dim]market: {len(view.mids)} coins, {len(view.funding)} funding · "
         f"candles: {len(view.extra.get('candles_1h', {}))} · "

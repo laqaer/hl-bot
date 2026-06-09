@@ -97,6 +97,10 @@ Keep it ruthlessly prioritized: the top item should always be the highest-levera
   real liquidations feed) is extracted into tested `runtime.overlay_ws_snapshot`
   returning `WsOverlay`; the CLI keeps only the env-read + file load + print.
   (Iteration 17.)
+  (f) the bot-owned/manual position partition (the per-agent `bot_owned_coins`
+  union + manual-coin split) is extracted into tested
+  `runtime.classify_position_ownership` returning `PositionOwnership`; the CLI
+  keeps only the femr `live_positions` line + display. (Iteration 18.)
   **Remaining:** fold the rest of the `femr_tick` preamble (clearinghouse fetch →
   risk-cap → view enrich) into a reusable harness so `run_tick` and `femr_tick`
   share one path end-to-end.

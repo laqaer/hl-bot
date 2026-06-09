@@ -151,6 +151,51 @@ def reconcile_agents(
 
 
 @dataclass
+class PositionOwnership:
+    """Bot-vs-manual classification of the live positions for one tick.
+
+    ``owned_by_agent`` maps each agent to the coins it owns per its CONFIRMED
+    decision log (via :func:`bot_owned_coins`); ``owned_all`` is their union;
+    ``manual_coins`` is every live position NOT owned by any agent in the roster
+    (i.e. opened by hand or by a filtered-out agent). ``manual_coins`` preserves
+    ``all_positions`` order so the CLI's display is unchanged.
+    """
+
+    owned_by_agent: dict[str, set[str]]
+    owned_all: set[str]
+    manual_coins: list[str]
+
+
+def classify_position_ownership(
+    conn: sqlite3.Connection,
+    all_positions: list[dict],
+    agent_names: list[str],
+) -> PositionOwnership:
+    """Split live HL positions into bot-owned (per agent) vs manual.
+
+    Extracted from the ``femr_tick`` preamble (REVIEW M3 / B12) so the live
+    classification that drives the bot-owned/manual display — and tells the bot
+    which coins it must NOT touch (manual) — is importable and unit-tested with
+    an in-memory DB instead of an inlined loop. Behavior is preserved exactly:
+    ownership keys off each agent's CONFIRMED place/flatten decision log, and a
+    coin owned by an agent that was filtered out of ``agent_names`` (e.g. a
+    not-promoted live agent) correctly falls into ``manual_coins``.
+    """
+    from ..exec.orders import bot_owned_coins
+
+    owned_by_agent = {name: bot_owned_coins(conn, agent=name) for name in agent_names}
+    owned_all: set[str] = set()
+    for coins in owned_by_agent.values():
+        owned_all |= coins
+    manual_coins = [p["coin"] for p in all_positions if p["coin"] not in owned_all]
+    return PositionOwnership(
+        owned_by_agent=owned_by_agent,
+        owned_all=owned_all,
+        manual_coins=manual_coins,
+    )
+
+
+@dataclass
 class AllocatorCaps:
     """Result of resolving + applying per-agent notional caps for one tick.
 

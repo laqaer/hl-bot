@@ -23,6 +23,7 @@ from hl_bot.agents.base import MarketView
 from hl_bot.agents.decisions import Decision, log_decision
 from hl_bot.agents.runtime import (
     apply_allocator_caps,
+    classify_position_ownership,
     overlay_ws_snapshot,
     positions_from_clearinghouse,
     reconcile_agents,
@@ -141,6 +142,38 @@ def test_apply_allocator_caps_agent_without_cfg_left_untouched(conn):
     assert out.effective_caps["a"] == out.allocs["a"]
     assert "a" not in out.effective_order_caps
     assert not hasattr(agents[0], "cfg")
+
+
+def test_classify_position_ownership_splits_bot_and_manual(conn):
+    # Two roster agents own BTC / ETH; SOL is live but owned by nobody -> manual.
+    log_decision(conn, Decision(agent="a", action="place", coin="BTC", is_paper=False))
+    log_decision(conn, Decision(agent="b", action="place", coin="ETH", is_paper=False))
+    live = [{"coin": "BTC"}, {"coin": "ETH"}, {"coin": "SOL"}]
+    out = classify_position_ownership(conn, live, ["a", "b"])
+    assert out.owned_by_agent == {"a": {"BTC"}, "b": {"ETH"}}
+    assert out.owned_all == {"BTC", "ETH"}
+    assert out.manual_coins == ["SOL"]
+
+
+def test_classify_position_ownership_filtered_agent_coin_is_manual(conn):
+    # 'b' owns ETH per its log, but is NOT in the roster (e.g. not promoted to
+    # live) -> ETH must show as manual, not bot-owned. Order is preserved.
+    log_decision(conn, Decision(agent="a", action="place", coin="BTC", is_paper=False))
+    log_decision(conn, Decision(agent="b", action="place", coin="ETH", is_paper=False))
+    live = [{"coin": "ETH"}, {"coin": "BTC"}]
+    out = classify_position_ownership(conn, live, ["a"])
+    assert out.owned_all == {"BTC"}
+    assert out.manual_coins == ["ETH"]
+
+
+def test_classify_position_ownership_flatten_drops_ownership(conn):
+    # A place then flatten means the agent no longer owns the coin -> manual.
+    log_decision(conn, Decision(agent="a", action="place", coin="BTC", is_paper=False))
+    log_decision(conn, Decision(agent="a", action="flatten", coin="BTC", is_paper=False))
+    live = [{"coin": "BTC"}]
+    out = classify_position_ownership(conn, live, ["a"])
+    assert out.owned_all == set()
+    assert out.manual_coins == ["BTC"]
 
 
 def test_overlay_ws_snapshot_none_is_noop():
