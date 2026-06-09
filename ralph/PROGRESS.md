@@ -2029,3 +2029,87 @@ the a-priori US-session band to confirm a contiguous plateau (a real session eff
 single-hour knife-edge). If the trailing OOS tail and the older-window in<oos inversion both survive (1)+(2),
 this becomes the strongest durability candidate yet; if they don't, it prunes cleanly as the eighth
 regime-sensitive lead. Either way it is adjudicated by the existing `confirm --windows`/`--sweep` machinery.
+
+## Iteration 35 — 2026-06-08 — B-session slices 2–4: push the session-timing lead to a verdict — PRUNED as a deployable edge (strongest-characterized lead yet, but the within-window regime-sensitivity is NOT a boundary artifact and it sign-flips on alts)
+
+**Context.** Iter 34 introduced `session_timing_v1` (the eighth thesis, first keying off neither price nor
+funding) and found a genuine *lead*: a **sign-stable, mirror-coherent** US-session drift on majors (long-session
+positive +11.4/+0.4 across two disjoint 120d windows, the overnight complement negative in both), but NOT
+DURABLE because the within-window walk-forward is regime-sensitive. The backlog named three cheap push-slices
+to reach a verdict. This iteration runs all three with the existing durability machinery (`confirm
+--windows/--days/--coins/--sweep`) — no code change, pure measurement — and reaches a clean prune/advance call.
+
+**Evidence — all maker, real HL history, `full` = preferred-execution full-sample edge bps per window:**
+
+```
+(3) BREADTH — wider majors (majors_wide = 12 coins, 1h, 120d, --windows 2):
+❌ NOT DURABLE  session_timing_v1   — SIGN-STABLE (NOTE fires)
+  ❌ trailing 120d          full  +11.4bps   in +17.0  oos  -1.3
+  ❌ 120d ending 120d ago   full   +0.6bps   in  -3.0  oos  +9.1
+  -> widening majors does NOT break sign-stability (the momentum lead broke here);
+     equity-beta hypothesis survives breadth on majors.
+
+(3) BREADTH — liquid alts (alts_heldout, 1h, 120d, --windows 2):
+❌ NOT DURABLE  session_timing_v1   — SIGN-FLIPS (artifact signature)
+  ✅ trailing 120d          full  +24.4bps   in +22.1  oos +29.6   (even CONFIRMS)
+  ❌ 120d ending 120d ago   full   -1.7bps   in  +4.7  oos -17.4
+  -> the effect does NOT generalize to alts; the trailing alt strength is window-specific.
+
+(2) LONGER BASELINE — 1h, --windows 3, 120d each (majors):
+❌ NOT DURABLE  session_timing_v1
+  ❌ trailing 120d          full  +11.4bps   in +17.0  oos  -1.3
+  ❌ 120d ending 120d ago   full   +0.4bps   in  -3.2  oos  +8.9
+  ❌ 120d ending 240d ago   full        —    in   —    oos   —
+  -> oldest window data-limited (no trades; HL 1h candle history ~208d cap) — the
+     1h baseline can't extend past ~240d. Drove the 4h longer-baseline below.
+
+(2) LONGER BASELINE — 4h, 240d each, --windows 2 (majors; ~480d / ~1.3yr total):
+❌ NOT DURABLE  session_timing_v1   — SIGN-STABLE (NOTE fires)
+  ❌ trailing 240d          full   +3.2bps   in +10.7  oos -13.8
+  ❌ 240d ending 240d ago   full   +2.7bps   in  +4.1  oos  -0.6
+  -> DEFINITIVE: full-sample edge stays positive & sign-stable at a 2× baseline, but the
+     OOS tail is negative in BOTH windows — the within-window regime-sensitivity is NOT a
+     boundary/horizon artifact; it persists with more data.
+
+(4) HOUR-BAND SWEEP — enter_hour_utc in {12,13,14,15,16} (exit 21Z fixed), 1h, 120d, --windows 2 (majors):
+❌ NO PLATEAU (knife-edge by the binary durability criterion — no value clears full durability,
+   expected for a regime-sensitive lead), BUT the full-sample edge is a SMOOTH HILL peaked at the
+   a-priori open:
+     12 -> +4.4 | 13 -> +9.5 | 14 -> +11.4 (peak) | 15 -> +8.4 | 16 -> +5.0
+  -> NOT a single-hour knife-edge / NOT data-mined to one lucky hour; the effect is a broad,
+     smoothly-located session window cleanly peaked exactly where the TradFi hypothesis predicts.
+```
+
+**Honest read — the strongest lead in the search, and still not durable.** Session-timing accumulates more
+robustness evidence than any prior thesis: it is **sign-stable on majors across two windows AND a 2× longer
+~480d baseline**, **mirror-coherent** (slice 1: the overnight complement is cleanly negative), **hour-robust**
+(slice 4: a smooth hill peaked at the a-priori 14Z open, not a knife-edge), and **breadth-robust on majors**
+(slice 3: widening to 12 coins keeps sign-stability, whereas breadth *broke* the majors-1d momentum lead). It
+is genuinely a coherent, repeatable equity-beta session effect on majors. **But it does not clear the
+durability bar, for two now-conclusive reasons:** (1) the within-window walk-forward OOS tail is negative
+regardless of horizon — the 4h ~480d baseline shows the regime-sensitivity is **not a boundary artifact**, it
+persists with 2× the data (the one hypothesis that could have rescued the lead); and (2) it **sign-flips on a
+disjoint liquid-alt basket** (alts trailing window even confirms, but the older alt window is the artifact
+sign-flip) — so the "durable" behavior is specific to the majors universe and a favorable trailing regime.
+
+**Net.** Session-timing is the eighth structurally-different thesis, now **fully characterized and pruned as a
+deployable edge.** It is the *best* lead the search has produced — and that is exactly why running it to a
+verdict is valuable: it shows that even a sign-stable, mirror-coherent, hour-robust, majors-breadth-robust
+clock effect fails the durability bar through the same regime-sensitivity that killed the seven price/funding
+theses, now proven (via the 2× baseline) not to be a horizon artifact. It joins the "sign-stable lead, not
+deployable" bucket alongside majors-1d momentum. `session_timing_v1` is real, well-tested (8 unit tests), and
+stays in the roster for paper/measurement only. **Maker-only, nothing touches capital, no live change.**
+
+**Evidence (gate).** `uv run pytest -q` → **196 passed** (no code change this iteration; pure measurement on
+cached candles, no `data/` writes committed); `ruff check src tests scripts` → clean. No strategy in the live
+roster changed; no live mode enabled.
+
+**What's next (loop).** Eight direction/relative theses are now pruned (or reduced to an over-conditioned
+point), all sharing one failure mode: a price/funding/clock-derived *directional* signal that proves
+regime-sensitive under walk-forward. The unexplored class — and the one REVIEW C1 says holds the structural
+money — is an **execution edge, not a direction edge**: capturing the realized spread / maker rebate itself,
+net of adverse selection, which is not a directional bet and so may sidestep the regime-sensitivity. Filed as
+**B-exec** (`maker_spread_v1`): the next iteration should specify the agent + a backtest-able
+fill/adverse-selection model and run it through `confirm --windows 2 --prefer maker` from the first run. The
+one remaining session angle (finer time-of-day resolution, B-session-tod) is parked low — the smooth hour-hill
+(slice 4) and the 2× baseline OOS failure (slice 2) make it unlikely to fix durability.
