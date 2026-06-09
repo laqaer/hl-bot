@@ -7,6 +7,25 @@ Keep it ruthlessly prioritized: the top item should always be the highest-levera
 
 ## P0 — find an edge (the whole point)
 
+- [~] **B-pairs — Pairs / relative-value mean-reversion (the seventh, structurally-different
+  thesis): THE FIRST SIGNAL TO CLEAR THE CANONICAL DURABILITY BAR.** Slice 1 DONE (Iteration 29).
+  New `pairs_reversion_v1`: market-neutral statistical arbitrage on the **log-ratio spread** of a coin
+  pair (ETH/BTC, SOL/AVAX, LINK/AAVE) vs its rolling-z mean — SHORT the rich leg / LONG the cheap leg,
+  hold until the spread reverts inside the band. Orthogonal to all six pruned theses: keys off a
+  *pairwise relationship*, not a coin's own return (momentum) or funding level (carry). Registered in
+  confirm/backtest, 7 unit tests. **Result on real HL history (6 coins, 1h, lb=48, maker):**
+  (a) **`--windows 2` 120d = DURABLE** — trailing full +5.3bps (in +6.1 / oos +3.4), older full +8.0
+  (in +7.1 / oos +9.7); *both windows in+oos positive* — **no prior thesis ever passed this**.
+  (b) Across EVERY config tried the full-sample maker edge is **sign-stable & positive** (never the
+  artifact sign-flip): windows=2/180d (+5.6 / +14.0, NOTE fires), 2-pair-only (+9.5 / +7.8).
+  **Caveats (why a lead, not a deploy):** maker-only (taker-1x ≈ −0.2bps breakeven, taker-2x −2.2);
+  `--windows 3` fails on a no-trade oldest 120d slice; at 180d / narrower baskets the trailing OOS tail
+  weakens to the "regime-sensitive, sign-stable lead" failure mode (the harness NOTE, not the artifact).
+  **A genuine lead to push, not a prune; maker-only, nothing touches capital.** Numbers in PROGRESS.md
+  Iteration 29. Next slices: (2) lookback/entry_z/exit_z plateau sweep at 1h; (3) widen to more disjoint
+  liquid pairs (does the canonical-bar PASS hold on a held-out pair set?); (4) longer per-window `--days`
+  to test whether the within-window OOS-tail weakness is a boundary artifact (the test that pruned
+  B-horizon); (5) intraday cadence (15m/5m) where short-horizon reversal is strongest (REVIEW C7).
 - [x] **B1 — Quantify the taker tax on every agent.** DONE (Iteration 16, network
   open). 120d/1h over BTC,ETH,SOL,HYPE,AVAX,LINK: taker tax ≈ **5.7 bps round-trip**,
   ~**73% of the TWAP bleed** (twap_mr −7.7→−2.0 bps taker→maker; regime −8.0→−2.3).

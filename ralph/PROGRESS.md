@@ -1581,3 +1581,90 @@ level — note M5 flags the spot-scaling fragility, so it needs a careful data p
 microstructure** edge at WS cadence (REVIEW C7) rather than the daily/hourly bars every pruned thesis
 used. Lower-priority hygiene: liq_cascade is similarly dormant unless WS-fed (B11) and is a retirement
 candidate by the same standard if it stays edgeless.
+
+---
+
+## Iteration 29 — 2026-06-08 — B-pairs slice 1: pairs/relative-value mean-reversion — THE FIRST SIGNAL TO CLEAR THE CANONICAL DURABILITY BAR (maker, 120d×2 windows)
+
+**Context.** Six structurally-different *bar-based* theses are pruned after the out-of-time durability
+bar (twap_mr, funding/xfund carry, cross-sectional momentum + reversion, regime-gated momentum,
+ts-momentum, and the 1d-horizon momentum variant). femr is retired (Iter 28). Every one of them keyed
+off a coin's **own** trailing return (momentum) or its **own** funding level (carry), and every one
+failed the same way: a sign-flip between in-sample and OOS, or across disjoint windows. The honest
+frontier (Iter 28 "what's next") was a **genuinely new signal class**. This iteration builds the
+seventh thesis and runs it through the bar from the first run.
+
+**The new thesis — pairs / relative-value statistical arbitrage.** New `pairs_reversion_v1`
+(`agents/pairs_reversion.py`): market-neutral, trades the **log-price-ratio spread** of an
+economically-related coin pair against its rolling-z mean. When `z = (spread − rolling_mean)/rolling_std`
+is extreme (|z| ≥ entry_z), SHORT the rich leg and LONG the cheap leg in **equal dollars**; hold until
+the spread reverts inside the band (`entry_sign·z ≤ exit_z`, which covers both reversion-to-zero and a
+flip clean through the mean), then flatten **both legs together**. Default pairs ETH/BTC, SOL/AVAX,
+LINK/AAVE (coin-disjoint so per-coin position tracking is unambiguous); pairs overridable from
+`--params` via an `'A/B|C/D'` string. This is **orthogonal to all six pruned theses**: it keys off the
+*relationship between two coins*, not either coin's own return or funding — a pairwise
+cointegration/mean-reversion, the classic relative-value edge class never tried here. Maker-friendly
+(patient entries), hours-horizon (tolerates the 5-min loop).
+
+**Code increment (committed, with tests).** Agent + registration in the `confirm`/`backtest` factories
+(research commands only; **live tick paths untouched**, zero live-path risk). `tests/test_pairs_reversion.py`
+(+7): stretched-up → short-rich/long-cheap with equal-dollar legs; stretched-down mirror; spread-at-mean
+not traded; too-short history holds; an open pair flattens **both** legs on reversion; `_parse_pairs`
+string-form (upper-cases, drops self-pairs/malformed); and a backtest that books **positive maker PnL**
+when a one-bar dislocation reverts (short the rich leg at the extreme, cover at par). Pure/offline.
+
+**Evidence — real HL history (network, caches NOT written; `--no-cache`).** 6 coins
+(BTC,ETH,SOL,AVAX,LINK,AAVE), 1h, default 3 pairs, lb=48, `--prefer maker`:
+
+*Single window, trailing 120d (2881 frames):*
+
+| exec | full edge | sharpe | trades |
+|---|---|---|---|
+| maker | **+5.3bps** | +2.72 | 760 |
+| taker-1x | −0.2 | −0.08 | 760 |
+| taker-2x | −2.2 | −1.11 | 760 |
+
+walk-forward maker: **in +6.1bps/sh+2.94, oos +3.4bps/sh+2.19** — *both halves positive*. Every one of
+the six pruned theses sign-flipped in→oos on its trailing window; **this is the first that does not.**
+
+*Durability bar `--windows 2`, 120d (the canonical standard since Iter 21):*
+
+| window | full | in | oos | confirmed |
+|---|---|---|---|---|
+| trailing 120d | +5.3 | +6.1 | +3.4 | ✅ |
+| 120d ending 120d ago | +8.0 | +7.1 | +9.7 | ✅ |
+
+→ **✅ DURABLE.** Both disjoint windows individually walk-forward-confirmed, in+oos positive in each, no
+sign flip. **No prior thesis ever passed this bar.**
+
+*Stress (all maker):* (a) `--windows 3` 120d → **NOT DURABLE**, but only because the **oldest** 120d
+slice (240–360d ago) returns `—` (no confirmable edge / too few qualifying extremes in that narrow
+slice); the trailing two windows still confirm (+5.3 / +8.2). (b) `--windows 2` **180d** → NOT DURABLE
+but the harness fires its **sign-stable NOTE**: full +5.6 / +14.0bps (both positive, *no flip*), blocked
+only by the trailing window's weak OOS tail (+1.4, sharpe < 1) — the "regime-sensitive lead, not
+artifact" failure mode, the *same* one the B-horizon majors-momentum lead hit. (c) `--windows 2` 120d,
+**2-pair** (ETH/BTC|SOL/AVAX only) → same: full +9.5 / +7.8 (sign-stable), trailing OOS weak (+2.0).
+
+**Honest read.** Across **every** window length, window count, and basket tried, the full-sample maker
+edge is **positive and sign-stable** — it *never* shows the cross-window sign-flip that hand-pruned the
+six earlier theses. It is the **only** candidate to clear the canonical 120d×2-window durability bar
+outright. That makes it a materially stronger lead than anything before it. It is **not** unconditionally
+durable yet: it is **maker-only** (taker ≈ breakeven), and at longer windows / narrower pair sets it
+degrades to the regime-sensitive within-window failure (sign-stable, not artifact). So: **a genuine lead
+to push, not a deploy and not a prune.** No G0-PASS claim beyond the canonical bar it cleared; **maker-only,
+nothing touches capital, no live change.**
+
+**Evidence (gate).** `uv run pytest -q` → **162 passed** (+7); `ruff check src tests scripts` → clean.
+Committed increment is the agent + CLI registration + 7 offline tests; all confirm numbers are
+measurement (`--no-cache`, no `data/` writes). No strategy in the live roster changed; no live mode
+enabled.
+
+**What's next (loop).** First real lead in the search — push it before anything else. Priority slices:
+(2) **plateau sweep** lb / entry_z / exit_z at 1h (is the canonical-bar PASS a robust plateau or a knife
+edge?); (3) **held-out pair set** (does the 2-window PASS survive disjoint liquid pairs not in the
+default basket — the leave-pairs-out analogue of leave-one-coin-out?); (4) **longer per-window `--days`**
+to test whether the trailing-window OOS-tail weakness at 180d is a boundary artifact (the test that
+pruned B-horizon); (5) **intraday cadence (15m/5m)** where short-horizon spread reversal is strongest and
+the maker edge per round-trip should be larger relative to the move (REVIEW C7). If it holds the
+canonical bar across a sweep + held-out pairs, it becomes the first paper-deploy candidate behind the
+existing 5×/1× risk machinery (human-gated).
