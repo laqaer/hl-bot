@@ -62,6 +62,54 @@ def fetch_market_view(base_url: str, coins: list[str]) -> MarketView:
     )
 
 
+def positions_from_clearinghouse(st: dict) -> list[dict]:
+    """Normalize HL ``clearinghouseState`` into the bot's position-dict shape.
+
+    Pure parse of ``st["assetPositions"][].position`` into the list of dicts the
+    rest of the live path consumes (reconcile, allocator, view enrichment).
+    Previously inlined and untested in ``femr_tick``; extracted as the first pure
+    slice of the shared live/paper tick harness (REVIEW M3 / B12). Malformed
+    entries are skipped rather than aborting the tick.
+    """
+    out: list[dict] = []
+    for ap in st.get("assetPositions", []) or []:
+        pos = (ap.get("position") or {}) if isinstance(ap, dict) else {}
+        with contextlib.suppress(TypeError, ValueError):
+            out.append({
+                "coin": pos.get("coin"),
+                "szi": float(pos.get("szi", 0) or 0),
+                "entry_px": float(pos.get("entryPx", 0) or 0),
+                "position_value": float(pos.get("positionValue", 0) or 0),
+                "unrealized_pnl": float(pos.get("unrealizedPnl", 0) or 0),
+                "liquidation_px": float(pos.get("liquidationPx", 0) or 0),
+                "leverage": (pos.get("leverage") or {}).get("value"),
+                "margin_used": float(pos.get("marginUsed", 0) or 0),
+            })
+    return out
+
+
+def reconcile_agents(
+    conn: sqlite3.Connection,
+    all_positions: list[dict],
+    agent_names: list[str],
+) -> dict[str, list[str]]:
+    """Clear stale DB ownership for each agent independently against HL truth.
+
+    Runs ``reconcile_positions`` per agent (each agent owns coins by name match,
+    so reconciling them together would cross-contaminate) and returns only the
+    agents that had something reconciled. Extracted from the ``femr_tick``
+    preamble as part of the shared tick harness (REVIEW M3 / B12).
+    """
+    from ..exec.orders import reconcile_positions
+
+    reconciled: dict[str, list[str]] = {}
+    for name in agent_names:
+        r = reconcile_positions(conn, all_positions, agent=name)
+        if r:
+            reconciled[name] = r
+    return reconciled
+
+
 def _agent_mode(conn: sqlite3.Connection, agent: str) -> tuple[str, bool]:
     row = conn.execute(
         "SELECT mode, enabled FROM agent_state WHERE agent=?", (agent,)

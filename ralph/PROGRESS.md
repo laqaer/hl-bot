@@ -543,3 +543,56 @@ Safety/structure plumbing, not an edge claim.
 reconcile/allocator preamble into a reusable harness so `run_tick` == live path
 end-to-end), userFills WS for instant maker-fill detection, B4-RUN (confirm carry
 on real history — network-gated), B16 (HL vault eval for AUM).
+
+---
+
+## Iteration 15 — 2026-06-08 — extract + test the live tick preamble (B12 / M3 / D2)
+
+**Context.** Structure/devops leverage, continuing B12. Iters 13–14 pulled the
+order-placement (`execute_decisions`) and decision-gathering (`gather_decisions`)
+loops out of `cli.femr_tick` into tested `runtime` functions. The remaining
+duplicated/untested live-only code was the **preamble**: parsing HL
+`clearinghouseState` into the bot's position-dict shape and the per-agent
+stale-ownership reconcile loop. Both were inlined in `femr_tick` with zero
+coverage (REVIEW M3 "two paths; the safe wrapper is dead code for live" + D2 "no
+coverage of the live path") — and "evidence before capital" means the live
+position/reconcile plumbing must be tested before it gates real orders.
+
+**Changed (1 commit).**
+- **`agents/runtime.py`** — two new pure-ish, importable functions:
+  - `positions_from_clearinghouse(st)` — faithful move of the inlined
+    `assetPositions[].position` parse into the normalized list of dicts (coin,
+    szi, entry_px, position_value, unrealized_pnl, liquidation_px, leverage,
+    margin_used). Malformed entries skipped, not aborting the tick.
+  - `reconcile_agents(conn, all_positions, agent_names)` — runs
+    `reconcile_positions` per agent (name-match ownership, so they must reconcile
+    independently) and returns only agents that had stale coins cleared. Local
+    import of `exec.orders.reconcile_positions` to avoid a circular import (same
+    pattern `execute_decisions` uses).
+- **`cli/main.py` `femr_tick`** — the ~25-line inlined position-build + reconcile
+  loop is replaced by `positions_from_clearinghouse(st)` +
+  `reconcile_agents(conn, all_positions, [a.name for a in agents])`. Imports
+  updated (added the two runtime fns; dropped the now-unused `reconcile_positions`
+  from the `exec.orders` import). Behavior preserved exactly.
+
+**Evidence.** 120 → **124 tests pass** (4 new in `test_tick_harness.py`: field
+parse incl. nested leverage; empty/missing/None-safe defaults; reconcile clears
+exactly the stale agent's coin and leaves the live one owned; no-op when all
+present); `ruff check src tests scripts` clean; `from hl_bot.cli.main import app,
+femr_tick` imports OK.
+
+**Also (bookkeeping).** Ticked **B13/M6** done — verified both `exec/orders.py`
+and `scripts/daily_scorecard.py` already resolve the trader address from
+`HL_TRADER_ADDRESS`/`HL_ADDRESS` env (legacy default only as fallback); the P2
+`[ ]` was stale since Iteration 6.
+
+**Why it matters.** The live position-parsing and reconcile plumbing is now unit-
+tested and lives in importable `runtime` functions instead of buried untested CLI
+code — another prerequisite for trusting the live path with capital, and the next
+slice of B12 toward `run_tick == femr_tick` end-to-end. Safety/structure plumbing,
+not an edge claim.
+
+**What's next (loop).** Finish B12 (fold the remaining femr_tick preamble —
+clearinghouse fetch → risk-cap → allocator caps → view enrich/WS overlay — into a
+reusable harness), userFills WS for instant maker-fill detection, B4-RUN (confirm
+carry on real history — network-gated), B16 (HL vault eval for AUM).

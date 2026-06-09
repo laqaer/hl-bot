@@ -86,10 +86,15 @@ Keep it ruthlessly prioritized: the top item should always be the highest-levera
   `femr_tick` (live) now share it, and `femr_tick` gained the per-agent `decide()`
   crash isolation it lacked (a broken agent no longer aborts risk-reducing
   flattens). Unit-tested. (Iteration 14.)
-  **Remaining:** fold the `femr_tick` view/risk/guardrail preamble (clearinghouse
-  fetch → position list → reconcile → allocator caps) into a reusable harness so
+  (c) the inlined clearinghouse parse + per-agent reconcile loop are extracted into
+  tested `runtime.positions_from_clearinghouse` + `runtime.reconcile_agents`,
+  removing ~25 lines of untested CLI code. (Iteration 15.)
+  **Remaining:** fold the rest of the `femr_tick` preamble (clearinghouse fetch →
+  risk-cap → allocator caps → view enrich/WS overlay) into a reusable harness so
   `run_tick` and `femr_tick` share one path end-to-end.
-- [ ] **B13 — Move hardcoded trader address to config.** (REVIEW M6.)
+- [x] **B13 — Move hardcoded trader address to config.** Done (Iter 6, M6):
+  `exec/orders.py` and `scripts/daily_scorecard.py` both resolve the trader address
+  from `HL_TRADER_ADDRESS`/`HL_ADDRESS` env, legacy default only as fallback.
 - [x] **B14 — Go-live runbook in-repo.** `docs/GO_LIVE.md`: gated checklist,
   secrets/env, promote/kill-switch/rollback, monitoring. (REVIEW D3.)
 - [ ] **B14a — Deploy automation.** Codify the EC2/systemd/Hermes cron + DB sync

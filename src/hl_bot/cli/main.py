@@ -355,7 +355,12 @@ def femr_tick(live: bool = False, execution: str = "taker"):
     live: place real orders on MAIN account, gated by guardrails.
           Bot only touches positions it itself opened (cloid-tagged).
     """
-    from ..agents.runtime import fetch_market_view, gather_decisions
+    from ..agents.runtime import (
+        fetch_market_view,
+        gather_decisions,
+        positions_from_clearinghouse,
+        reconcile_agents,
+    )
     from ..exec.orders import (
         HL_TRADER_ADDRESS,
         GuardrailConfig,
@@ -363,7 +368,6 @@ def femr_tick(live: bool = False, execution: str = "taker"):
         build_exchange,
         check_guardrails,
         dynamic_daily_loss_limit,
-        reconcile_positions,
         telegram_alert,
     )
 
@@ -506,28 +510,11 @@ def femr_tick(live: bool = False, execution: str = "taker"):
             console.print(f"[dim]ws snapshot overlaid: {len(snap.mids)} mids, "
                           f"{len(liqs)} liqs[/dim]")
 
-    # Build position list from HL truth
-    all_positions = []
-    for ap in st.get("assetPositions", []) or []:
-        pos = ap.get("position", {}) or {}
-        with contextlib.suppress(TypeError, ValueError):
-            all_positions.append({
-                "coin": pos.get("coin"),
-                "szi": float(pos.get("szi", 0) or 0),
-                "entry_px": float(pos.get("entryPx", 0) or 0),
-                "position_value": float(pos.get("positionValue", 0) or 0),
-                "unrealized_pnl": float(pos.get("unrealizedPnl", 0) or 0),
-                "liquidation_px": float(pos.get("liquidationPx", 0) or 0),
-                "leverage": (pos.get("leverage") or {}).get("value"),
-                "margin_used": float(pos.get("marginUsed", 0) or 0),
-            })
+    # Build position list from HL truth (shared, tested parse).
+    all_positions = positions_from_clearinghouse(st)
 
-    # RECONCILE first — clear stale DB ownership for each agent independently
-    reconciled_all: dict[str, list[str]] = {}
-    for a in agents:
-        r = reconcile_positions(conn, all_positions, agent=a.name)
-        if r:
-            reconciled_all[a.name] = r
+    # RECONCILE first — clear stale DB ownership for each agent independently.
+    reconciled_all = reconcile_agents(conn, all_positions, [a.name for a in agents])
     if reconciled_all:
         console.print(f"[yellow]reconciled stale ownership: {reconciled_all}[/yellow]")
 
