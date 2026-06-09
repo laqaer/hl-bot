@@ -28,12 +28,15 @@ from __future__ import annotations
 import gzip
 import json
 import time
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
 from .data import INTERVAL_MS
 
 CandleDict = dict[str, Any]
+
+_DAY_MS = 86_400_000
 
 
 def bucket_open_ms(ts_ms: int, interval_ms: int) -> int:
@@ -163,6 +166,122 @@ def load_recorded_candles(path: str | Path) -> dict[str, list[CandleDict]]:
     for (coin, _t), c in sorted(latest.items(), key=lambda kv: (kv[0][0], kv[0][1])):
         by_coin.setdefault(coin, []).append(c)
     return by_coin
+
+
+# ---------------------------------------------------------------------------
+# Coverage / readiness report (pure)
+# ---------------------------------------------------------------------------
+#
+# The recorder accumulates a fine-cadence archive over calendar weeks (the only
+# route back to the sub-bar / fine-cadence research HL's retention ceiling blocks,
+# Iteration 39). The missing piece between "the recorder runs" and "re-run the
+# fine-cadence theses" is knowing *when enough gap-free data exists*: a durability
+# backtest over an archive with silent gaps (a recorder restart, a WS dropout)
+# would be quietly corrupt. These pure functions answer that — per-coin span +
+# gap accounting, and a single READY/NOT-READY verdict against the durability bar.
+
+
+@dataclass(frozen=True)
+class CoinCoverage:
+    """Span + gap accounting for one coin's recorded candles."""
+
+    coin: str
+    n_candles: int
+    first_t: int  # open ms of the earliest candle (0 if none)
+    last_t: int  # open ms of the latest candle (0 if none)
+    span_days: float  # (last_t - first_t) in days; a single candle spans 0
+    expected: int  # buckets that *should* exist across [first_t, last_t]
+    coverage: float  # n_candles / expected (1.0 = no gaps)
+    largest_gap: int  # longest run of consecutive missing buckets
+
+
+def coin_coverage(candles: list[CandleDict], interval: str, coin: str = "") -> CoinCoverage:
+    """Coverage stats for one coin's candle list (any order; deduped by open ``t``).
+
+    ``coin`` names the series (falls back to the candles' own ``coin`` field).
+    """
+    if interval not in INTERVAL_MS:
+        raise ValueError(f"unknown interval {interval!r}; known: {sorted(INTERVAL_MS)}")
+    step = INTERVAL_MS[interval]
+    opens = sorted({int(c["t"]) for c in candles if "t" in c})
+    name = coin or next((str(c.get("coin", "")) for c in candles if "t" in c), "")
+    n = len(opens)
+    if n == 0:
+        return CoinCoverage(name, 0, 0, 0, 0.0, 0, 0.0, 0)
+    first_t, last_t = opens[0], opens[-1]
+    expected = (last_t - first_t) // step + 1
+    span_days = (last_t - first_t) / _DAY_MS
+    largest_gap = 0
+    for a, b in zip(opens, opens[1:], strict=False):
+        largest_gap = max(largest_gap, (b - a) // step - 1)
+    coverage = n / expected if expected else 1.0
+    return CoinCoverage(name, n, first_t, last_t, span_days, expected, coverage, largest_gap)
+
+
+def archive_coverage(by_coin: dict[str, list[CandleDict]], interval: str) -> list[CoinCoverage]:
+    """Per-coin :class:`CoinCoverage` for a whole archive, sorted by coin."""
+    return [coin_coverage(by_coin[coin], interval, coin) for coin in sorted(by_coin)]
+
+
+@dataclass(frozen=True)
+class Readiness:
+    """READY / NOT-READY verdict for running the durability bar off the archive."""
+
+    ready: bool
+    interval: str
+    window_days: float
+    n_windows: int
+    min_coverage: float
+    required_days: float  # window_days * n_windows of contiguous data needed
+    coverages: list[CoinCoverage] = field(default_factory=list)
+    reasons: list[str] = field(default_factory=list)
+
+
+def archive_readiness(
+    by_coin: dict[str, list[CandleDict]],
+    interval: str,
+    *,
+    window_days: float,
+    n_windows: int = 2,
+    min_coverage: float = 0.98,
+    min_coins: int = 2,
+) -> Readiness:
+    """Is the archive ready for an ``n_windows``×``window_days`` durability backtest?
+
+    The bar needs ``n_windows`` disjoint windows of ``window_days`` each, so every
+    coin needs ``required_days = window_days * n_windows`` of span at ``coverage >=
+    min_coverage`` (gaps would silently corrupt a durability run). Cross-sectional
+    theses need a basket, so ``min_coins`` coins must clear the bar. Returns a
+    single verdict plus the per-coin blockers that explain a NOT-READY.
+    """
+    required_days = window_days * n_windows
+    covs = archive_coverage(by_coin, interval)
+    reasons: list[str] = []
+    n_ok = 0
+    for c in covs:
+        short = c.span_days < required_days
+        gappy = c.coverage < min_coverage
+        if short:
+            reasons.append(f"{c.coin}: span {c.span_days:.1f}d < required {required_days:.0f}d")
+        if gappy:
+            reasons.append(
+                f"{c.coin}: coverage {c.coverage:.3f} < {min_coverage:.3f} "
+                f"(largest gap {c.largest_gap} bars)"
+            )
+        if not short and not gappy:
+            n_ok += 1
+    if n_ok < min_coins:
+        reasons.append(f"only {n_ok} coin(s) clear the bar; need {min_coins}")
+    return Readiness(
+        ready=n_ok >= min_coins,
+        interval=interval,
+        window_days=window_days,
+        n_windows=n_windows,
+        min_coverage=min_coverage,
+        required_days=required_days,
+        coverages=covs,
+        reasons=reasons,
+    )
 
 
 # ---------------------------------------------------------------------------

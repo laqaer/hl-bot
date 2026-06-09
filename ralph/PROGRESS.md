@@ -2919,3 +2919,49 @@ ones already named in the backlog: (a) **B-fine-record** — let the deployed re
 only un-searched cadence regime); this needs calendar time, not an iteration. (b) Path C honest-measurement /
 reporting polish. The directional/relative/execution/cross-market/cross-sectional search on HL *historical*
 candles is exhausted; the next genuinely new evidence requires the forward-recorded fine-cadence archive.
+
+## Iteration 49 — 2026-06-08 — B-fine-record slice 2.5: archive readiness/coverage report
+
+**Context (orientation).** All twelve structurally-different theses are pruned (pairs and illiq both cleared
+the 2-window bar then failed every stress; the other ten failed the bar outright). The historical-candle
+search is genuinely exhausted: I re-verified that the only orthogonal data axes left in the frames —
+`open_interest` and `liquidations` — are **empty in every historical fetch** (HL serves them only in the live
+`metaAndAssetCtxs`/WS snapshot, not the candle API), so there is no un-searched signal to key off from fetched
+candles. The one remaining route to an edge is the **forward-recorded fine-cadence archive** (B-fine-record):
+the recorder runs 24/7 under systemd (slices 1+2), but slice 3 ("re-run the sub-bar / fine-cadence theses")
+needs ~30–60d of 1m/5m data to *exist first* — calendar time, not an iteration. The highest-leverage
+**unblocked** increment was therefore the missing instrument between "recorder runs" and "slice 3 fires":
+a way to know *when enough gap-free data has accumulated*.
+
+**Why this matters (the failure it prevents).** A durability backtest is only honest if its windows are
+contiguous. A recorder restart or a WS dropout leaves a hole in the archive; `build_frames` would happily
+assemble across it and a `confirm --windows 2` run would be quietly corrupt (a window straddling a gap is not
+the calendar window it claims to be). There was no offline check for span or gaps — the operator would have
+had to eyeball the JSONL. Slice 3 cannot be triggered responsibly without it.
+
+**What I built (pure, tested).** Added to `backtest/recorder.py`:
+- `CoinCoverage` (frozen): `coin, n_candles, first_t, last_t, span_days, expected, coverage, largest_gap`.
+- `coin_coverage(candles, interval, coin="")` — dedupes by open `t`, order-independent; `expected` =
+  buckets that *should* exist across [first_t, last_t], `coverage` = n/expected (1.0 = no gaps),
+  `largest_gap` = longest run of consecutive missing buckets (the one number that flags a dropout).
+- `archive_coverage(by_coin, interval)` — per-coin, sorted.
+- `archive_readiness(by_coin, interval, *, window_days, n_windows=2, min_coverage=0.98, min_coins=2)` →
+  `Readiness` (frozen): a single READY/NOT-READY verdict — every coin needs `required_days =
+  window_days*n_windows` of span at `coverage ≥ min_coverage`, and `≥ min_coins` coins must clear the bar
+  (cross-sectional theses need a basket); `reasons` enumerates the per-coin blockers (short span / gappy /
+  too-few-coins) so a NOT-READY explains itself.
+- CLI `hlbot record-coverage --archive --interval --window-days --windows --min-coverage --min-coins`:
+  loads the archive offline (`load_recorded_candles`, no network), prints the per-coin table + verdict +
+  blockers. Mirrors `record-trades`. Smoke-tested on a synthetic 3-coin archive (clean / short-span / gappy)
+  — correctly reports `READY` only when every gate clears and lists exactly the blocking coins otherwise.
+
+**Evidence (gate).** `uv run pytest -q` → **283 passed** (+7: contiguous=no-gaps, gap detection +
+`largest_gap`, unordered+deduped, empty series, per-coin sort, ready verdict, not-ready with span+gap+coin
+blockers). `uv run ruff check src tests scripts` → clean. The `record-coverage` command is offline/read-only;
+no `data/` writes committed, no strategy/roster/live-mode change, nothing touched capital.
+
+**What's next (loop).** The fine-cadence archive is now self-instrumenting: a future iteration runs
+`hlbot record-coverage` and, the first time it prints **READY**, slice 3 is unblocked — re-run the sub-bar
+execution + fine-cadence durability theses (the only un-searched cadence regime) on the recorded 1m/5m data.
+Until then the search remains exhausted on HL historical candles and the remaining unblocked work is Path C
+honest-measurement / reporting polish (e.g. the B15 track-record chart export TODO).

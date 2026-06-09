@@ -30,7 +30,16 @@ Keep it ruthlessly prioritized: the top item should always be the highest-levera
   user-data inherits via install.sh). Records public market data only; nothing places an order. **Next slice:**
   (3) once ~30–60d of 1m/5m data exists, re-run the sub-bar execution + fine-cadence durability theses the
   retention ceiling blocked (B-exec-tickmark overlaps). Until then the search stays exhausted on HL historical
-  data.
+  data. **Slice 2.5 DONE (Iteration 49): readiness/coverage report — the missing piece between "recorder runs"
+  and "re-run the theses".** A durability backtest over an archive with silent gaps (a recorder restart, a WS
+  dropout) would be quietly corrupt, and the operator had no way to know *when* enough gap-free data had
+  accumulated to trigger slice 3. Added pure `coin_coverage`/`archive_coverage`/`archive_readiness` +
+  `CoinCoverage`/`Readiness` to `recorder.py`: per-coin span + gap accounting (expected vs actual buckets,
+  `largest_gap` = longest run of consecutive missing buckets) and a single READY/NOT-READY verdict against the
+  durability bar (`n_windows`×`window_days` of contiguous data at `coverage ≥ min_coverage` on `≥ min_coins`
+  coins), listing the per-coin blockers. Wired `hlbot record-coverage --archive --interval --window-days
+  --windows --min-coverage --min-coins` (offline, no network; mirrors `record-trades`). +7 unit tests. So a
+  future iteration runs one offline command to decide if slice 3 is unblocked yet. Numbers in PROGRESS Iter 49.
 - [x] **B-illiq — Cross-sectional illiquidity / Amihud premium (the TWELFTH structurally-different thesis;
   the FIRST to key off VOLUME / liquidity, orthogonal to all eleven priors). A GENUINE LEAD (Iteration 45):
   the strongest cross-basket result of any thesis — DURABLE on high-funding alts AND sign-stable-positive on

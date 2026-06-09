@@ -8,7 +8,10 @@ from hl_bot.backtest.data import INTERVAL_MS, build_frames
 from hl_bot.backtest.recorder import (
     TradeCandleAggregator,
     append_candles,
+    archive_coverage,
+    archive_readiness,
     bucket_open_ms,
+    coin_coverage,
     load_recorded_candles,
 )
 
@@ -127,3 +130,70 @@ def test_recorded_archive_feeds_build_frames(tmp_path):
     assert all("BTC" in f.mids for f in frames)
     # closes are the recorded candle closes, oldest-first and monotonic in ts
     assert [f.ts_ms for f in frames] == sorted(f.ts_ms for f in frames)
+
+
+HR = INTERVAL_MS["1h"]
+
+
+def _candles(coin, n, step_ms=HR, start=0, skip=()):
+    out = []
+    for i in range(n):
+        if i in skip:
+            continue
+        t = start + i * step_ms
+        out.append({"coin": coin, "t": t, "T": t + step_ms - 1, "o": 1, "h": 1, "l": 1, "c": 1, "v": 1, "n": 1})
+    return out
+
+
+def test_coin_coverage_contiguous_no_gaps():
+    cov = coin_coverage(_candles("BTC", 49), "1h")  # 49 hourly candles span 48h = 2.0d
+    assert cov.coin == "BTC"
+    assert cov.n_candles == 49 and cov.expected == 49
+    assert cov.coverage == 1.0 and cov.largest_gap == 0
+    assert cov.span_days == pytest.approx(2.0)
+
+
+def test_coin_coverage_detects_gap():
+    # drop the candle at index 5 → one missing bucket, endpoints intact
+    cov = coin_coverage(_candles("ETH", 10, skip=(5,)), "1h")
+    assert cov.n_candles == 9 and cov.expected == 10
+    assert cov.coverage == pytest.approx(0.9)
+    assert cov.largest_gap == 1
+
+
+def test_coin_coverage_unordered_and_deduped():
+    cs = _candles("SOL", 5)
+    cov = coin_coverage(list(reversed(cs)) + [cs[2]], "1h")  # shuffled + a dup
+    assert cov.n_candles == 5 and cov.coverage == 1.0
+
+
+def test_coin_coverage_empty():
+    cov = coin_coverage([], "1h")
+    assert cov.n_candles == 0 and cov.coverage == 0.0 and cov.span_days == 0.0
+
+
+def test_archive_coverage_sorted_by_coin():
+    by_coin = {"ETH": _candles("ETH", 3), "BTC": _candles("BTC", 3)}
+    covs = archive_coverage(by_coin, "1h")
+    assert [c.coin for c in covs] == ["BTC", "ETH"]
+
+
+def test_archive_readiness_ready():
+    by_coin = {"BTC": _candles("BTC", 49), "ETH": _candles("ETH", 49)}  # 2.0d span each
+    rep = archive_readiness(by_coin, "1h", window_days=1.0, n_windows=2, min_coins=2)
+    assert rep.ready is True and rep.reasons == []
+    assert rep.required_days == 2.0
+
+
+def test_archive_readiness_not_ready_short_and_gappy():
+    by_coin = {
+        "BTC": _candles("BTC", 49),  # full 2.0d, clean
+        "ETH": _candles("ETH", 25),  # only ~1.0d span → too short
+        "SOL": _candles("SOL", 49, skip=(10,)),  # 2.0d but a gap → below coverage
+    }
+    rep = archive_readiness(by_coin, "1h", window_days=1.0, n_windows=2, min_coverage=0.99, min_coins=3)
+    assert rep.ready is False
+    blob = " ".join(rep.reasons)
+    assert "ETH" in blob and "span" in blob  # short-span blocker
+    assert "SOL" in blob and "coverage" in blob  # gap blocker
+    assert "need 3" in blob  # only 1 coin (BTC) cleared the bar

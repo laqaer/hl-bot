@@ -1205,6 +1205,50 @@ def record_trades(
 
 
 @app.command()
+def record_coverage(
+    archive: Path = Path("data/recorder/trades_1m.jsonl"),
+    interval: str = "1m",
+    window_days: float = 30.0,
+    windows: int = 2,
+    min_coverage: float = 0.98,
+    min_coins: int = 2,
+):
+    """Report coverage of a forward-recorded candle archive + a readiness verdict.
+
+    The recorder (``record-trades``) accumulates fine-cadence candles over weeks —
+    the only route back to the sub-bar research HL's retention ceiling blocks. This
+    tells the operator (offline, no network) per-coin span + gap accounting and a
+    single READY / NOT-READY verdict for an ``windows``×``window_days`` durability
+    backtest, so the fine-cadence theses are re-run only once enough gap-free data
+    actually exists.
+    """
+    from ..backtest.recorder import archive_readiness, load_recorded_candles
+
+    by_coin = load_recorded_candles(archive)
+    if not by_coin:
+        console.print(f"[yellow]record-coverage[/yellow] no candles found at {archive}")
+        return
+    rep = archive_readiness(
+        by_coin, interval,
+        window_days=window_days, n_windows=windows,
+        min_coverage=min_coverage, min_coins=min_coins,
+    )
+    console.print(
+        f"[green]record-coverage[/green] {archive} @ {interval} — "
+        f"need {rep.required_days:.0f}d span × coverage≥{min_coverage:.2f} on ≥{min_coins} coins"
+    )
+    for c in rep.coverages:
+        console.print(
+            f"  {c.coin:<8} {c.n_candles:>7} candles  span {c.span_days:6.1f}d  "
+            f"coverage {c.coverage:.3f}  largest_gap {c.largest_gap:>4} bars"
+        )
+    verdict = "[green]READY[/green]" if rep.ready else "[red]NOT READY[/red]"
+    console.print(f"  → {verdict}")
+    for r in rep.reasons:
+        console.print(f"    - {r}")
+
+
+@app.command()
 def health(max_tick_age_s: int = 900, heartbeat: bool = True):
     """Assess bot health (tick/ingest freshness, equity, paused agents, 24h PnL).
 
