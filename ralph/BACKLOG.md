@@ -44,6 +44,10 @@ Keep it ruthlessly prioritized: the top item should always be the highest-levera
 - [x] **B6/B7 — Per-agent funding attribution + Sharpe.** Done: funding split to
   the agent holding the coin at funding time (scoring includes it in net/edge);
   per-agent Sharpe from daily PnL so sharpe-gates evaluate. Tested. (Iteration 7.)
+  **B6-size (Iteration 10):** the split is now **size-weighted** — each funding
+  payment divides among holders in proportion to their fill-derived |net size|
+  (a 3× holder collects 3× the funding), with an equal-among-decision-log-holders
+  fallback when no fills exist. Closes the last imprecision in the carry scorecard.
 - [ ] **B6old — (superseded by B6/B7 above)** Map `funding_payments` to the agent
   holding the position at funding time (via cloid→position replay), so
   `scoring.metrics` includes funding in each agent's net. (REVIEW C4.)

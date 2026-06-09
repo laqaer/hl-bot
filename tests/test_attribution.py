@@ -38,12 +38,12 @@ def _funding(conn, coin, t_ms, usdc):
     )
 
 
-def _fill(conn, agent, coin, t_ms, pnl, fee=0.05, sz=1.0, px=100.0):
+def _fill(conn, agent, coin, t_ms, pnl, fee=0.05, sz=1.0, px=100.0, side="B"):
     conn.execute(
         """INSERT INTO fills(hash, tid, time_ms, coin, side, px, sz, start_position,
            dir, closed_pnl, fee, fee_token, builder_fee, cloid, agent, raw_json)
            VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
-        (f"h{agent}{coin}{t_ms}", t_ms, t_ms, coin, "B", px, sz, 0, "Close Long",
+        (f"h{agent}{coin}{t_ms}{side}", t_ms, t_ms, coin, side, px, sz, 0, "Close Long",
          pnl, fee, "USDC", 0, None, agent, "{}"),
     )
 
@@ -74,6 +74,30 @@ def test_funding_split_between_concurrent_holders(conn):
     a = sum(s for _, s in _agent_funding_payments(conn, "xfund_carry_v1", now - DAY))
     b = sum(s for _, s in _agent_funding_payments(conn, "funding_carry_v1", now - DAY))
     assert a == pytest.approx(2.0) and b == pytest.approx(2.0)  # split, no double-count
+
+
+def test_funding_split_weighted_by_size(conn):
+    now = int(time.time() * 1000)
+    # Both agents are long ETH via fills before funding lands: A holds 3, B holds 1.
+    # Funding should split 3:1 by size, not 1:1 like the decision-log fallback.
+    _fill(conn, "xfund_carry_v1", "ETH", now - 600_000, pnl=0.0, sz=3.0)
+    _fill(conn, "funding_carry_v1", "ETH", now - 600_000, pnl=0.0, sz=1.0)
+    _funding(conn, "ETH", now - 300_000, 4.00)
+    a = sum(s for _, s in _agent_funding_payments(conn, "xfund_carry_v1", now - DAY))
+    b = sum(s for _, s in _agent_funding_payments(conn, "funding_carry_v1", now - DAY))
+    assert a == pytest.approx(3.0) and b == pytest.approx(1.0)
+
+
+def test_funding_size_weight_ignores_closed_holder(conn):
+    now = int(time.time() * 1000)
+    # A opens 2 then fully closes before funding; B opens 1 and holds.
+    _fill(conn, "xfund_carry_v1", "ETH", now - 600_000, pnl=0.0, sz=2.0, side="B")
+    _fill(conn, "xfund_carry_v1", "ETH", now - 500_000, pnl=0.0, sz=2.0, side="A")
+    _fill(conn, "funding_carry_v1", "ETH", now - 600_000, pnl=0.0, sz=1.0, side="B")
+    _funding(conn, "ETH", now - 300_000, 5.00)
+    a = sum(s for _, s in _agent_funding_payments(conn, "xfund_carry_v1", now - DAY))
+    b = sum(s for _, s in _agent_funding_payments(conn, "funding_carry_v1", now - DAY))
+    assert a == pytest.approx(0.0) and b == pytest.approx(5.0)
 
 
 def test_funding_not_attributed_outside_holding_window(conn):

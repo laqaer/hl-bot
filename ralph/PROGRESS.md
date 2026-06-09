@@ -345,3 +345,44 @@ from equal-among-holders to size-weighted later.
 to weight by `positions.net_sz` (size-aware split) now that the substrate exists;
 B11 (feed/retire liq_cascade via WS liq data), B12 (consolidate execution paths),
 B4-RUN (confirm carry on real history — still network-blocked).
+
+---
+
+## Iteration 10 — 2026-06-08 — size-weighted funding attribution
+
+**Context.** P0 is done or network-blocked; P1 honest-measurement remains the top
+unblocked lane. Iteration 9 built the size-aware fills→positions substrate (B9)
+and flagged the natural next step: the funding split in `scoring.metrics` was
+still **equal-among-holders** (each concurrent holder of a coin got 1/N of the
+funding regardless of how much they held). For a cross-sectional carry book where
+two agents hold very different sizes of the same coin, that mis-attributes the
+revenue line the whole strategy is judged on (REVIEW C4).
+
+**Changed (1 commit).**
+- **B6-size — size-weighted funding split.** `scoring/metrics.py`:
+  - `_coin_agent_sizes_over_time(conn)` — replays the `fills` stream (B=+, A=−)
+    into a per-coin chronological timeline of each agent's |net size|. Fills are
+    the ground truth for size, so this is the same invariant as B9, used here for
+    a time-resolved query rather than a current snapshot.
+  - `_sizes_at(events, t)` — each agent's |net size| as of the last fill at-or-
+    before the funding instant `t`.
+  - `_agent_funding_payments` now splits each payment in proportion to holder
+    |net size| when fills-derived positions exist, and falls back to the prior
+    equal-among-decision-log-holders split when they don't (e.g. positions opened
+    before fills were ingested, or manual). Shares still sum to the total with no
+    double-count; a fully-closed holder at `t` correctly collects nothing.
+
+**Evidence.** `uv run pytest -q` → **100 passed** (+2 new in test_attribution.py:
+3:1 size-weighted split, and a holder who closed before funding gets 0 while the
+remaining holder gets the whole payment). `ruff check src tests scripts` → clean.
+Existing decision-log attribution tests (no fills) still pass via the fallback.
+
+**Why it matters.** The carry strategies (xfund_carry_v1 cross-sectional,
+funding_carry_v1 single-name) are scored on funding, and the promotion/confirm
+gates key off that net. Equal-split flattered/penalized agents by holder *count*,
+not capital at risk; size-weighting makes the measured edge match the economics.
+This is measurement-only — no strategy, risk, or live change.
+
+**What's next (loop).** B11 (feed/retire liq_cascade via WS liq data), B12
+(consolidate the two execution paths so the safe wrapper is what live uses), B4-RUN
+(confirm carry on real history — still network-blocked at api.hyperliquid.xyz).

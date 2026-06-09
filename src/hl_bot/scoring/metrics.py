@@ -111,16 +111,57 @@ def _coin_holders_over_time(
     return intervals
 
 
+def _coin_agent_sizes_over_time(
+    conn: sqlite3.Connection,
+) -> dict[str, list[tuple[int, str, float]]]:
+    """Per coin, the chronological |net size| each agent holds, from the fills stream.
+
+    Returns coin -> sorted list of (time_ms, agent, abs_net_sz_after_this_fill).
+    Fills are the ground truth for *size* (B=+, A=−), so this lets us split a
+    funding payment in proportion to how much of the coin each agent actually held
+    at the instant it landed — sharper than the binary decision-log holder set.
+    """
+    rows = conn.execute(
+        """SELECT time_ms, agent, coin, side, sz FROM fills
+           WHERE agent IS NOT NULL AND coin IS NOT NULL
+           ORDER BY time_ms ASC, tid ASC"""
+    ).fetchall()
+    net: dict[tuple[str, str], float] = {}
+    timeline: dict[str, list[tuple[int, str, float]]] = {}
+    for r in rows:
+        key = (r["agent"], r["coin"])
+        signed = float(r["sz"]) if r["side"] == "B" else -float(r["sz"])
+        net[key] = net.get(key, 0.0) + signed
+        timeline.setdefault(r["coin"], []).append(
+            (int(r["time_ms"]), r["agent"], abs(net[key]))
+        )
+    return timeline
+
+
+def _sizes_at(events: list[tuple[int, str, float]], t: int) -> dict[str, float]:
+    """Each agent's |net size| as of the last fill at-or-before `t` (events sorted)."""
+    sizes: dict[str, float] = {}
+    for tm, agent, abs_sz in events:
+        if tm > t:
+            break
+        sizes[agent] = abs_sz
+    return {a: s for a, s in sizes.items() if s > 0}
+
+
 def _agent_funding_payments(
     conn: sqlite3.Connection, agent: str, since_ms: int | None
 ) -> list[tuple[int, float]]:
     """This agent's attributed funding payments as (time_ms, usdc_share).
 
-    Each account-level funding payment is split equally among the agents holding
-    that coin at that instant, so shares sum to the total without double-counting.
-    Coins held only by manual positions stay unattributed (counted under _account).
+    Each account-level funding payment is split among the agents holding that coin
+    at that instant. When the fills stream shows fill-derived positions in the
+    coin, the split is weighted by |net size| (a 3× holder collects 3× the
+    funding); otherwise it falls back to an equal split among the decision-log
+    holders. Shares sum to the total without double-counting. Coins held only by
+    manual positions stay unattributed (counted under _account).
     """
     intervals = _coin_holders_over_time(conn)
+    timeline = _coin_agent_sizes_over_time(conn)
     q = "SELECT time_ms, coin, usdc FROM funding_payments"
     params: list = []
     if since_ms is not None:
@@ -131,9 +172,16 @@ def _agent_funding_payments(
         t = int(r["time_ms"])
         coin = r["coin"]
         usdc = float(r["usdc"] or 0.0)
-        holders = [ag for (ag, o, c) in intervals.get(coin, []) if o <= t < c]
-        if agent in holders:
-            out.append((t, usdc / len(holders)))
+        sizes = _sizes_at(timeline.get(coin, []), t)
+        if sizes:
+            total = sum(sizes.values())
+            share = sizes.get(agent, 0.0)
+            if share > 0:
+                out.append((t, usdc * share / total))
+        else:
+            holders = [ag for (ag, o, c) in intervals.get(coin, []) if o <= t < c]
+            if agent in holders:
+                out.append((t, usdc / len(holders)))
     return out
 
 
