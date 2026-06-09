@@ -14,7 +14,7 @@ from pathlib import Path
 import pytest
 
 from hl_bot.db.schema import init_db
-from hl_bot.supervisor.goals import load_goals
+from hl_bot.supervisor.goals import load_goals, promotion_progress
 from hl_bot.supervisor.loop import run_once
 
 CONFIG_DIR = Path(__file__).resolve().parents[1] / "configs"
@@ -99,6 +99,62 @@ def test_losing_agent_is_not_promoted(conn):
 
     promoted = any("PROMOTE" in a for a in actions.get("twap_mr_v1", []))
     assert promoted is False
+
+
+def test_promotion_progress_reports_per_condition_distance(conn):
+    """Distance-to-gate exposes every condition's value vs threshold, even when
+    only some are met (so partial G1 progress is observable)."""
+    now = int(time.time() * 1000)
+    # Many small wins: clears n_trades(>=150) and net_pnl(>=50), but the per-trade
+    # edge is tiny so edge_bps(>=5) stays below threshold.
+    for i in range(200):
+        # px=1, sz=100 -> notional 100/trade; net = pnl - fee = +0.005/trade.
+        # Over 200 trades: net $1.0, notional 20000 -> edge +0.5bps (< +5 gate).
+        _insert_fill(
+            conn, "trend_breakout_v1", "BTC", now - (i + 1) * 1000,
+            pnl=0.105, fee=0.10, sz=100.0, px=1.0,
+        )
+
+    g = load_goals(CONFIG_DIR / "trend_breakout_v1.yaml")[0]
+    gp = promotion_progress(conn, g)
+
+    assert gp is not None
+    assert gp.agent == "trend_breakout_v1"
+    assert gp.to_mode == "live_small"
+    assert gp.n_total == len(g.promotion.conditions) == 3
+    by_metric = {c.metric: c for c in gp.conditions}
+    # net_pnl: 200 * (0.105 - 0.10) = +$1.0 ... below the +$50 gate -> fail.
+    assert by_metric["net_pnl"].status == "fail"
+    # n_trades = 200 >= 150 -> pass.
+    assert by_metric["n_trades"].status == "pass"
+    assert by_metric["n_trades"].value == 200
+    # edge_bps = net/notional*1e4 = 1.0 / 20000 * 1e4 = +0.5bps < +5 -> fail.
+    assert by_metric["edge_bps"].status == "fail"
+    assert by_metric["edge_bps"].value is not None
+    assert by_metric["edge_bps"].value < 5
+    assert gp.n_met == 1
+    assert gp.ready is False
+
+
+def test_promotion_progress_ready_when_all_conditions_pass(conn):
+    now = int(time.time() * 1000)
+    for i in range(200):
+        # net 0.60/trade, notional 10 -> edge 600bps; 200 trades; net $120.
+        _insert_fill(
+            conn, "trend_breakout_v1", "BTC", now - (i + 1) * 1000,
+            pnl=0.70, fee=0.10, sz=10.0, px=1.0,
+        )
+    g = load_goals(CONFIG_DIR / "trend_breakout_v1.yaml")[0]
+    gp = promotion_progress(conn, g)
+    assert gp is not None
+    assert gp.ready is True
+    assert gp.n_met == gp.n_total == 3
+
+
+def test_promotion_progress_none_without_promotion_block(conn):
+    g = load_goals(CONFIG_DIR / "trend_breakout_v1.yaml")[0]
+    g.promotion = None
+    assert promotion_progress(conn, g) is None
 
 
 def test_guardrail_failure_blocks_promotion_even_if_longer_window_passes(conn):

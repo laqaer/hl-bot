@@ -103,6 +103,35 @@ class Evaluation:
     detail: str = ""
 
 
+@dataclass
+class ConditionProgress:
+    metric: str
+    window: Window
+    op: str
+    threshold: float
+    value: float | None
+    status: Literal["pass", "fail", "na"]
+
+
+@dataclass
+class GateProgress:
+    """Per-condition progress toward an agent's promotion gate (e.g. G1).
+
+    Unlike ``evaluate``'s promotion check — which only emits a result when ALL
+    conditions pass — this reports every condition's current value vs threshold,
+    so the distance to the gate is observable while the paper clock is still
+    running. Read-only; computes nothing the supervisor doesn't already compute.
+    """
+
+    agent: str
+    from_mode: str
+    to_mode: str
+    conditions: list[ConditionProgress]
+    n_met: int
+    n_total: int
+    ready: bool
+
+
 def load_goals(config_path: str | Path) -> list[AgentGoals]:
     """Load one or more AgentGoals from a YAML file (single doc or list)."""
     raw = yaml.safe_load(Path(config_path).read_text())
@@ -194,6 +223,40 @@ def evaluate(conn: sqlite3.Connection, g: AgentGoals) -> list[Evaluation]:
             ))
 
     return out
+
+
+def promotion_progress(
+    conn: sqlite3.Connection, g: AgentGoals
+) -> GateProgress | None:
+    """Distance-to-gate report for an agent's promotion conditions.
+
+    Returns None if the agent has no promotion block. Each condition is scored
+    with the same ``score_agent``/``Condition.evaluate`` the supervisor uses, so
+    ``ready`` here matches what ``evaluate`` would promote on (modulo guardrails,
+    which are a separate, dominating check). Pure / read-only.
+    """
+    if not g.promotion:
+        return None
+    conds: list[ConditionProgress] = []
+    for c in g.promotion.conditions:
+        sc = score_agent(conn, g.agent, c.window, capital_base=g.capital)
+        ok, v = c.evaluate(sc)
+        conds.append(ConditionProgress(
+            metric=c.metric, window=c.window, op=c.op,
+            threshold=c.threshold, value=v,
+            status="na" if ok is None else ("pass" if ok else "fail"),
+        ))
+    n_met = sum(1 for cp in conds if cp.status == "pass")
+    ready = bool(conds) and all(cp.status == "pass" for cp in conds)
+    return GateProgress(
+        agent=g.agent,
+        from_mode=g.promotion.from_mode,
+        to_mode=g.promotion.to_mode,
+        conditions=conds,
+        n_met=n_met,
+        n_total=len(conds),
+        ready=ready,
+    )
 
 
 def persist(conn: sqlite3.Connection, evals: list[Evaluation]) -> None:

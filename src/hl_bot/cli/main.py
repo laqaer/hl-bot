@@ -146,6 +146,47 @@ def supervisor(configs: Path = CONFIG_DIR):
 
 
 @app.command()
+def gate_progress(agent: str = "", configs: Path = CONFIG_DIR):
+    """Show distance-to-gate for each agent's promotion conditions (e.g. G1).
+
+    Read-only. For every *.yaml config with a promotion block, prints each
+    condition's current value vs threshold and whether it's met — so paper
+    progress toward live_small is observable without re-deriving it by hand.
+    Pass --agent to filter to one.
+    """
+    from ..supervisor.goals import load_goals, promotion_progress
+
+    conn, _ = _conn()
+    goals = []
+    for p in sorted(Path(configs).glob("*.yaml")):
+        goals.extend(load_goals(p))
+    if agent:
+        goals = [g for g in goals if g.agent == agent]
+
+    reports = [gp for g in goals if (gp := promotion_progress(conn, g))]
+    if not reports:
+        console.print("[dim]no agents with a promotion gate[/dim]")
+        return
+
+    for gp in reports:
+        head = "[green]READY[/green]" if gp.ready else f"{gp.n_met}/{gp.n_total} met"
+        console.print(
+            f"\n[bold]{gp.agent}[/bold] {gp.from_mode} → {gp.to_mode}  ({head})"
+        )
+        table = Table()
+        for col in ("condition", "current", "status"):
+            table.add_column(col)
+        for c in gp.conditions:
+            val = "—" if c.value is None else f"{c.value:+.2f}"
+            mark = {"pass": "[green]✓[/green]", "fail": "[red]✗[/red]",
+                    "na": "[dim]N/A[/dim]"}[c.status]
+            table.add_row(
+                f"{c.metric}({c.window}) {c.op} {c.threshold:g}", val, mark
+            )
+        console.print(table)
+
+
+@app.command()
 def research_strategies(write: bool = True):
     """Evaluate strategy health from fills; emit risk-reducing proposals.
 

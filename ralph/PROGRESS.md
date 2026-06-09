@@ -1615,3 +1615,51 @@ plumbing already computes per-agent edge, so this is wiring, not new math. Secon
 (unchanged): a longer-history (>90d) confirm for G0 stability across more regime cycles;
 and the remaining B1d candidate (i) spot-vs-perp basis at funding deciles if a second
 uncorrelated edge is wanted.
+
+---
+
+## Iteration 33 — 2026-06-08 — Observable G1 gate progress: `promotion_progress` + `hlbot gate-progress` surface distance-to-live for the trend paper clock.
+
+**Context.** Iter 32 wired `trend_breakout_v1` to the PAPER roster and started its
+G1 clock (>=30d paper, edge >= +5bps, net >= $50, >=150 trades @30d, no guardrail
+breach). The Iter-32 "what's next" called for surfacing per-agent paper progress so
+G1 is watchable without re-deriving it by hand. The supervisor's `evaluate` already
+checks the promotion conditions, but it only emits a `promote` Evaluation when ALL
+conditions pass — there was no way to see "2 of 3 met, edge_bps still short" while
+the clock runs. This iteration is that observability (wiring, not new math).
+
+**Changed (1 commit).**
+- **`supervisor/goals.py`** — new pure `promotion_progress(conn, g) -> GateProgress |
+  None` plus `ConditionProgress`/`GateProgress` dataclasses. For each promotion
+  condition it scores the agent with the *same* `score_agent(..., capital_base=g.capital)`
+  and `Condition.evaluate` the supervisor uses, and reports `(metric, window, op,
+  threshold, value, status[pass/fail/na])` for EVERY condition — plus `n_met`,
+  `n_total`, and `ready` (all pass). Returns None when the agent has no promotion
+  block. Read-only; `ready` here matches what `evaluate` would promote on, modulo the
+  dominating guardrail check.
+- **`cli/main.py`** — new `hlbot gate-progress [--agent X] [--configs DIR]`: loads every
+  `*.yaml`, computes `promotion_progress`, and renders a per-agent distance-to-gate
+  table (condition / current value / ✓✗N/A) with a `READY` or `n/total met` header.
+  Read-only on the DB.
+- **`tests/test_supervisor_configs.py`** (+3) — (1) *partial progress*: 200 tiny-edge
+  fills clear n_trades(>=150) but leave net_pnl(>=$50) and edge_bps(>=+5) failing →
+  `n_met==1`, `ready False`, per-condition statuses asserted (n_trades pass w/ value
+  200; edge_bps fail w/ value <5). (2) *all-pass → ready*: 200 fat-edge fills →
+  `ready True`, `n_met==n_total==3`. (3) *no promotion block → None*.
+
+**Evidence (tests/lint).** 158 → **161 pass**; `ruff check src tests scripts` clean.
+`hlbot gate-progress --help` registers. No edge claim here — this is measurement
+plumbing over the existing G0-confirmed signal; the edge numbers stand from Iter 30.
+
+**Why it matters.** The G1 paper gate is the first forward-data test of the
+trend_breakout edge, and it runs for >=30d. Without a distance-to-gate view, an
+operator (or the next loop iteration) has to hand-join three `score_agent` windows
+against the YAML thresholds to know how close promotion is. `gate-progress` makes
+that a one-command read, and `promotion_progress` is the reusable primitive a future
+report/Telegram digest can call. Live promotion stays human-gated.
+
+**What's next (loop).** Let the paper clock run; candidate next increments: (a) fold
+`promotion_progress` into the daily `report`/track-record so G1 distance shows up in
+the digest automatically; (b) longer-history (>90d) `confirm` for G0 stability across
+more regime cycles; (c) the remaining B1d candidate (i) spot-vs-perp basis at funding
+deciles for a second uncorrelated edge.

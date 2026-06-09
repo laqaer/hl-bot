@@ -206,6 +206,15 @@ Keep it ruthlessly prioritized: the top item should always be the highest-levera
 
 ## P1 — honest measurement (so the supervisor can trust itself)
 
+- [x] **B1d-trend-G1obs — Observable gate progress.** Done (Iter 33): pure
+  `supervisor/goals.py::promotion_progress(conn, g) -> GateProgress` reports every
+  promotion condition's current value vs threshold + met/na/fail (not just the
+  all-pass case `evaluate` emits), reusing the same `score_agent`/`Condition.evaluate`
+  the supervisor promotes on. New `hlbot gate-progress [--agent]` renders the
+  distance-to-gate table so the trend_breakout G1 clock (edge>=+5bps, net>=$50,
+  >=150 trades @30d) is watchable without hand-deriving it. Read-only; 3 tests
+  (partial-progress, all-pass=ready, no-promotion=None). 158→161 tests.
+
 - [x] **B6/B7 — Per-agent funding attribution + Sharpe.** Done: funding split to
   the agent holding the coin at funding time (scoring includes it in net/edge);
   per-agent Sharpe from daily PnL so sharpe-gates evaluate. Tested. (Iteration 7.)
