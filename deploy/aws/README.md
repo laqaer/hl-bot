@@ -51,6 +51,12 @@ until you do that.**
 - **Security:** set `ssh_cidr` to your IP/32. Root volume is encrypted. The
   funded key never touches the box — only an approved API/agent wallet, added by
   hand post-confirm.
+- **Access is IP-independent via SSM:** the instance role includes
+  `AmazonSSMManagedInstanceCore`, so EC2 → Connect → **Session Manager** works from
+  any network with no inbound SSH. If your IP changes, SSH via `ssh_cidr` breaks
+  but SSM still works (and the bot keeps trading either way — `ssh_cidr` only gates
+  inbound SSH, never the bot's outbound connections). You can close port 22
+  entirely and rely on SSM.
 - **Teardown:** `terraform destroy` (back up the DB first if you want the history).
 - HCL here is written carefully but not validated in this repo's CI; run
   `terraform validate` / `plan` before `apply`.

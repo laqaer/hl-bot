@@ -99,6 +99,13 @@ resource "aws_iam_instance_profile" "hlbot" {
   role        = aws_iam_role.hlbot.name
 }
 
+# SSM Session Manager: browser/CLI shell through AWS's control plane — works
+# regardless of your IP and needs NO inbound SSH. Lets you close port 22 entirely.
+resource "aws_iam_role_policy_attachment" "ssm" {
+  role       = aws_iam_role.hlbot.name
+  policy_arn = "arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore"
+}
+
 resource "aws_instance" "hlbot" {
   ami                    = local.ami
   instance_type          = var.instance_type
