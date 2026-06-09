@@ -15,6 +15,7 @@ USER_="${HLBOT_USER:-hlbot}"
 as_hlbot() { sudo -u "$USER_" bash -lc "cd '$HOME_DIR' && $*"; }
 
 BR="$(as_hlbot 'git rev-parse --abbrev-ref HEAD')" || exit 0
+as_hlbot 'git config core.fileMode false' || true   # exec-bit changes must not block the merge
 as_hlbot "git fetch origin '$BR' -q" || true
 as_hlbot "git merge --ff-only 'origin/$BR' -q" >/dev/null 2>&1 || true
 
