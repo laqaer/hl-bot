@@ -7,6 +7,25 @@ Keep it ruthlessly prioritized: the top item should always be the highest-levera
 
 ## P0 — find an edge (the whole point)
 
+- [x] **B-cadence-data — Can fine-cadence (5m/15m/1m) durability research be run on HL candles? NO —
+  structurally blocked by HL data RETENTION, not by tooling (Iteration 39).** The "what's next" from
+  Iter 37/38 named direction (a) **sub-bar / cadence-mismatch** (REVIEW C7) as the highest-leverage
+  unblocked move. Before building a fine-cadence thesis, probed the data ceiling. Two findings: **(1)
+  `candleSnapshot` caps at ~5000 bars/request** (1m→3.6d, 5m→17.5d, 15m→52d, 1h→208d) AND is **anchored to
+  `endTime`** (returns the most-recent block up to end; `startTime` is only a floor). **(2) HL retains only
+  ~one cap of history total** — requests ending older than the trailing block return EMPTY (5m@-20d EMPTY,
+  15m@-60d EMPTY, 1h-old-window EMPTY; earliest 1h = ~208d ago). So there is **no older data to page to**:
+  the durability bar's 2× disjoint ~120d windows are **impossible at any sub-1h cadence** (5m gives 17.5d
+  total, 15m 52d total — not even one 120d window, let alone two), and this confirms Iter-35's "1h baseline
+  can't extend past ~240d" as a hard retention ceiling, not a fetch bug. **Conclusion: the (a) cadence
+  direction via HL candles is dead** — fine-cadence backtesting would need an external tick/candle archive
+  (forward-recording or 3rd-party), an infrastructure project, not a candle fetch. Confirms B-exec-tickmark
+  is also retention-blocked (no historical fine candles either). Shipped the correct *backward* candle
+  paginator anyway (`_fetch_candle_page` + `_paginate_candles` page backward from `endTime`, dedupe by open
+  time, terminate when HL yields no older rows — the right implementation for HL's endTime-anchored API,
+  even though retention currently bounds it to one block; +3 tests). This re-weights the remaining search
+  to **(b) Path C honest measurement** as the live next move. Maker-only/research-only, no live change.
+  Numbers in PROGRESS Iter 39.
 - [x] **B-basis — Perp-vs-spot basis reversion (the TENTH structurally-different thesis; the LAST named
   candidate class, flagged unrun in Iter 33/37). PRUNED as a deployable edge (Iteration 38): the pooled
   sign-stable-positive point is a KNIFE-EDGE in every param AND an averaging artifact of coins whose

@@ -82,7 +82,7 @@ def _request_with_retry(
         attempt += 1
 
 
-def fetch_candles(
+def _fetch_candle_page(
     coin: str,
     interval: str,
     start_ms: int,
@@ -90,7 +90,7 @@ def fetch_candles(
     *,
     base_url: str = "https://api.hyperliquid.xyz",
 ) -> list[dict[str, Any]]:
-    """Raw candle dicts: {t, T, o, h, l, c, v, n}. Newest-last."""
+    """One candle page (HL caps ``candleSnapshot`` at ~5000 rows, oldest-first)."""
     payload = {
         "type": "candleSnapshot",
         "req": {"coin": coin, "interval": interval,
@@ -100,6 +100,67 @@ def fetch_candles(
         r = _request_with_retry(lambda: client.post(base_url + "/info", json=payload))
         out = r.json()
     return out if isinstance(out, list) else []
+
+
+def _paginate_candles(
+    fetch_page: Any, start_ms: int, end_ms: int, interval_ms: int, *, max_pages: int = 64
+) -> list[dict[str, Any]]:
+    """Walk a ~5000-row-capped candle fetcher *backward* to cover [start, end].
+
+    HL's ``candleSnapshot`` returns at most ~5000 candles **anchored to
+    ``endTime``** (the most-recent block up to the requested end, with
+    ``startTime`` acting only as a floor) regardless of the requested span. So a
+    window longer than the cap is silently truncated to its trailing block, and
+    paging *forward* from ``startTime`` never advances. We instead page backward:
+    each page ends one ``interval_ms`` before the oldest candle seen so far. Stop
+    on: empty page, no new rows (HL retains no data older than the floor — true
+    today: nothing older than ~17.5d at 5m / ~52d at 15m / ~208d at 1h), the page
+    reaching ``start_ms``, or no time progress. Dedupes by open time ``t``;
+    returns oldest-first. Pure given ``fetch_page`` — unit-tested without a network.
+    """
+    rows: dict[int, dict[str, Any]] = {}
+    cursor_end = end_ms
+    for _ in range(max_pages):
+        page = fetch_page(start_ms, cursor_end)
+        if not page:
+            break
+        before = len(rows)
+        oldest = cursor_end
+        for k in page:
+            try:
+                t = int(k.get("t", 0))
+            except (TypeError, ValueError):
+                continue
+            rows[t] = k
+            oldest = min(oldest, t)
+        if len(rows) == before or oldest <= start_ms:
+            break
+        nxt_end = oldest - interval_ms
+        if nxt_end >= cursor_end:
+            break
+        cursor_end = nxt_end
+    return [rows[t] for t in sorted(rows)]
+
+
+def fetch_candles(
+    coin: str,
+    interval: str,
+    start_ms: int,
+    end_ms: int,
+    *,
+    base_url: str = "https://api.hyperliquid.xyz",
+) -> list[dict[str, Any]]:
+    """Raw candle dicts: {t, T, o, h, l, c, v, n}, oldest-first over the full window.
+
+    HL caps ``candleSnapshot`` at ~5000 rows per call, so a window longer than the
+    cap (anything past ~208d at 1h, or ~17.5d at 5m / ~3.6d at 1m) used to be
+    silently truncated. Page through to cover the whole [start, end] window.
+    """
+    interval_ms = INTERVAL_MS.get(interval, 3_600_000)
+    return _paginate_candles(
+        lambda s, e: _fetch_candle_page(coin, interval, s, e, base_url=base_url),
+        start_ms, end_ms, interval_ms,
+    )
 
 
 def _fetch_funding_page(

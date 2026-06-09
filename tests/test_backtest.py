@@ -151,6 +151,67 @@ def test_paginate_funding_stops_on_short_page():
     assert n_calls == 1, "a <500-row first page is the last page — no extra calls"
 
 
+def test_paginate_candles_covers_full_window():
+    from hl_bot.backtest.data import _paginate_candles
+
+    # synthetic 1m candles spanning ~10 days (14400 bars) — well past one
+    # ~5000-row page. The fake mirrors HL's real semantics: the page is anchored
+    # to ``end`` (returns the *newest* ≤5000 rows within [start, end]), so the
+    # paginator must walk *backward* to reassemble the whole window.
+    MIN = 60_000
+    total = 14_400
+    all_rows = [{"t": i * MIN, "c": 100.0 + i} for i in range(total)]
+    calls: list[tuple[int, int]] = []
+
+    def fake_page(start: int, end: int):
+        calls.append((start, end))
+        page = [r for r in all_rows if start <= r["t"] <= end]
+        return page[-5000:]  # HL's hard cap, anchored to endTime
+
+    rows = _paginate_candles(fake_page, 0, (total - 1) * MIN, MIN)
+    ts = [int(r["t"]) for r in rows]
+    assert len(rows) == total, "should reassemble every candle across pages"
+    assert ts == sorted(set(ts)), "candles unique and time-ordered"
+    assert len(calls) >= 3, "a >10000-row window needs multiple ~5000-row pages"
+
+
+def test_paginate_candles_stops_on_short_page():
+    from hl_bot.backtest.data import _paginate_candles
+
+    MIN = 60_000
+    rows_src = [{"t": i * MIN, "c": 50.0} for i in range(200)]
+    n_calls = 0
+
+    def fake_page(start: int, end: int):
+        nonlocal n_calls
+        n_calls += 1
+        return [r for r in rows_src if start <= r["t"] <= end][-5000:]
+
+    rows = _paginate_candles(fake_page, 0, 199 * MIN, MIN)
+    assert len(rows) == 200
+    assert n_calls == 1, "a sub-cap first page covers the window — no extra calls"
+
+
+def test_paginate_candles_stops_when_no_older_history():
+    from hl_bot.backtest.data import _paginate_candles
+
+    # HL retains only ~one cap of history: nothing exists older than the trailing
+    # block, so a request whose floor predates available data must terminate after
+    # the data runs out rather than looping to max_pages.
+    MIN = 60_000
+    retained = [{"t": i * MIN, "c": 1.0} for i in range(5200, 5200 + 300)]  # only newest 300 exist
+    n_calls = 0
+
+    def fake_page(start: int, end: int):
+        nonlocal n_calls
+        n_calls += 1
+        return [r for r in retained if start <= r["t"] <= end][-5000:]
+
+    rows = _paginate_candles(fake_page, 0, 5499 * MIN, MIN)
+    assert len(rows) == 300, "returns all retained candles"
+    assert n_calls <= 3, "stops once the page yields no new (older) rows, not at max_pages"
+
+
 def test_frame_cache_roundtrip(tmp_path):
     from hl_bot.backtest.data import load_cached_frames, save_frames
     frames = _mean_reversion_path()

@@ -2359,3 +2359,72 @@ out); or (b) accept the search verdict and make the **negative-edge finding itse
 pivot to Path C honest measurement / paper track-record (the supervisor/accounting/risk chassis is the
 strong part of the repo, per REVIEW). The next iteration should pick one; (a) is higher-leverage if
 trade-tick history is reachable, else (b) is the honest close.
+
+## Iteration 39 — 2026-06-08 — B-cadence-data: is fine-cadence (5m/15m/1m) durability research runnable on HL candles? NO — blocked by data RETENTION, not tooling. (+ correct backward candle paginator)
+
+**Context.** Ten theses are pruned. Iter 37/38 named two honest next directions: **(a)** sub-bar /
+cadence-mismatch re-test (REVIEW C7 — signal horizon ≫ 1h action cadence; the only direction that attacks a
+root cause no bar-marked backtest can rule out, flagged highest-leverage *if* finer data is reachable), and
+**(b)** pivot to Path C honest measurement. This iteration tested whether (a) is actually reachable on HL
+candle data before committing to a fine-cadence thesis — i.e. can we get the durability bar's 2× disjoint
+~120d windows at 5m/15m?
+
+**What I probed (real HL `candleSnapshot`).** Two structural limits, both measured:
+
+```
+Per-request cap (req a huge window, count what comes back):
+  1m  req=10d  -> 5213 candles, span  3.6d   (oldest 2026-06-05)
+  5m  req=60d  -> 5043 candles, span 17.5d   (oldest 2026-05-22)
+  1h  req=300d -> 5003 candles, span 208.4d  (oldest 2025-11-12)
+  => hard cap ~5000 bars/request, regardless of requested span.
+
+Anchoring + retention (request OLD windows fully in the past):
+  1h  [now-300d, now-250d]  -> EMPTY        (no 1h data older than ~208d)
+  1h  [now-400d, now-100d]  -> 2603, oldest 2025-11-12, newest 2026-03-01
+       => anchored to endTime (newest is exactly the requested end), startTime only a floor;
+          oldest is the SAME ~208d-ago floor as the trailing call — no older data exists.
+  5m  end=-20d  -> EMPTY  | 5m end=-30d -> EMPTY   (no 5m older than ~17.5d)
+  15m end=-60d  -> EMPTY                            (no 15m older than ~52d)
+```
+
+**Finding (the deliverable).** HL `candleSnapshot` (1) caps at ~5000 bars/request AND (2) is **anchored to
+`endTime`**, returning the most-recent block up to the requested end with `startTime` acting only as a
+floor; and crucially (3) **HL retains only ~one cap of history per interval, total** — there is no older
+data to page to in *any* direction. So the calendar coverage per interval is fixed: **1m ≈ 3.6d, 5m ≈ 17.5d,
+15m ≈ 52d, 1h ≈ 208d.** The durability bar needs **two disjoint ~120d windows**; at any sub-1h cadence that
+is **structurally impossible** (5m gives 17.5d *total*, 15m 52d *total* — not even one 120d window). This
+also re-explains Iter-35's "1h baseline can't extend past ~240d" as a **hard retention ceiling, not a fetch
+bug**, and confirms the parked B-exec-tickmark refinement is retention-blocked too (no historical fine
+candles, same as no historical L2/trade-tick).
+
+**Conclusion — direction (a) via HL candles is dead.** Fine-cadence backtesting would require an *external*
+tick/candle archive — either forward-recording our own WS stream over months, or a 3rd-party historical
+feed — which is an infrastructure project, not a candle fetch, and yields no edge number for a long time.
+That decisively re-weights the search to **(b) Path C honest measurement / paper track-record** as the next
+*unblocked, evidence-producing* move: the supervisor/accounting/risk chassis is the strong part of the repo
+(REVIEW), and the ten-thesis negative-edge result is itself a publishable finding.
+
+**What changed (code, with tests).** Even though retention currently bounds it to one block, I shipped the
+*correct* candle paginator for HL's endTime-anchored API: split the single request into `_fetch_candle_page`
+and made `fetch_candles` page **backward** via new pure `_paginate_candles` (each page ends one
+`interval_ms` before the oldest candle seen; dedupes by open time `t`; terminates on empty page / no new
+(older) rows / reaching the `start_ms` floor / no time progress; returns oldest-first). This replaces the
+prior single-shot fetch that silently truncated to one block and is the right shape if HL ever extends
+retention or for any coin whose retained history exceeds one cap. `load_frames`/`cached_or_fetch` are
+unchanged (they call `fetch_candles`); `build_frames` already sorts, so this is fully backward-compatible
+— just robust and honest about the cap. +3 unit tests (backward reassembly of a >2-cap window mirroring
+HL's `end`-anchored semantics; sub-cap single-page short-circuit; clean termination when no older history
+exists rather than looping to `max_pages`). Live re-verify: 1h/300d→5003 span 208.4d, 5m/60d→5044 span
+17.5d, 15m/120d→5015 span 52.2d — all 0 dupes, sorted, terminate cleanly.
+
+**Evidence (gate).** `uv run pytest -q` → **223 passed** (+3 candle-pagination); `ruff check src tests
+scripts` → clean. Probes are live measurement (no `data/` writes committed). No strategy in the live roster
+changed; no live mode enabled.
+
+**What's next (loop).** With direction (a) confirmed retention-blocked on HL candles, the honest
+next-unblocked move is **(b) Path C**: turn the ten-thesis negative-edge finding into a clean
+paper/measurement deliverable — e.g. a reproducible "edge search summary" report (every thesis, universe,
+window, net-of-cost number, prune reason) generated from the recorded results, and/or harden the paper
+track-record export (B15) into something public-grade. The only route back to (a) is sourcing an external
+fine-cadence archive (forward-record WS now, or a 3rd-party feed) — a standalone infra bet, not a one-shot
+iteration.
