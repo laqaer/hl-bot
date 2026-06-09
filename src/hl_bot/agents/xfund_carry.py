@@ -40,6 +40,48 @@ class XFundCarryConfig:
     # exit threshold) and on the correct side. This decouples exits from rank
     # rotation to cut the cross/fee churn that buries a hold-to-collect carry.
     hold_while_eligible: bool = False
+    # When True, size each leg by inverse rolling beta to a market proxy so the
+    # book is *market*-neutral, not merely dollar-neutral. Dollar-neutral legs
+    # are not market-neutral when the short legs (crowded-long, high-funding
+    # alts) carry higher beta than the long legs — a market rally then bleeds the
+    # book even though the carry is collected. Scaling notional by
+    # ``beta_floor / max(|beta|, beta_floor)`` equalises each leg's beta-dollar
+    # exposure (and is tightening-only: scale <= 1, so risk never grows).
+    beta_neutral: bool = False
+    beta_proxy: str = "BTC"            # market proxy coin for beta
+    beta_window: int = 48             # bars of returns for the rolling beta
+    beta_floor: float = 0.5           # clamp tiny betas so size never blows up
+
+
+def rolling_beta(
+    coin_closes: list[float], proxy_closes: list[float], window: int
+) -> float | None:
+    """OLS beta of ``coin`` returns on ``proxy`` returns over the last ``window``
+    bars. Returns ``None`` when there isn't enough aligned, positive-price data
+    or the proxy has zero return variance."""
+    n = min(len(coin_closes), len(proxy_closes))
+    if n < 4:
+        return None
+    c = coin_closes[-n:]
+    p = proxy_closes[-n:]
+    w = min(window, n - 1)
+    c = c[-(w + 1):]
+    p = p[-(w + 1):]
+    rc: list[float] = []
+    rp: list[float] = []
+    for i in range(1, len(c)):
+        if c[i - 1] > 0 and p[i - 1] > 0:
+            rc.append(c[i] / c[i - 1] - 1.0)
+            rp.append(p[i] / p[i - 1] - 1.0)
+    if len(rp) < 3:
+        return None
+    mp = sum(rp) / len(rp)
+    var = sum((x - mp) ** 2 for x in rp)
+    if var <= 0:
+        return None
+    mc = sum(rc) / len(rc)
+    cov = sum((rc[i] - mc) * (rp[i] - mp) for i in range(len(rp)))
+    return cov / var
 
 
 class XFundCarryAgent(Agent):
@@ -60,6 +102,10 @@ class XFundCarryAgent(Agent):
             max_total_notional=float(c.get("max_total_notional", 100.0)),
             max_concurrent_positions=int(c.get("max_concurrent_positions", 6)),
             hold_while_eligible=bool(c.get("hold_while_eligible", False)),
+            beta_neutral=bool(c.get("beta_neutral", False)),
+            beta_proxy=str(c.get("beta_proxy", "BTC")),
+            beta_window=int(c.get("beta_window", 48)),
+            beta_floor=float(c.get("beta_floor", 0.5)),
         )
         self.conn = conn
 
@@ -137,6 +183,9 @@ class XFundCarryAgent(Agent):
         )
         room_notional = self.cfg.max_total_notional - active_notional
 
+        closes = view.extra.get("closes", {}) or {}
+        proxy_closes = closes.get(self.cfg.beta_proxy) if self.cfg.beta_neutral else None
+
         for coin, side in desired.items():
             if room <= 0 or room_notional < 5.0:
                 break
@@ -149,6 +198,14 @@ class XFundCarryAgent(Agent):
             notional = min(self.cfg.max_notional_per_trade, room_notional)
             if notional < 5.0:
                 break
+            # Beta-neutralise: shrink high-beta legs so each leg carries equal
+            # market exposure (inverse-beta weighting, tightening-only).
+            if self.cfg.beta_neutral and proxy_closes:
+                b = rolling_beta(closes.get(coin) or [], proxy_closes, self.cfg.beta_window)
+                if b is not None:
+                    notional *= self.cfg.beta_floor / max(abs(b), self.cfg.beta_floor)
+                if notional < 5.0:
+                    continue
             sz = round(notional / mid, 5)
             direction = "short" if side == "A" else "long"
             apr = (f or 0) * 8760 * 100

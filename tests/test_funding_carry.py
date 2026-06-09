@@ -13,7 +13,7 @@ from __future__ import annotations
 from hl_bot.agents.base import MarketView
 from hl_bot.agents.decisions import Decision, log_decision
 from hl_bot.agents.funding_carry import FundingCarryAgent
-from hl_bot.agents.xfund_carry import XFundCarryAgent
+from hl_bot.agents.xfund_carry import XFundCarryAgent, rolling_beta
 from hl_bot.backtest.engine import Backtester, CostModel, Frame
 from hl_bot.db.schema import init_db
 
@@ -109,6 +109,61 @@ def test_hold_while_eligible_still_exits_on_flip_and_normalize():
     reasons = {d.coin: d.reasoning for d in out if d.action == "flatten"}
     assert "FLIP" in reasons and "FLIPPED" in reasons["FLIP"]
     assert "CALM" in reasons and "NORMALIZED" in reasons["CALM"]
+
+
+def test_rolling_beta_recovers_known_slope():
+    # proxy random-ish walk; coin = 2x proxy returns -> beta ~ 2.0
+    proxy = [100.0]
+    for r in [0.01, -0.02, 0.015, -0.005, 0.02, -0.01, 0.008, -0.012]:
+        proxy.append(proxy[-1] * (1 + r))
+    coin = [50.0]
+    for i in range(1, len(proxy)):
+        rp = proxy[i] / proxy[i - 1] - 1.0
+        coin.append(coin[-1] * (1 + 2.0 * rp))
+    b = rolling_beta(coin, proxy, window=48)
+    assert b is not None and abs(b - 2.0) < 1e-6
+    # proxy on itself is beta 1.0
+    assert abs(rolling_beta(proxy, proxy, 48) - 1.0) < 1e-9
+    # too little / degenerate data -> None
+    assert rolling_beta([1.0, 2.0], [1.0, 2.0], 48) is None
+    assert rolling_beta([1.0, 1.1, 1.2, 1.3], [5.0, 5.0, 5.0, 5.0], 48) is None
+
+
+def test_beta_neutral_shrinks_high_beta_leg_relative_to_low_beta():
+    # HIGH (short, beta 2) and LOW (long, beta 0.5) both eligible by funding.
+    # Beta-neutral sizing must give the high-beta short LESS notional than the
+    # low-beta long; plain dollar-neutral gives them equal notional.
+    proxy = [100.0]
+    for r in [0.01, -0.02, 0.015, -0.005, 0.02, -0.01, 0.008, -0.012, 0.006, -0.009]:
+        proxy.append(proxy[-1] * (1 + r))
+
+    def _scaled(mult):
+        s = [10.0]
+        for i in range(1, len(proxy)):
+            rp = proxy[i] / proxy[i - 1] - 1.0
+            s.append(s[-1] * (1 + mult * rp))
+        return s
+
+    closes = {"BTC": proxy, "HIGH": _scaled(2.0), "LOW": _scaled(0.5)}
+    view = MarketView(
+        ts_ms=20 * HOUR,
+        mids={"BTC": proxy[-1], "HIGH": closes["HIGH"][-1], "LOW": closes["LOW"][-1]},
+        funding={"BTC": 0.00001, "HIGH": 0.0010, "LOW": -0.0010},
+        extra={"day_ntl_vlm": {"BTC": 5e7, "HIGH": 5e7, "LOW": 5e7}, "closes": closes},
+    )
+
+    def _notionals(cfg):
+        conn = init_db(":memory:")
+        out = XFundCarryAgent(config=cfg, conn=conn).decide(view)
+        return {d.coin: d.sz * d.px for d in out if d.action == "place"}
+
+    plain = _notionals({})
+    assert abs(plain["HIGH"] - plain["LOW"]) < 1e-6  # dollar-neutral: equal
+
+    bn = _notionals({"beta_neutral": True, "beta_floor": 0.5})
+    # high-beta short shrunk to ~floor/2 of base; low-beta long stays at base.
+    assert bn["HIGH"] < bn["LOW"]
+    assert bn["HIGH"] < plain["HIGH"]
 
 
 def test_carry_skips_calm_funding():
