@@ -305,3 +305,43 @@ B4-RUN (confirm carry on real history), B16 (HL vault eval for AUM).
 - **Fastest live path** — `docs/AWS_NOVICE_SETUP.md` FAST PATH: one user-data block
   brings the box up live-armed (agent enabled, maker exec, loop on); trades start
   the moment the API wallet is added (one post-boot command). Off switch one line.
+
+---
+
+## Iteration 9 — 2026-06-08 — fills→positions replay (size-aware attribution)
+
+**Context.** P0 is done or network-blocked; P1 honest-measurement was the top
+unblocked lane. Picked **B9** (REVIEW M2): the `positions` table existed in the
+schema but nothing wrote it, so per-agent attribution (the funding split in
+`scoring.metrics`) inferred ownership from the decision log as a *binary*
+owned/not-owned flag — blind to partial fills, size drift, and manual
+interference.
+
+**Changed (1 commit).**
+- **B9 — fills→positions replay.** New `src/hl_bot/db/positions.py`:
+  - `replay_positions(fills)` — pure, DB-free fold of time-ordered fills into
+    per-(agent, coin) `PositionRow`s: net size (B=+, A=−), size-weighted average
+    entry (recomputed only when the position grows in-direction; untouched on
+    reduction; re-based to fill px on a flip through zero), realized PnL taken
+    straight from the exchange `closed_pnl` (never recomputed — keeps the
+    "ground truth from the exchange" invariant), and summed fees.
+  - `rebuild_positions(conn)` — full DELETE + re-insert from `fills` ordered by
+    time; idempotent, so re-running after new fills land yields correct current
+    state with no drift/dupes.
+  - Wired into `ingest_fills`: rebuilds only when new fills were inserted.
+
+**Evidence.** `uv run pytest -q` → **98 passed** (7 new in `tests/test_positions.py`:
+weighted entry on partials, reduction keeps entry + exchange PnL, full close
+resets entry, flip-through-zero re-bases entry, fees/keys across agents+coins,
+idempotent table write, NULL-agent fills skipped). `ruff check src tests scripts`
+→ clean.
+
+**Why it matters.** This is the size-aware substrate the binary decision-log
+attribution lacked (REVIEW M2). It makes per-agent ownership robust to partial
+fills and manual trades, and is the natural home for upgrading the funding split
+from equal-among-holders to size-weighted later.
+
+**What's next (loop).** Consider upgrading `scoring.metrics` funding attribution
+to weight by `positions.net_sz` (size-aware split) now that the substrate exists;
+B11 (feed/retire liq_cascade via WS liq data), B12 (consolidate execution paths),
+B4-RUN (confirm carry on real history — still network-blocked).

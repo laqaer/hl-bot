@@ -53,8 +53,11 @@ Keep it ruthlessly prioritized: the top item should always be the highest-levera
   Then standardize all goal configs. (REVIEW C5.)
 - [x] **B8 — Record actual fill price.** Done: `femr_tick` now logs the confirmed
   `res.avg_px`/`res.filled_sz` on fill so stops/TPs key off the real entry. (M1.)
-- [ ] **B9 — fills→positions replay.** Populate the unused `positions` table from
-  fills so attribution survives partial fills/manual interference. (REVIEW M2.)
+- [x] **B9 — fills→positions replay.** Done: `db/positions.py`
+  (`replay_positions` pure fn + `rebuild_positions` writer) folds the exchange
+  fills stream into the `positions` table — net size, size-weighted entry,
+  exchange realized PnL, fees — keyed by (agent, coin); wired into `ingest_fills`.
+  Survives partial fills/flips/manual interference. Tested (7 cases). (Iteration 9.)
 
 ## P2 — cadence, structure, devops
 

@@ -23,6 +23,7 @@ from typing import Any
 import httpx
 
 from ..agents.cloid import agent_from_cloid
+from ..db.positions import rebuild_positions
 from ..risk.scaling import unified_portfolio_value
 
 log = logging.getLogger(__name__)
@@ -87,6 +88,9 @@ def ingest_fills(conn: sqlite3.Connection, address: str, base_url: str) -> int:
             n += cur.rowcount
         except sqlite3.IntegrityError as e:
             log.warning("fill insert failed hash=%s tid=%s: %s", f.get("hash"), f.get("tid"), e)
+    if n:
+        # Keep per-agent attribution (size-weighted) current from ground truth.
+        rebuild_positions(conn)
     log.info("ingested %d new fills (of %d returned)", n, len(fills))
     return n
 
