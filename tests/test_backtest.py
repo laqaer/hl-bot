@@ -149,6 +149,51 @@ def test_paginate_by_time_stops_without_progress():
     assert n_calls == 1, "no forward progress -> stop after one page"
 
 
+def test_fetch_candles_paginates_past_the_row_cap(monkeypatch):
+    """fetch_candles must walk the candleSnapshot per-call cap (keyed on ``t``)."""
+    from hl_bot.backtest import data
+
+    # Shrink the cap so the test is cheap; simulate an endpoint that returns at
+    # most `cap` candles per call, oldest-first, honoring startTime, keyed on `t`.
+    cap = 3
+    monkeypatch.setattr(data, "CANDLE_PAGE_LIMIT", cap)
+    all_rows = [{"t": i * HOUR, "c": 100.0 + i, "v": 1.0} for i in range(10)]
+    starts: list[int] = []
+
+    class _Resp:
+        def __init__(self, payload):
+            self._payload = payload
+
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return self._payload
+
+    class _FakeClient:
+        def __init__(self, *a, **k):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+        def post(self, url, json=None):
+            req = json["req"]
+            start, end = req["startTime"], req["endTime"]
+            starts.append(start)
+            window = [r for r in all_rows if start <= r["t"] <= end]
+            return _Resp(window[:cap])
+
+    monkeypatch.setattr(data.httpx, "Client", _FakeClient)
+
+    got = data.fetch_candles("TST", "1h", 0, 10 * HOUR)
+    assert [r["t"] for r in got] == [r["t"] for r in all_rows], "all candles, sorted, deduped"
+    assert len(starts) >= 3, "needed multiple pages to clear the cap"
+
+
 def test_frame_cache_roundtrip(tmp_path):
     from hl_bot.backtest.data import load_cached_frames, save_frames
     frames = _mean_reversion_path()

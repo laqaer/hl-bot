@@ -47,10 +47,11 @@ Keep it ruthlessly prioritized: the top item should always be the highest-levera
   via `paginate_by_time`. **Next:** xfund is closest — try wider universe / longer
   hold / tighter entry; do NOT promote (still negative).
 
-- [ ] **B1b — Paginate candle fetch too.** `fetch_candles` likely shares HL's
-  per-call row cap (~5000); 90d×1h = 2160 is safe but finer intervals (1m/5m) over
-  long windows will truncate the same way `fundingHistory` did (fixed in Iter 20
-  via `paginate_by_time`). Wrap `fetch_candles` in `paginate_by_time` keyed on `t`.
+- [x] **B1b — Paginate candle fetch too.** Done (Iter 21): `fetch_candles` now
+  walks the candleSnapshot ~5000-row per-call cap via `paginate_by_time(time_key=
+  "t", page_limit=CANDLE_PAGE_LIMIT)`, so fine intervals (1m/5m) over long windows
+  no longer silently truncate the recent bars the way `fundingHistory` did.
+  Unit-tested offline (fake httpx, shrunk cap).
 - [ ] **B1c — Edge hunt on corrected funding.** Now that carry backtests are valid
   (B4-RUN), xfund_carry maker is the closest to break-even. Explore: wider/auto
   high-funding universe (rank by historical |funding|, filter by liquidity),

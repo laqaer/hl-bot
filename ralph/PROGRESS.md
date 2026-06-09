@@ -853,3 +853,46 @@ claim; nothing promoted; everything still paper/gated.
 by historical |funding|×liquidity, longer hold / tighter entry / funding-decile
 cross-section for xfund), B1b (paginate `fetch_candles` for fine-interval long
 windows — same cap class), then resume B12 consolidation.
+
+---
+
+## Iteration 21 — 2026-06-08 — paginate candle fetch (B1b)
+
+**Context.** Iter 20 found and fixed HL's silent per-call row cap on
+`fundingHistory` (500 rows → only the oldest ~20d of a 90d window survived,
+invalidating every >20d carry backtest). The candle endpoint shares the same
+failure class: `fetch_candles` issued a single `candleSnapshot` call, and HL caps
+that at ~5000 rows. 90d×1h = 2160 bars is safe, but the edge hunt (B1c) wants
+*fine* intervals (1m/5m) over long windows — 30d×5m = 8640, 30d×1m = 43200 — which
+would have silently dropped the most recent bars and produced wrong-but-plausible
+backtests, exactly the trap that made the funding results untrustworthy. This is
+the highest-leverage *unblocked* item (network-independent correctness fix that
+de-risks the upcoming fine-interval edge hunt).
+
+**Changed (1 commit).**
+- **`backtest/data.py`** — `fetch_candles` now fetches through the existing
+  `paginate_by_time` walker (added in Iter 20), keyed on the candle open-time `t`
+  with `page_limit=CANDLE_PAGE_LIMIT` (new module constant = 5000). Same forward-
+  walk + de-dup + sort-ascending + no-progress guard the funding fetch uses, so
+  long fine-interval windows recover all bars instead of truncating to the newest
+  ~5000. The single-call body became a `_page(s, e)` closure (mirrors
+  `fetch_funding_history`). Returns oldest-first (was "newest-last" — the previous
+  docstring was already wrong; HL returns oldest-first and the paginator sorts
+  ascending, which is what `build_frames` already assumes via its `sorted(...,t)`).
+- **`tests/test_backtest.py`** — `test_fetch_candles_paginates_past_the_row_cap`:
+  monkeypatches `httpx.Client` with a fake capped endpoint and shrinks
+  `CANDLE_PAGE_LIMIT` to 3, proving 10 candles are recovered across ≥3 pages,
+  sorted+deduped, keyed on `t`. Offline, no network.
+
+**Evidence.** 138 → **139 tests pass**; `ruff check src tests scripts` clean.
+
+**Why it matters.** B1c (the edge hunt) will lean on fine-interval long windows;
+without this fix those backtests would have been silently wrong in the recent bars
+— the same trap that invalidated the carry results before Iter 20. Pure
+correctness/measurement plumbing; not an edge claim, nothing promoted.
+
+**What's next (loop).** B1c (edge hunt on corrected funding + now-correct fine
+candles: rank a wider universe by historical |funding|×liquidity, longer hold /
+tighter entry / funding-decile cross-section for xfund — network-gated), then
+resume B12 consolidation (fold remaining `femr_tick` preamble into a shared
+harness).

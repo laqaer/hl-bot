@@ -36,6 +36,9 @@ INTERVAL_MS: dict[str, int] = {
 # ---------------------------------------------------------------------------
 
 
+CANDLE_PAGE_LIMIT = 5000  # HL caps candleSnapshot at ~5000 rows/call
+
+
 def fetch_candles(
     coin: str,
     interval: str,
@@ -44,16 +47,27 @@ def fetch_candles(
     *,
     base_url: str = "https://api.hyperliquid.xyz",
 ) -> list[dict[str, Any]]:
-    """Raw candle dicts: {t, T, o, h, l, c, v, n}. Newest-last."""
-    with httpx.Client(timeout=20) as client:
-        r = client.post(base_url + "/info", json={
-            "type": "candleSnapshot",
-            "req": {"coin": coin, "interval": interval,
-                    "startTime": start_ms, "endTime": end_ms},
-        })
-        r.raise_for_status()
-        out = r.json()
-    return out if isinstance(out, list) else []
+    """Raw candle dicts: {t, T, o, h, l, c, v, n}, oldest-first.
+
+    Paginated: HL caps ``candleSnapshot`` at ~5000 rows/call, so a long window at
+    a fine interval (e.g. 1m/5m over many days) must be walked forward (see
+    :func:`paginate_by_time`, keyed on the open time ``t``) or the recent candles
+    are silently dropped — the same per-call cap that truncated ``fundingHistory``.
+    """
+    def _page(s: int, e: int) -> list[dict[str, Any]]:
+        with httpx.Client(timeout=20) as client:
+            r = client.post(base_url + "/info", json={
+                "type": "candleSnapshot",
+                "req": {"coin": coin, "interval": interval,
+                        "startTime": s, "endTime": e},
+            })
+            r.raise_for_status()
+            out = r.json()
+        return out if isinstance(out, list) else []
+
+    return paginate_by_time(
+        _page, start_ms, end_ms, page_limit=CANDLE_PAGE_LIMIT, time_key="t",
+    )
 
 
 def paginate_by_time(
