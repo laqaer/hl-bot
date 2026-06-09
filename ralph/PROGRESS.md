@@ -763,3 +763,76 @@ low-frequency basis/cross-sectional momentum that tolerates the 5-min loop;
 dormant/edgeless agent. The negative results are the value here — they've pruned
 the two most-hyped theses, so the next iteration should test a *structurally
 different* signal rather than re-tuning a known loser.
+
+---
+
+## Iteration 18 — 2026-06-08 — B-mom: cross-sectional momentum has no stable edge (the price-signal thesis flips sign by regime)
+
+**Context.** Iterations 16–17 pruned the two most-hyped theses after costs: TWAP-MR
+(B1) and funding carry on majors *and* high-funding alts (B1-alt). PROGRESS's own
+"what's next" was explicit: stop re-tuning known losers and **test a structurally
+different signal**. The natural candidate is *price* (not funding): cross-sectional
+momentum — a classic, capital-scalable, market-neutral crypto edge whose horizon
+(hours–days) tolerates the 5-min loop. This iteration built it and ran the honest G0.
+
+**Code change (the committed increment, with tests).**
+- **`agents/xsect_momentum.py` — `XSectMomentumAgent` (`xsect_momentum_v1`).**
+  Mirrors the cross-sectional carry shape (dollar-neutral, top-K legs, decision-log
+  position tracking, maker-friendly patient entries) but ranks on **trailing return**
+  over `lookback_bars` (from `view.extra["closes"]`, already supplied per-frame by the
+  backtest data builder) instead of funding. LONG the top-K strongest, SHORT the
+  bottom-K weakest; exit when a coin leaves the target set, decays below an exit band,
+  or its momentum flips sign. A single **`reversion`** flag negates the signal so the
+  *same* book tests the opposite thesis (short-horizon cross-sectional mean-reversion:
+  long losers / short winners) at zero extra code — efficient for edge-hunting.
+- **`tests/test_xsect_momentum.py` (+5):** longs-winner/shorts-loser ranking; the
+  `reversion` flag flips both legs; sub-threshold names aren't traded; short series
+  → hold; and a continuing-trend backtest stays two-sided, neutral, and positive.
+- **`cli/main.py`:** registered the agent in both the `backtest` and `confirm`
+  factory dicts so it runs through the standard G0 harness.
+
+**Experiment — confirm on real history (measurement; caches gitignored).** Reused the
+two existing 120d/1h caches (majors: BTC/ETH/SOL/HYPE/AVAX/LINK; high-funding alts:
+INJ/PURR/TRUMP/AERO/NIL/APT/SPX/PYTH/EIGEN/S). `confirm_strategy(prefer="maker")`,
+walk-forward (in = older 70%, oos = recent 30%) + cost ladder, momentum vs reversion:
+
+| universe | variant | in-sample edge/sharpe | oos edge/sharpe | maker full | taker-2x |
+|---|---|---|---|---|---|
+| majors | momentum  | −4.7 / −2.52 | **+15.8 / +5.55** | +0.8 (1736tr) | −6.7 |
+| majors | reversion | **+2.7 / +1.45** | −17.8 / −6.21 | −2.8 (1736tr) | −10.3 |
+| alts   | momentum  | −6.3 / −2.91 | **+13.4 / +2.89** | −0.7 (2956tr) | −8.2 |
+| alts   | reversion | **+4.3 / +2.00** | −15.5 / −3.16 | −1.4 (2956tr) | −8.9 |
+
+**Evidence — NOT CONFIRMED, all four cells (G0 FAIL).** The result is sharp and
+honest: momentum and reversion are exact mirror images (as constructed), and on
+*both* universes the cross-sectional price edge **changes sign between the in-sample
+and out-of-sample windows.** Momentum lost on the older 70% and won on the recent
+30%; reversion did the reverse. That isn't an edge — it's a **regime inversion
+mid-window**, which is precisely what walk-forward exists to reject (an edge that
+only shows up out-of-sample, with the opposite sign in-sample, is not tradeable
+forward). Maker full-sample edge is ≈ flat (+0.8 / −0.7 / −2.8 / −1.4 bps); the taker
+ladder is firmly negative everywhere, so even the recent-window momentum would be
+eaten by costs at taker.
+
+**Honest conclusion (prunes the third thesis).** Over the last 120d, **no stable
+cross-sectional signal — funding (B1/B1-alt) or price-momentum/reversion (B-mom) —
+survives walk-forward after costs** on either majors or high-funding alts. The
+price-momentum effect is real but *regime-dependent and sign-unstable* on this
+window, so a fixed-sign book can't harvest it. This is the third hyped thesis pruned;
+the negative result is the value (it stops us deploying a coin-flip).
+
+**Evidence (gate).** `uv run pytest -q` → **121 passed** (+5); `ruff check src tests
+scripts` → clean. Committed increment is the agent + tests + CLI registration (pure,
+offline); the confirm numbers are measurement (caches gitignored). No
+strategy/sizing/live-mode change.
+
+**What's next (loop).** Three structurally different theses (TWAP-MR, carry,
+xsect-momentum) are now pruned after costs. Surviving leads, in priority: (1) a
+**regime-conditioned** variant — if momentum's sign is regime-dependent, a *timing*
+signal (e.g. trade momentum only when a market-wide trend filter is on, flat
+otherwise) might stabilize it; cheap to test by gating `xsect_momentum` on an
+aggregate-trend condition. (2) **B-femr-regime**: retire femr from the live roster
+(dormant + funding-driven, and carry is pruned) to stop attending to an edgeless
+agent. (3) A genuinely different *structure* (e.g. event/liquidation microstructure)
+rather than another cross-sectional rank. The honest score so far: the chassis is
+strong, but no G0 PASS yet — keep pruning until one signal clears walk-forward.

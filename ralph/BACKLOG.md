@@ -27,6 +27,17 @@ Keep it ruthlessly prioritized: the top item should always be the highest-levera
   smaller than maker cost + the directional noise of the (imperfectly neutral) legs.
   **The carry thesis is pruned: no G0 on majors (B1) OR high-funding alts.** Numbers
   in PROGRESS.md Iteration 17.
+- [x] **B-mom — Cross-sectional momentum (the structurally-different signal).** DONE
+  (Iteration 18). New `xsect_momentum_v1`: market-neutral, ranks the universe by
+  trailing return over a lookback, LONG top-K / SHORT bottom-K, maker-friendly; a
+  `reversion` flag flips both legs to test short-horizon mean-reversion in the same
+  book. Registered in `confirm`/`backtest`; 5 unit tests. **Result: NOT CONFIRMED on
+  majors OR high-funding alts, neither momentum nor reversion.** The cross-sectional
+  edge *flips sign* between the in-sample (older 70%) and OOS (recent 30%) windows —
+  MOMENTUM in −4.7→oos +15.8bps; REVERSION in +2.7→oos −17.8bps (majors, maker);
+  same mirror on alts. A regime inversion mid-window, which walk-forward correctly
+  rejects. Maker full-sample ≈ flat (+0.8/−0.7bps); taker-2x firmly negative. Numbers
+  in PROGRESS.md Iteration 18.
 - [ ] **B-femr-regime — femr is dormant on majors; retire or repurpose.** femr's
   130%-APR entry never trips on liquid coins (B1). B1-alt now shows funding *carry*
   has no edge even where funding is high, so widening femr (also funding-driven) to

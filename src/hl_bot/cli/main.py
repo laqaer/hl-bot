@@ -23,6 +23,7 @@ from ..agents.twap_mr import TwapMrAgent
 from ..agents.twap_mr_regime import TwapMrRegimeAgent
 from ..agents.veto import VetoAgent
 from ..agents.xfund_carry import XFundCarryAgent
+from ..agents.xsect_momentum import XSectMomentumAgent
 from ..config import CONFIG_DIR, Settings
 from ..db.schema import init_db
 from ..ingest.hyperliquid import ingest_fills, ingest_funding, snapshot_equity
@@ -734,6 +735,7 @@ def backtest(
         "femr_v1": lambda conn: FemrAgent(config={}, conn=conn),
         "funding_carry_v1": lambda conn: FundingCarryAgent(config={}, conn=conn),
         "xfund_carry_v1": lambda conn: XFundCarryAgent(config={}, conn=conn),
+        "xsect_momentum_v1": lambda conn: XSectMomentumAgent(config={}, conn=conn),
         "liq_cascade_v1": lambda conn: LiqCascadeAgent(config={}, conn=conn),
         "basis_v1": lambda conn: BasisAgent(config={}, conn=conn),
     }
@@ -812,6 +814,7 @@ def confirm(
         "femr_v1": lambda conn: FemrAgent(config={}, conn=conn),
         "funding_carry_v1": lambda conn: FundingCarryAgent(config={}, conn=conn),
         "xfund_carry_v1": lambda conn: XFundCarryAgent(config={}, conn=conn),
+        "xsect_momentum_v1": lambda conn: XSectMomentumAgent(config={}, conn=conn),
         "liq_cascade_v1": lambda conn: LiqCascadeAgent(config={}, conn=conn),
         "basis_v1": lambda conn: BasisAgent(config={}, conn=conn),
     }
