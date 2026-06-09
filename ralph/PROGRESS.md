@@ -454,3 +454,45 @@ from the review is resolved.
 **What's next (loop).** B12 (consolidate `runtime.run_tick` vs `femr_tick`, M3),
 userFills WS for instant maker-fill detection, B4-RUN (confirm carry on real
 history — network-gated), B16 (HL vault eval for AUM).
+
+---
+
+## Iteration 13 — 2026-06-08 — extract + test the live order-placement loop (B12 / M3 / D2)
+
+**Context.** Structure/devops leverage. The actual code that places real orders
+lived inlined in `cli/main.py::femr_tick` (~70 lines): guardrail/cooldown/
+resting-quote gating, maker-vs-taker branching, fill-confirmed logging with the
+REAL fill px/sz. REVIEW M3 ("two execution paths; the safe wrapper is dead code
+for live") + D2 ("no coverage of the live path") flagged this as untested
+risk — and "evidence before capital" means the order path must be tested before
+any live use. This is the first atomic slice of B12.
+
+**Changed (1 commit).**
+- **`agents/runtime.py`** — new `execute_decisions(conn, exchange, view,
+  decisions, *, agent_names, guardrails_ok, execution)` returning an ordered list
+  of `ExecEvent(kind, agent, coin, message)`. Behavior is a faithful move of the
+  old loop: `place` blocked on guardrail-fail / cooldown / an already-resting
+  maker quote; maker mode posts a post-only limit at the near touch (book-aware,
+  never crossing) and dedups; taker sends a market order; `place`/`flatten` are
+  logged ONLY after exchange acceptance, with the real fill px/sz; a taker reject
+  logs a `rejected` row so the coin enters cooldown. Presentation (rich strings)
+  rides in `ExecEvent.message` so the CLI stays a thin printer.
+- **`cli/main.py`** — `femr_tick` now calls `execute_decisions` and prints each
+  event; removed the inlined loop and the now-unused exec imports.
+
+**Evidence.** 109 → **116 tests pass** (7 new in `test_execute_decisions.py`:
+real-fill-price-not-pretrade-mid, reject→cooldown, guardrail-block-never-hits-
+exchange, cooldown-skip, maker-rests-at-touch + dedup, flatten-logs-real-exit,
+foreign-agent/missing-coin ignored — all via a fake exchange + real in-memory DB);
+`ruff check src tests scripts` clean; CLI imports/registers. autocommit
+(`isolation_level=None`) confirmed, so no commit-semantics drift from the move.
+
+**Why it matters.** The live order path is now unit-tested and lives in one
+importable function instead of buried untested CLI code — a prerequisite for
+trusting it with capital, and the foundation for finishing B12 (sharing the
+view/risk/guardrail preamble between `run_tick` and `femr_tick`). No edge claim;
+this is safety/structure plumbing.
+
+**What's next (loop).** Finish B12 (reusable tick harness so `run_tick` ==
+live path end-to-end), userFills WS for instant maker-fill detection, B4-RUN
+(confirm carry on real history — network-gated), B16 (HL vault eval for AUM).

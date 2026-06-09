@@ -77,8 +77,13 @@ Keep it ruthlessly prioritized: the top item should always be the highest-levera
   feed is present (WS trades liquidation flag / backtest), else it emits an
   explicit "feed unavailable" hold; exits still run so positions aren't stranded.
   (REVIEW C6. Iteration 12.)
-- [ ] **B12 — Consolidate execution paths.** `runtime.run_tick` vs `femr_tick`
+- [~] **B12 — Consolidate execution paths.** `runtime.run_tick` vs `femr_tick`
   duplicate logic; unify so the safe wrapper is what live uses. (REVIEW M3.)
+  **Done so far:** the live order-placement loop is extracted from `femr_tick`
+  into `runtime.execute_decisions` (pure of presentation, returns `ExecEvent`s)
+  and unit-tested with a fake exchange (M3/D2 — the live path was untested).
+  **Remaining:** fold the `femr_tick` view/risk/guardrail preamble into a
+  reusable harness so `run_tick` and `femr_tick` share one path end-to-end.
 - [ ] **B13 — Move hardcoded trader address to config.** (REVIEW M6.)
 - [x] **B14 — Go-live runbook in-repo.** `docs/GO_LIVE.md`: gated checklist,
   secrets/env, promote/kill-switch/rollback, monitoring. (REVIEW D3.)

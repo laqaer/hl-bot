@@ -355,7 +355,7 @@ def femr_tick(live: bool = False, execution: str = "taker"):
     live: place real orders on MAIN account, gated by guardrails.
           Bot only touches positions it itself opened (cloid-tagged).
     """
-    from ..agents.decisions import Decision, log_decision
+    from ..agents.decisions import log_decision
     from ..agents.runtime import fetch_market_view
     from ..exec.orders import (
         HL_TRADER_ADDRESS,
@@ -363,10 +363,7 @@ def femr_tick(live: bool = False, execution: str = "taker"):
         bot_owned_coins,
         build_exchange,
         check_guardrails,
-        close_position,
-        coin_in_cooldown,
         dynamic_daily_loss_limit,
-        place_market_order,
         reconcile_positions,
         telegram_alert,
     )
@@ -605,12 +602,11 @@ def femr_tick(live: bool = False, execution: str = "taker"):
     if execution == "maker":
         from ..exec.maker import (
             log_cancel,
-            log_rest,
             reconcile_maker_fills,
             stale_working,
             working_orders,
         )
-        from ..exec.orders import cancel_order, maker_limit_price, place_limit_order
+        from ..exec.orders import cancel_order
         from ..ingest.hyperliquid import ingest_fills
         ingest_fills(conn, s.hl_address, s.hl_api_url)  # so cloid fills are visible
         for a in agents:
@@ -625,76 +621,14 @@ def femr_tick(live: bool = False, execution: str = "taker"):
                 console.print(f"[green]maker fills[/green] {a.name}: {got}")
         conn.commit()
 
-    # Execute
+    # Execute — single tested live order-placement loop (agents.runtime).
+    from ..agents.runtime import execute_decisions
     agent_names = {a.name for a in agents}
-    for d in all_decisions:
-        if d.agent not in agent_names or d.coin is None:
-            continue
-
-        if d.action == "place" and d.sz and d.side:
-            if not ok:
-                console.print(f"[dim]SKIP {d.agent} {d.coin}: guardrail blocks new entries[/dim]")
-                continue
-            if coin_in_cooldown(conn, d.coin, agent=d.agent):
-                console.print(f"[dim]SKIP {d.agent} {d.coin}: in cooldown[/dim]")
-                continue
-            is_buy = (d.side == "B")
-            if execution == "maker":
-                # Already have a working quote on this coin? leave it.
-                if d.coin in working_orders(conn, d.agent):
-                    console.print(f"[dim]SKIP {d.agent} {d.coin}: maker quote already resting[/dim]")
-                    continue
-                bt = (view.book_top or {}).get(d.coin)
-                # Passive fallback when no fresh L2 book: step ~5bps inside from the
-                # (possibly stale) mid so a post-only order rests instead of crossing.
-                passive = (d.px or 0.0) * (0.9995 if is_buy else 1.0005)
-                limit_px = maker_limit_price(
-                    bt[0] if bt else None, bt[1] if bt else None, is_buy, passive)
-                res = place_limit_order(exchange, d.coin, is_buy, d.sz, limit_px,
-                                        post_only=True, cloid=d.cloid)
-                if res.status == "resting":
-                    console.print(f"[cyan]RESTING[/cyan] {d.coin} {'BUY' if is_buy else 'SELL'} {d.sz} @ ${limit_px} oid={res.oid}")
-                    log_rest(conn, d.agent, d.coin, d.side, d.sz, limit_px, d.cloid, res.oid)
-                elif res.ok:  # filled immediately (rare for post-only)
-                    console.print(f"[bold green]FILLED(maker)[/bold green] {d.coin} @ ${res.avg_px}")
-                    if res.avg_px:
-                        d.px = res.avg_px
-                    log_decision(conn, d)
-                else:
-                    console.print(f"[red]MAKER REJECT[/red] {d.coin}: {res.status} — {res.error}")
-                conn.commit()
-                continue
-            res = place_market_order(exchange, d.coin, is_buy, d.sz,
-                                     slippage_pct=0.01, cloid=d.cloid)
-            if res.ok:
-                console.print(f"[bold green]FILLED[/bold green] {d.coin} {'BUY' if is_buy else 'SELL'} {res.filled_sz} @ ${res.avg_px}")
-                # Log place ONLY after fill confirmed, with the REAL fill px/sz
-                # (not the pre-trade mid) so downstream stops/TPs key off truth.
-                if res.avg_px:
-                    d.px = res.avg_px
-                if res.filled_sz:
-                    d.sz = res.filled_sz
-                log_decision(conn, d)
-            else:
-                console.print(f"[red]REJECT[/red] {d.coin}: {res.status} — {res.error}")
-                log_decision(conn, Decision(
-                    agent=d.agent, action="rejected", coin=d.coin,
-                    reasoning=f"HL rejected: {res.error}", is_paper=False,
-                ))
-                conn.commit()
-
-        elif d.action == "flatten":
-            res = close_position(exchange, d.coin, cloid=d.cloid)
-            if res.ok:
-                console.print(f"[bold]CLOSED[/bold] {d.coin} @ ${res.avg_px}")
-                # Log the flatten immediately so ownership clears this tick rather
-                # than waiting for next-tick reconciliation. Record the real exit px.
-                if res.avg_px:
-                    d.px = res.avg_px
-                log_decision(conn, d)
-                conn.commit()
-            else:
-                console.print(f"[red]CLOSE FAILED[/red] {d.coin}: {res.error}")
+    for ev in execute_decisions(
+        conn, exchange, view, all_decisions,
+        agent_names=agent_names, guardrails_ok=ok, execution=execution,
+    ):
+        console.print(ev.message)
 
 
 @app.command()
