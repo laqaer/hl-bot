@@ -1266,3 +1266,75 @@ genuinely range-bound? If so the right move is a **regime/vol gate that sits out
 chop** (a trend-follower earning nothing in chop is correct behavior), NOT a
 lookback/stop tweak. One hypothesis per slice, re-confirm each, do not overfit the
 gate. Other remaining B1d candidate: (i) spot-vs-perp basis at funding deciles.
+
+---
+
+## Iteration 28 — 2026-06-08 — B1d-trend(a): regime gate for trend_breakout — chop confirmed but the causal fix FAILS (monotonically worse). Pruned.
+
+**Context.** Network up (majors cache present). Iter 27 found `trend_breakout_v1`
+is the first cost-robust positive signal (maker +11.2bps, robust to taker-3×) but
+NOT G0-confirmed: OOS(recent 27d) strongly positive, in-sample(older 63d) flat —
+time-instability, not overfit. B1d-trend hypothesis (a): the older half was
+genuinely range-bound (a trend-follower *should* be flat in chop), so the honest
+move is a **regime gate that sits out chop**, not a param tweak. Tested that.
+
+**Measured the regime split first (no code change).** Kaufman efficiency ratio
+(ER = |net move| / summed bar-to-bar moves; ~1=clean trend, ~0=chop), per coin,
+per half of the BTC/ETH/SOL/HYPE 90d 1h cache:
+- in-sample (older 63d): ER **0.017–0.036** — BTC/ETH/SOL/HYPE ground +10→+16% net
+  but via a long noisy path = a choppy grind.
+- oos (recent 27d): ER **0.117–0.123** (BTC/ETH/SOL fell −22→−30% cleanly; HYPE
+  +54%) = clean directional moves.
+→ **Hypothesis (a) is TRUE at the whole-window scale**: the flat older half is chop.
+
+**But the causal (trailing-window) version does NOT separate the regimes.** A live
+gate can only see the trailing closes (≤60 bars). Rolling-ER distributions by half:
+- 24-bar: median **0.197 (in) vs 0.206 (oos)** — identical.
+- 60-bar (longest the agent sees): mean **0.132 (in) vs 0.162 (oos)** — barely apart.
+The chop is a **macro multi-week reversal** (local 24–60-bar trends kept flipping
+direction over weeks, canceling to a small net move), invisible inside ≤60 bars.
+
+**Changed (1 commit).**
+- **`agents/trend_breakout.py`** — new module-level `efficiency_ratio(closes)` helper
+  + two optional config keys `min_efficiency_ratio` (default 0.0 = off) and
+  `regime_lookback` (default 60). When the floor >0, an entry breakout is skipped
+  unless the trailing `regime_lookback`-bar ER clears it. **Tightening-only** (can
+  only remove entry candidates), default off → CI/behavior unchanged.
+- **`tests/test_trend_breakout.py`** — +2 tests: `efficiency_ratio` returns 1.0 on a
+  straight line / 0.0 on a round-trip zig-zag / None on <3 bars; and with the gate ON
+  a choppy-path breakout is vetoed (no entry) while OFF the same breakout fires.
+  (152 → **154 tests pass**.)
+
+**Evidence (tests/lint).** 154 pass; `ruff check src tests scripts` clean. Caches
+gitignored. Baseline reproduced: maker +11.2bps / taker +5.7bps / 552 trades.
+
+**Result — the gate makes the edge MONOTONICALLY WORSE (BTC/ETH/SOL/HYPE 90d 1h, maker):**
+| `min_efficiency_ratio` | maker edge | trades | win |
+|---|---|---|---|
+| 0.0 (off, baseline) | **+11.2bps** | 552 | 40% |
+| 0.10 | +2.0bps | 444 | 34% |
+| 0.13 (≈ in-sample mean ER) | −2.0bps | 386 | 34% |
+| 0.16 (≈ oos mean ER) | −9.0bps | 336 | 32% |
+
+`confirm --prefer maker --config '{"min_efficiency_ratio":0.10}'`: **NOT CONFIRMED**,
+and the in-sample edge gets *worse* not better — in-sample **−12.9bps** (vs baseline
++1.1), oos still +33.4bps. The gate did the opposite of its purpose.
+
+**Why it matters (the finding).** Hypothesis (a) is half-right and half-wrong, and
+the wrong half is the actionable one: the older window genuinely WAS chop (whole-
+window ER confirms it), but a **trailing-ER regime gate cannot fix the time-
+instability** because (1) the discriminating signal lives at a multi-week horizon
+the agent can't see in ≤60 bars, and (2) more perversely, a high trailing ER means
+the trend is already *mature* → the breakout entry is *late* and mean-reverts; the
+profitable breakouts fire at trend *birth*, exactly when the trailing window still
+reads as choppy. So filtering for "trending now" systematically discards the best
+entries. **Trailing-ER regime gating on this signal is pruned.** Lever kept (default
+off, tested) so it isn't re-explored and composes with future work. Nothing promoted;
+trend_breakout_v1 stays backtest-only/off-roster.
+
+**What's next (loop).** B1d-trend remains open. Next hypothesis (b): are the 24/12-bar
+Donchian lookbacks too *fast* (whipsawed by the older grind)? Test a slower horizon
+(e.g. entry/exit on a ≥1d channel, or run the 1h agent with much larger lookbacks) —
+the honest read may be that this is a real but *slow* trend edge mis-framed at 1h,
+not a chop-filter problem. One hypothesis/slice, re-confirm, do NOT param-fit the gate.
+Other remaining B1d candidate: (i) spot-vs-perp basis at funding deciles.

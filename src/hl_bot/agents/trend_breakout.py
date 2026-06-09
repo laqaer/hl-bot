@@ -29,6 +29,23 @@ from .cloid import make_cloid
 from .decisions import Decision
 
 
+def efficiency_ratio(closes: list[float]) -> float | None:
+    """Kaufman efficiency ratio over ``closes``: |net move| / summed bar moves.
+
+    ~1.0 = a clean one-directional move (strong trend); ~0.0 = the price wandered
+    a long path to go nowhere (chop). A breakout trend-follower earns its keep only
+    in the former regime and gets whipsawed in the latter, so this is the natural
+    "is the market actually trending?" gate. ``None`` if too few bars to judge.
+    """
+    if len(closes) < 3:
+        return None
+    net = abs(closes[-1] - closes[0])
+    noise = sum(abs(closes[i] - closes[i - 1]) for i in range(1, len(closes)))
+    if noise <= 0:
+        return None
+    return net / noise
+
+
 @dataclass
 class TrendBreakoutConfig:
     entry_lookback: int = 24            # new N-bar high/low triggers entry
@@ -39,6 +56,11 @@ class TrendBreakoutConfig:
     max_notional_per_trade: float = 100.0
     max_total_notional: float = 300.0
     max_concurrent_positions: int = 4
+    # Regime gate (tightening-only; 0.0 = off). When >0, only enter a breakout if
+    # the trailing ``regime_lookback``-bar efficiency ratio clears this floor —
+    # i.e. the broader context is genuinely trending, not chopping. Sits out chop.
+    min_efficiency_ratio: float = 0.0
+    regime_lookback: int = 60
 
 
 class TrendBreakoutAgent(Agent):
@@ -59,6 +81,8 @@ class TrendBreakoutAgent(Agent):
             max_notional_per_trade=float(c.get("max_notional_per_trade", 100.0)),
             max_total_notional=float(c.get("max_total_notional", 300.0)),
             max_concurrent_positions=int(c.get("max_concurrent_positions", 4)),
+            min_efficiency_ratio=float(c.get("min_efficiency_ratio", 0.0)),
+            regime_lookback=int(c.get("regime_lookback", 60)),
         )
         self.conn = conn
 
@@ -141,6 +165,11 @@ class TrendBreakoutAgent(Agent):
             window = prior[-self.cfg.entry_lookback:]
             if len(window) < self.cfg.entry_lookback:
                 continue
+            # Regime gate: only chase a breakout if the broader context is trending.
+            if self.cfg.min_efficiency_ratio > 0.0:
+                er = efficiency_ratio(closes[-self.cfg.regime_lookback:])
+                if er is None or er < self.cfg.min_efficiency_ratio:
+                    continue
             hi, lo = max(window), min(window)
             if mid > hi:
                 breakout = (mid - hi) / hi if hi > 0 else 0.0

@@ -8,7 +8,7 @@ goes SHORT, and a Donchian reversal flips it back out.
 
 from __future__ import annotations
 
-from hl_bot.agents.trend_breakout import TrendBreakoutAgent
+from hl_bot.agents.trend_breakout import TrendBreakoutAgent, efficiency_ratio
 from hl_bot.agents.twap_mr import TwapMrAgent
 from hl_bot.backtest.engine import Backtester, CostModel, Frame
 from hl_bot.db.schema import init_db
@@ -84,6 +84,30 @@ def test_no_breakout_no_trade_when_range_bound():
     res, conn = _run(TrendBreakoutAgent, frames, CFG)
     assert _sides(conn) == []
     assert res.scorecard.n_trades == 0
+
+
+def test_efficiency_ratio_separates_trend_from_chop():
+    # Straight line up = ER 1.0 (all net move, no wasted path); a zig-zag that
+    # ends where it started = ER 0.0 (all path, no net move).
+    assert efficiency_ratio([1.0, 2.0, 3.0, 4.0]) == 1.0
+    assert efficiency_ratio([1.0, 2.0, 1.0, 2.0, 1.0]) == 0.0
+    assert efficiency_ratio([1.0]) is None
+
+
+def test_regime_gate_skips_breakout_in_chop():
+    # A breakout to a new 6-bar high, but the broader context wandered there
+    # (whipsaw chop): with the regime gate ON the entry is vetoed; OFF it fires.
+    closes = [100.0, 103.0, 99.0, 104.0, 100.0, 105.0, 101.0, 106.0]
+    frames = _frames_from_closes(closes)
+    er = efficiency_ratio(closes)
+    assert er is not None and er < 0.5  # genuinely choppy path
+
+    gated = {**CFG, "min_efficiency_ratio": 0.5, "regime_lookback": 60}
+    res_on, conn_on = _run(TrendBreakoutAgent, frames, gated)
+    assert _sides(conn_on) == []  # chop regime → sat out
+
+    res_off, conn_off = _run(TrendBreakoutAgent, frames, CFG)
+    assert "B" in _sides(conn_off)  # same breakout taken when gate is off
 
 
 def test_trailing_channel_exits_on_reversal():

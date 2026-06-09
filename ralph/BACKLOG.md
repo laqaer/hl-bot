@@ -127,12 +127,29 @@ Keep it ruthlessly prioritized: the top item should always be the highest-levera
   cost-robust but **regime-concentrated in the recent trend**, not yet time-stable.
   **Not promoted, not tuned-to-gate** (tuning params to pass G0 = overfitting the
   gate). Numbers in PROGRESS.
-- [ ] **B1d-trend — Make trend_breakout's edge time-stable enough to clear G0.**
+- [~] **B1d-trend — Make trend_breakout's edge time-stable enough to clear G0.**
   The signal is positive net-of-cost & cost-robust but its in-sample (older) half
-  is flat. Investigate whether (a) the older period was genuinely range-bound (a
-  trend-follower *should* be flat in chop — then the honest move is a regime/vol
-  filter that sits out chop, not a param tweak), or (b) lookback/stop params are
-  mis-set. Test ONE hypothesis per slice; confirm; do NOT overfit to the gate.
+  is flat. **Hypothesis (a) — older period genuinely range-bound — MEASURED TRUE
+  but the implied fix FAILED (Iter 28).** Whole-window efficiency ratio (|net move|
+  /path length) confirms the regime split cleanly: in-sample(older 63d) ER
+  0.017–0.036 (choppy grind, +10→+16% net) vs oos(recent 27d) ER 0.117–0.123
+  (clean ±22–54% directional moves). So the flat older half IS chop, as theorised.
+  BUT the *causal* (trailing-window) version of that signal does not separate the
+  regimes: rolling 24-bar ER is identical across halves (median 0.197 vs 0.206) and
+  even 60-bar (the longest window the agent sees) barely separates (mean 0.132 vs
+  0.162) — because the chop is a **macro multi-week reversal** (local trends kept
+  flipping over weeks), invisible in ≤60 bars. Built the implied fix anyway as a
+  tightening-only lever (`min_efficiency_ratio`, default off, tested) and it makes
+  the edge **monotonically WORSE**: maker baseline +11.2bps → 0.10 +2.0 → 0.13 −2.0
+  → 0.16 −9.0, and in-sample edge DROPS (−12.9 vs baseline +1.1). Root cause: a
+  high trailing ER means the trend is already *mature*, so the breakout entry is
+  *late* and mean-reverts; the profitable breakouts fire at trend *birth* when the
+  trailing window is still choppy. **Trailing-ER regime gating is pruned.** Lever
+  kept (default off, tested) so the dead end isn't re-explored. **Next hypothesis
+  to test: (b) lookback/stop params** (is the 24/12-bar Donchian too fast, eating
+  whipsaws in the older grind?) — but be wary of param-fitting the gate. The
+  honest read may be that this signal is real but regime-dependent and the right
+  framing is a slower (≥1d) trend horizon, not a 1h one.
   **Remaining other B1d candidate: (i) spot-vs-perp basis at funding deciles.**
 
 ## P1 — honest measurement (so the supervisor can trust itself)
