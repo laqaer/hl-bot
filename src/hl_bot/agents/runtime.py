@@ -131,6 +131,28 @@ def positions_from_clearinghouse(st: dict) -> list[dict]:
     return out
 
 
+def pinned_universe_coins(agents: list[Agent]) -> list[str]:
+    """Union of every roster agent's ``cfg.universe`` allowlist (order-preserving, dedup).
+
+    A universe-pinned agent (e.g. ``trend_breakout`` on its G0-confirmed set) only
+    ENTERS coins in its ``cfg.universe``. The live closes feed, however, is built for
+    the volume top-20, which drifts day to day — so a confirmed name that falls out of
+    today's top-20 would have no 1h close series and silently couldn't be traded that
+    tick, making the paper forward-test an unfaithful (confirmed ∩ top-20) sample.
+    Surfacing the pinned set lets ``_enrich_view`` union it into the closes fetch so
+    every confirmed name always has its series (B1d-trend-pin-fetch). Agents with no
+    ``cfg.universe`` (default ``()`` = unpinned) contribute nothing.
+    """
+    out: list[str] = []
+    seen: set[str] = set()
+    for a in agents:
+        for c in getattr(getattr(a, "cfg", None), "universe", ()) or ():
+            if c not in seen:
+                out.append(c)
+                seen.add(c)
+    return out
+
+
 def reconcile_agents(
     conn: sqlite3.Connection,
     all_positions: list[dict],

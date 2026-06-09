@@ -25,6 +25,7 @@ from hl_bot.agents.runtime import (
     apply_allocator_caps,
     classify_position_ownership,
     overlay_ws_snapshot,
+    pinned_universe_coins,
     positions_from_clearinghouse,
     reconcile_agents,
 )
@@ -88,6 +89,26 @@ def test_positions_from_clearinghouse_handles_empty_and_missing():
         "unrealized_pnl": 0.0, "liquidation_px": 0.0, "leverage": None,
         "margin_used": 0.0,
     }]
+
+
+def test_pinned_universe_coins_unions_dedups_preserves_order():
+    agents = [
+        _agent("trend", SimpleNamespace(universe=("BTC", "ETH", "SOL"))),
+        _agent("other", SimpleNamespace(universe=("ETH", "DOGE"))),  # ETH dup, DOGE new
+    ]
+    # Union across agents, dedup, first-seen order preserved.
+    assert pinned_universe_coins(agents) == ["BTC", "ETH", "SOL", "DOGE"]
+
+
+def test_pinned_universe_coins_ignores_unpinned_and_cfgless_agents():
+    agents = [
+        _agent("unpinned", SimpleNamespace(universe=())),  # default () = contributes nothing
+        _agent("nocfg"),                                    # no cfg attr at all
+        _agent("nouniverse", SimpleNamespace(other=1)),     # cfg without a universe attr
+        _agent("pinned", SimpleNamespace(universe=("HYPE",))),
+    ]
+    assert pinned_universe_coins(agents) == ["HYPE"]
+    assert pinned_universe_coins([]) == []
 
 
 def test_reconcile_agents_clears_stale_per_agent(conn):

@@ -276,13 +276,22 @@ def tick(coins: str = "BTC,ETH,SOL,HYPE,ZEC"):
         console.print(f"  {d.agent} {d.action} {d.coin or ''} {tag} :: {d.reasoning}")
 
 
-def _enrich_view(view, api_url: str, vol: dict[str, float]) -> None:
-    """Augment a MarketView with 1h candles (top-vol coins), spot mids, liquidations."""
+def _enrich_view(view, api_url: str, vol: dict[str, float], extra_coins=()) -> None:
+    """Augment a MarketView with 1h candles (top-vol coins), spot mids, liquidations.
+
+    ``extra_coins`` (e.g. a universe-pinned agent's allowlist) are unioned into the
+    1h-closes fetch so a confirmed name always has its series even when it drifts out
+    of today's volume top-20 — keeping the pinned agent a faithful forward-test
+    instead of trading (confirmed ∩ top-20) (B1d-trend-pin-fetch).
+    """
     import httpx as _httpx
 
     # ---- top-20-by-volume universe ----
     top = sorted(vol.items(), key=lambda kv: kv[1], reverse=True)[:20]
     top_coins = [c for c, _ in top]
+    # Closes fetched for the volume top-20 PLUS any pinned universe (dedup,
+    # top-20 first so the VWAP loop below is unchanged).
+    closes_coins = list(dict.fromkeys([*top_coins, *extra_coins]))
 
     candles_1h: dict[str, dict] = {}
     closes_by_coin: dict[str, list[float]] = {}
@@ -334,7 +343,7 @@ def _enrich_view(view, api_url: str, vol: dict[str, float]) -> None:
                 return []
 
         try:
-            closes_by_coin = build_closes_1h(_post, top_coins, closes_window=240)
+            closes_by_coin = build_closes_1h(_post, closes_coins, closes_window=240)
         except Exception:  # noqa: BLE001
             closes_by_coin = {}
 
@@ -417,6 +426,7 @@ def femr_tick(live: bool = False, execution: str = "taker"):
         fetch_market_view,
         gather_decisions,
         overlay_ws_snapshot,
+        pinned_universe_coins,
         positions_from_clearinghouse,
         reconcile_agents,
     )
@@ -534,7 +544,12 @@ def femr_tick(live: bool = False, execution: str = "taker"):
                   ))
 
     view = fetch_market_view(s.hl_api_url, [])
-    _enrich_view(view, s.hl_api_url, view.extra.get("day_ntl_vlm", {}))
+    # Union any pinned agent universe (trend_breakout's G0-confirmed set) into the
+    # closes fetch so every confirmed name has its 1h series even if it drifts out of
+    # today's volume top-20 — the pinned agent forward-tests its FULL universe, not
+    # (confirmed ∩ top-20) (B1d-trend-pin-fetch).
+    _enrich_view(view, s.hl_api_url, view.extra.get("day_ntl_vlm", {}),
+                 extra_coins=pinned_universe_coins(agents))
 
     # Overlay a fresh WS snapshot if available (sub-second mids, L2 book, and a
     # REAL liquidations feed for liq_cascade). Purely additive; REST is the

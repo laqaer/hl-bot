@@ -42,12 +42,18 @@ Keep it ruthlessly prioritized: the top item should always be the highest-levera
   so confirmed names that fall out of the volume top-20 won't have closes to trade that
   tick (the agent trades the intersection). A faithful deployment would fetch 1h closes
   for the pinned universe directly; left in the backlog as B1d-trend-pin-fetch.
-- [ ] **B1d-trend-pin-fetch — Feed `_enrich_view` the pinned universe's 1h closes.**
-  Today `_enrich_view` builds `closes` only for top-20-by-volume; the pinned trend
-  agent therefore trades (confirmed universe ∩ today's volume-top-20). For a fully
-  faithful forward-test, fetch `build_closes_1h` for the union of (top-20-by-volume,
-  the trend agent's pinned `universe`) so every confirmed name always has its 1h series
-  available. Small, testable; needs a way to surface the pinned set to `_enrich_view`.
+- [x] **B1d-trend-pin-fetch — Feed `_enrich_view` the pinned universe's 1h closes.**
+  Done (Iter 37). `_enrich_view` previously built `closes` only for top-20-by-volume, so
+  the pinned trend agent traded (confirmed universe ∩ today's volume-top-20). Fix: pure
+  `runtime.pinned_universe_coins(agents)` surfaces the union of every roster agent's
+  `cfg.universe` (order-preserving, dedup; unpinned/cfg-less agents contribute nothing);
+  `_enrich_view` gained an `extra_coins=()` param that it unions into the `build_closes_1h`
+  fetch (top-20 first so the VWAP loop is unchanged), and `femr_tick` passes
+  `pinned_universe_coins(agents)`. Now every confirmed name always has its 1h series even
+  when it drifts out of today's volume top-20 — the pinned agent forward-tests its FULL
+  confirmed universe, not the intersection. 2 new tests (union/dedup/order; ignores
+  unpinned + cfg-less agents + empty roster). 167→169. No edge claim — measurement
+  faithfulness over the Iter-30/35 G0-confirmed signal.
 - [x] **B1d-trend-deploy — Wire trend_breakout to PAPER on the 20-coin universe.**
   G0→paper is the next gate. **BLOCKER (honest):** live `cli/main.py::_enrich_view`
   fills `view.extra['closes']` with **60×1-MINUTE** candles (the VWAP feed), but the

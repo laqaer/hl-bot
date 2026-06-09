@@ -1823,3 +1823,47 @@ intersection (confirmed ∩ today's top-20). Fetch `build_closes_1h` for the uni
 volume top-20 and the agent's pinned `universe` so every confirmed name always has its
 1h series. (b) Let the G1 paper clock run (time-gated). (c) The remaining B1d candidate
 (i) spot-vs-perp basis at funding deciles for a *second uncorrelated* edge.
+
+---
+
+## Iteration 37 — 2026-06-09 — Fed `_enrich_view` the pinned universe's 1h closes (completes the faithful forward-test; closes B1d-trend-pin-fetch).
+
+**Context.** Iter 36 pinned `trend_breakout_v1` to its G0-confirmed 20-coin universe
+(entries restricted to the allowlist), but flagged a residual gap: `_enrich_view` only
+*fetched* 1h closes for the **top-20-by-volume** set, which drifts day to day. So a
+confirmed name that fell out of today's volume top-20 had no `closes` series and silently
+couldn't be entered that tick — the pinned agent forward-tested (confirmed ∩ today's
+top-20), not its full confirmed universe. That makes the G1 paper sample an unfaithful
+test of the G0 evidence (same deploy-vs-evidence drift class the project keeps closing).
+Picked this — the top unblocked P0 item and Iter-36's explicit "what's next (a)" — over
+the speculative spot-vs-perp basis hunt, because hardening the faithfulness of the one
+confirmed edge before any live decision is higher-leverage ("evidence before capital").
+
+**Changed (1 commit).**
+- **`agents/runtime.py`** — new pure `pinned_universe_coins(agents) -> list[str]`:
+  order-preserving, dedup'd union of every roster agent's `cfg.universe` allowlist.
+  Agents with no `cfg` or default `universe=()` contribute nothing. Lives next to the
+  other extracted tick-harness helpers (B12).
+- **`cli/main.py`** — `_enrich_view` gained `extra_coins=()`; the 1h-closes fetch now
+  runs `build_closes_1h(_post, closes_coins, ...)` where `closes_coins` is the dedup'd
+  union `[*top_coins, *extra_coins]` (top-20 first, so the 60×1m VWAP loop is byte-for-byte
+  unchanged — only the closes universe widens). `femr_tick` passes
+  `pinned_universe_coins(agents)`, so the trend agent's confirmed set is always fetched.
+- **`tests/test_tick_harness.py`** (+2) — (1) union across two agents dedups (ETH) and
+  preserves first-seen order → `["BTC","ETH","SOL","DOGE"]`; (2) unpinned (`universe=()`),
+  cfg-less, and universe-less agents contribute nothing (`["HYPE"]`), empty roster → `[]`.
+
+**Evidence (tests/lint).** 167 → **169 pass**; `ruff check src tests scripts` clean.
+No edge claim — measurement-faithfulness plumbing over the Iter-30/35 G0-confirmed signal;
+the edge numbers stand from `hlbot confirm` (90d + 180d maker).
+
+**Why it matters.** Closes the last known deploy-vs-evidence gap for the trend agent: the
+G1 paper forward-test now exercises the *exact* 20-coin universe the G0 edge was walk-forward
+confirmed on, regardless of daily volume churn. Strictly additive (only widens the closes
+fetch; default-off for unpinned agents), fully offline-tested; paper-only, promotion to
+live_small stays human-gated.
+
+**What's next (loop).** (a) Let the G1 paper clock run (time-gated). (b) The remaining
+B1d candidate (i) — spot-vs-perp basis at funding deciles — for a *second uncorrelated*
+edge, now that the first is twice-confirmed AND faithfully deployed. (c) Optional further
+hardening: even-longer-window `confirm` if HL 1h history extends past 180d.
