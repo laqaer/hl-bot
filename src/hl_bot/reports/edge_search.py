@@ -139,13 +139,17 @@ THESES: tuple[Thesis, ...] = (
         key="B-session",
         name="Session-timing (a-priori UTC hour band, zero price/funding)",
         klass="directional",
-        iterations="34–35",
+        iterations="34–35, 50",
         universe="majors (then wider majors + liquid alts)",
         bar="1h, two 120d windows; also re-run at 4h / 240d×2 (~480d)",
         headline="strongest lead: sign-stable on majors across both windows AND a 2× baseline, "
         "mirror-coherent, hour-robust — but NOT durable; alt basket sign-flips",
         prune_reason="The within-window walk-forward regime-sensitivity is NOT a boundary artifact "
-        "(persists at 2× baseline) and the effect sign-flips on a disjoint liquid-alt basket.",
+        "(persists at 2× baseline) and the effect sign-flips on a disjoint liquid-alt basket. "
+        "The finer time-of-day decomposition (Iter 50) does not rescue it: narrowing the hold to "
+        "the US-open hours SIGN-FLIPS at neighbouring exit hours (14–15Z +2.1/−4.0, 14–17Z "
+        "+4.3/−11.8 — a knife-edge), and the only sign-stable sub-window (14–16Z) is still NOT "
+        "durable (older window flat +0.0).",
     ),
     Thesis(
         num=9,

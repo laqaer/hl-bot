@@ -45,6 +45,15 @@ def test_illiq_is_the_twelfth_thesis_and_pruned_on_the_third_window():
     assert "SIGN-FLIP" in illiq.prune_reason.upper()
 
 
+def test_session_thesis_records_the_finer_time_of_day_prune():
+    # Iter 50 (B-session-tod): the parked finer time-of-day decomposition was run and
+    # does not rescue the session lead — narrowing the hold knife-edges / sign-flips.
+    session = next(t for t in THESES if t.key == "B-session")
+    assert "50" in session.iterations
+    assert "time-of-day" in session.prune_reason
+    assert "knife-edge" in session.prune_reason
+
+
 def test_every_thesis_has_a_prune_reason_and_headline():
     for t in THESES:
         assert t.prune_reason.strip()

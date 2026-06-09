@@ -2965,3 +2965,58 @@ no `data/` writes committed, no strategy/roster/live-mode change, nothing touche
 execution + fine-cadence durability theses (the only un-searched cadence regime) on the recorded 1m/5m data.
 Until then the search remains exhausted on HL historical candles and the remaining unblocked work is Path C
 honest-measurement / reporting polish (e.g. the B15 track-record chart export TODO).
+
+## Iteration 50 — 2026-06-09 — B-session-tod: the finer time-of-day decomposition → session thesis PRUNED clean
+
+**Context (orientation).** Every one of the twelve structurally-different theses is pruned, and the only P0
+edge route (B-fine-record slice 3) is blocked on calendar time — it needs ~30–60d of forward-recorded 1m/5m
+candles to *exist first*, and no recorded archive is present locally (`data/` has only the sqlite + backtest
+cache, no `recorded*.jsonl`), so the readiness check can't even fire here. With the historical-candle search
+exhausted, the highest-positioned **unblocked edge-search** task was the parked B-session-tod: its gating
+condition ("only worth running if a future iteration is out of fresher theses") was finally *met*, because
+there are no fresher theses left. It is the last named variant of thesis #8 (B-session, the strongest-
+characterized lead in the whole search).
+
+**The genuinely untested angle.** B-session slice 4 swept the *enter* hour but always held to the 21Z close,
+so it never tested a **narrow open-only hold** (early exit) — the "only the US cash open hour" variant named in
+the backlog. That is expressible with the existing `SessionTimingAgent` knobs (`enter_hour_utc`/
+`exit_hour_utc`); no new backtest code. I first reproduced the canonical baseline to confirm the wiring is
+sound: `confirm --agent session_timing_v1 --coins majors --interval 1h --days 120 --windows 2 --prefer maker`
+→ **+11.4 / +0.4**, matching the B-session record exactly.
+
+**What I ran (majors, 1h, 120d×2 disjoint windows, maker).** Narrow open-only holds, `enter_hour_utc=14` fixed:
+- **14–15Z (1h hold):** full **+2.1 / −4.0** — SIGN-FLIPS (artifact signature).
+- **14–16Z (2h hold):** trailing ✅ confirms (full +5.5, in +5.7 / oos +5.1) but the older window is **flat
+  +0.0** (in −3.5 / oos +8.6) → ❌ NOT DURABLE, sign-stable-but-flat.
+- **14–17Z (3h hold):** full **+4.3 / −11.8** — SIGN-FLIPS (artifact signature).
+
+**Conclusion — the finer time-of-day decomposition does NOT fix durability; it makes it worse.** The only
+sign-stable sub-window (14–16Z) is a **knife-edge in exit-hour** — both immediate neighbours (1h and 3h holds)
+sign-flip — and it is still NOT durable because the older window is flat. This is the *same* within-window
+regime-sensitivity that pruned the full-band session thesis (Iter 35): it is a property of the *window*, not
+the hour-band, so no hour-of-day decomposition can repair it. The remaining non-contiguous "exclude the lunch
+lull" variant is now moot — the session drift is concentrated at the open (slice-4 hill) yet the open-only
+hold already fails the older window, so dropping mid-day hours cannot add the missing durability. Building that
+non-contiguous-band code would be speculative on a thesis that fails at every decomposition, so I did not. With
+B-session-tod closed, the last named edge-search variant is exhausted.
+
+**What I built (pure, tested) — recorded the prune in the publishable edge-search artifact.** Folded the result
+into `reports/edge_search.py` thesis #8 (B-session): extended `iterations` to "34–35, 50" and the `prune_reason`
+to note that the finer time-of-day decomposition does not rescue it (citing the 14–15Z +2.1/−4.0 and 14–17Z
++4.3/−11.8 sign-flips and the flat 14–16Z older window). +1 test
+(`test_session_thesis_records_the_finer_time_of_day_prune`) asserting the artifact carries the Iter-50
+finer-decomposition prune. No new thesis (B-session-tod is a sub-variant of #8, not a 13th class), so the count/
+class-breakdown invariants are unchanged. The allocator packet composes edge_search, so it carries the updated
+prune prose for free.
+
+**Evidence (gate).** `uv run pytest -q` → **284 passed** (+1). `uv run ruff check src tests scripts` → clean.
+All confirm runs offline against the existing gitignored cache; no `data/` writes committed; no strategy/roster/
+live-mode change; nothing touched capital.
+
+**What's next (loop).** The HL-historical-candle edge search is now exhausted down to its last named variant —
+every thesis AND every parked sub-angle (B-session-tod here; B-exec-tickmark remains parked but needs tick/L2
+data the retention ceiling blocks) is closed. The only route to genuinely new edge evidence is the forward-
+recorded fine-cadence archive (B-fine-record slice 3), which needs calendar time + access to a deployed host's
+`data/recorded_candles.jsonl` to run `hlbot record-coverage` and see READY. Until then the remaining unblocked
+work is non-edge machinery: P2 **B14a** (deploy automation — codify the EC2/systemd/Hermes cron + DB sync so the
+live loop is reproducible from the repo) and Path-C reporting polish (B15 chart export TODO).

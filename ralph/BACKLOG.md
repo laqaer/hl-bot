@@ -207,12 +207,24 @@ Keep it ruthlessly prioritized: the top item should always be the highest-levera
   = no regime to flip) but sign-stably *negative*. Not a full prune yet — the round-trip/inventory-skew
   variant (B-exec-roundtrip) is unrun and is the only positive structure the model found. Maker-only, no live
   change. Numbers in PROGRESS.md Iteration 36.
-- [ ] **B-session-tod — (low priority) one untested session-timing angle: time-of-day-resolved entry.** The
-  pruned B-session traded a single contiguous US-session block. The unrun variant is whether a *finer*
-  time-of-day decomposition (e.g. only the US cash open hour, or excluding the lunch lull) sharpens the
-  walk-forward — but given the within-window regime-sensitivity persists at a 2× baseline (slice 2) and the
-  hour-band edge is a smooth hill (slice 4, no single hour is special), this is **unlikely to fix durability**
-  and is parked below B-exec. Only worth running if a future iteration is out of fresher theses. Maker-only.
+- [x] **B-session-tod — the last named session-timing angle: time-of-day-resolved (narrow open-only) entry.
+  RUN and PRUNED (Iteration 50) — the finer decomposition does NOT fix durability; it makes it WORSE.** Its
+  gating condition ("only worth running if out of fresher theses") was finally met: all twelve structurally-
+  different theses are pruned, so this parked sub-angle of thesis #8 (B-session) was the highest-positioned
+  unblocked *edge-search* task. Slice 4 only ever swept the *enter* hour while holding to the 21Z close; the
+  genuinely untested "only the US cash open hour" variant is a *narrow hold* (early exit), expressible with the
+  existing agent's `enter_hour_utc`/`exit_hour_utc` (no new backtest code). **Result (majors, 1h, 120d×2, maker;
+  baseline reproduced exactly +11.4/+0.4):** narrowing the hold to the US open SIGN-FLIPS at neighbouring exit
+  hours — 14–15Z is **+2.1 / −4.0** (artifact), 14–17Z is **+4.3 / −11.8** (artifact). The only sign-stable
+  sub-window, 14–16Z, *confirms* trailing (+5.5 in+5.7/oos+5.1) but the older window is **flat +0.0** → still
+  ❌ NOT DURABLE, and it is a **knife-edge in exit-hour** (both neighbours flip). Same regime-sensitivity that
+  killed the full-band session thesis — a property of the *window*, not the hour-band, so no hour-decomposition
+  can fix it. The non-contiguous "exclude the lunch lull" variant is now moot: the drift is concentrated at the
+  open (slice-4 hill) yet the open-only hold still doesn't survive the older window, so dropping mid-day hours
+  cannot add the missing durability — building that non-contiguous-band code would be speculative. **B-session-
+  tod is the last named edge-search variant; closing it cleanly exhausts the session thesis.** Folded into the
+  edge-search artifact (thesis #8 `prune_reason` + `iterations`; +1 test). Maker-only, no live change. Numbers
+  in PROGRESS Iter 50.
 - [x] **B-session — Session-timing (the EIGHTH structurally-different thesis; first that keys off NEITHER
   price NOR funding). PRUNED as a deployable edge (Iteration 35): the strongest-characterized lead in the
   search, but NOT DURABLE — the within-window walk-forward regime-sensitivity is NOT a boundary/horizon
