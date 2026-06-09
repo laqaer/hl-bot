@@ -1455,3 +1455,89 @@ rather than genuine regime breaks; (5) **widen the majors basket** (add DOGE/XRP
 see if the plateau and the (now 3-window) no-sign-flip property strengthen with more cross-sectional
 breadth. If a longer-window or wider-basket run gets *every* window individually confirmed while
 keeping the sign-stable property → first G0-class candidate. Alts at 1d stay pruned; majors-only.
+
+---
+
+## Iteration 27 — 2026-06-08 — B-horizon PRUNED: longer windows don't shrink the walk-forward failure, wider baskets break sign-stability; shipped a canonical named-basket resolver for reproducible/honest universes
+
+**Context.** Iteration 26 left the majors-1d cross-sectional-momentum lead in its best-characterized
+non-durable state: at lb=14 it CONFIRMS the trailing 240d window across the full cost ladder and is
+**sign-stable** across 3 disjoint windows (~2yr, no flip), failing `--windows 2/3` only on each older
+window's *within-window* walk-forward (a regime inversion in one half). Two slices remained: (4) longer
+per-window `--days` so each window's OOS tail is a smaller fraction (boundary-artifact test), and
+(5) widen the majors basket (breadth test). This iteration ran both as measurement and shipped the
+tested code increment the arc motivated.
+
+**Experiment — slice (4): longer `--days` (measurement; caches gitignored).**
+`confirm --agent xsect_momentum_v1 --coins majors --interval 1d --days 360 --windows 2 --prefer maker
+--params lookback_bars=14`:
+
+| window | full | in | oos | confirmed |
+|---|---|---|---|---|
+| trailing 360d | **+20.2** | +27.3 | +5.0 | ❌ (oos sharpe +0.15 < 1.0) |
+| 360d ending 360d ago | **+26.7** | −20.3 | +104.6 | ❌ (in-sample negative) |
+
+Full-sample is **positive and sign-stable in both** (the harness NOTE fires: regime-sensitive lead, not
+the artifact). But lengthening the window **did not** shrink the walk-forward failure — the regime
+inversion simply **relocated to a different half** (trailing: weak OOS tail; older: negative *in-sample*,
+huge OOS). So the OOS-tail-fraction / boundary-artifact hypothesis is **disproven**: the within-window
+failure is intrinsic to the signal, not an artifact of the 240d cut.
+
+**Experiment — slice (5): widen the majors basket (measurement).**
+`confirm --coins majors_wide --interval 1d --days 240 --windows 3 --prefer maker --params lookback_bars=14`
+(12 coins: BTC,ETH,SOL,HYPE,DOGE,XRP,LTC,BNB,AVAX,LINK,SUI,AAVE):
+
+| window | full | confirmed |
+|---|---|---|
+| trailing 240d | **+21.8** | ❌ |
+| 240d ending 240d ago | **−3.4** | ❌ |
+| 240d ending 480d ago | **+133.3** | ❌ |
+
+The wider basket is **actively worse**: full-sample now **FLIPS SIGN** (+133.3 … −3.4bps), the artifact
+signature the harness flags — and the trailing window's edge fell vs the 4-coin run (+46.2 → +21.8).
+Breadth **breaks** the one good property (sign-stability) the narrow basket had. More coins ≠ more edge
+here; the cross-section gets noisier, not cleaner.
+
+**Conclusion — the lead is pruned (sixth thesis).** majors-1d cross-sectional momentum at a ~2-week
+lookback is a genuine, cost-surviving, sign-stable directional signal *on the trailing narrow basket* —
+materially better than the five sign-flipping prunes — but it is **regime-sensitive within every window**
+and never clears the durability bar across **any** axis tried: lookback plateau (Iter 25), regime gate
+(Iter 26), `--windows 3` (Iter 26), longer window length (slice 4), or basket breadth (slice 5). The
+within-window walk-forward failure is intrinsic, not a boundary or breadth artifact. Honest call: **NOT
+DURABLE, no G0, nothing touches capital, majors-only.** The meta-lesson stands reinforced: a
+trailing-window PASS plus cross-window sign-stability is necessary but *still* not sufficient — durability
+needs *every* window individually walk-forward-confirmed, and this signal can't deliver that.
+
+**Code change (the committed increment, with tests).** The arc kept hand-typing baskets (majors, the
+high-funding alts, the held-out alts, now majors_wide) on every confirm/backtest — and a single typo
+silently changes a recorded number, a real honesty risk for a track-record-grade search. New pure
+`src/hl_bot/backtest/baskets.py`:
+- **`BASKETS`** — the search's universes pinned to version-controlled names (`majors`, `majors6`,
+  `majors_wide`, `alts_highfunding`, `alts_heldout`), each annotated with the iteration that used it, so
+  every cited result is reproducible.
+- **`resolve_basket(spec)`** — expands preset names and passes bare symbols through, order-preserving and
+  deduped. Backward compatible: `--coins BTC,ETH` unchanged, `--coins majors` expands, `--coins majors,DOGE`
+  mixes the two. Names are lower_snake, symbols UPPER, so a token is unambiguously one or the other.
+- Wired into `confirm` / `backtest` / `backtest-fetch` (the three research commands; **live tick paths
+  left untouched** to keep zero live-path risk).
+- **`tests/test_baskets.py` (+7):** pass-through, preset expansion, case-insensitive names, mix+dedupe
+  order-preserving, uppercasing, empty/whitespace tolerance, two-preset concatenation.
+
+Smoke-tested offline: `confirm --coins majors … --windows 1 --cache` resolves to the cached
+BTC-ETH-HYPE-SOL dataset and reproduces slice (4)'s trailing +20.2bps (no network).
+
+**Evidence (gate).** `uv run pytest -q` → **154 passed** (+7); `ruff check src tests scripts` → clean.
+Committed increment is the basket resolver + wiring + 7 tests (pure, offline); all confirm numbers are
+measurement (caches gitignored). No strategy/sizing/live-mode change.
+
+**What's next (loop).** B-horizon is exhausted; the six structurally-different theses (twap_mr, carry
+x2, xsect-momentum + reversion, regime-gated momentum, ts-momentum, and now the 1d horizon variant) are
+all pruned after the out-of-time bar. The honest state: **no agent passes G0 on any universe tried.**
+Candidate next directions, in rough priority: (a) **B-femr-regime** — retire femr from the live roster
+(it's dormant on majors and carry has no edge even on high-funding alts), a clean honesty/hygiene win;
+(b) a genuinely *new signal class* not yet tried — e.g. **basis/term-structure** or an **intraday
+microstructure** edge at a cadence the 5-min loop can actually capture (REVIEW C7) — since every
+daily/hourly price-momentum and funding-carry variant is now pruned; (c) revisit whether the durability
+bar itself should accept a **regime-conditional** deployment (only trade the signal in its confirmed
+regime) rather than demanding unconditional every-window confirmation — but that needs a *causal* regime
+detector that the Iter-26 drawdown gate already failed to provide, so it's research, not a quick win.

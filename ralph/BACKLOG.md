@@ -103,7 +103,21 @@ Keep it ruthlessly prioritized: the top item should always be the highest-levera
   inversion), and the older 120d window **flips sign** (majors −4.6 / alts −10.6). Five
   structurally-different theses now pruned after the out-of-time bar. Numbers in
   PROGRESS.md Iteration 23.
-- [ ] **B-horizon — Push the majors 1d cross-sectional-momentum lead over G0.** LEAD PERSISTS,
+- [x] **B-horizon — Push the majors 1d cross-sectional-momentum lead over G0. PRUNED (Iteration 27):
+  the last two slices both fail to advance it.** Slice (4) **longer per-window `--days`** (360d/windows=2,
+  4 majors): still **NOT DURABLE** — full-sample is **sign-stable** (+20.2 / +26.7bps, the harness NOTE
+  fires) but each window still fails its own walk-forward (trailing oos +5.0 weak; older in −20.3 → oos
+  +104.6 — a regime inversion just *relocates* to a different half). Lengthening the window does NOT
+  shrink the OOS-tail problem, disproving the boundary-artifact hypothesis. Slice (5) **widen the majors
+  basket** (12 coins: +DOGE/XRP/LTC/BNB/AVAX/LINK/SUI/AAVE, 240d/windows=3): **actively worse** — full
+  +21.8 / −3.4 / +133.3bps now **FLIPS SIGN** (the artifact signature), breaking the one good property
+  (sign-stability) the 4-coin basket had. Breadth doesn't help; it hurts. **Conclusion:** majors-1d
+  cross-sectional momentum (lb=14) is a real, cost-surviving, sign-stable signal on the *trailing* narrow
+  basket, but it is **regime-sensitive within every window** and never clears the durability bar across
+  lookback-plateau, window length, OR basket breadth. Sixth structurally-different thesis characterized
+  and pruned after the out-of-time bar. majors-only. No live change. Numbers in PROGRESS.md Iteration 27.
+  History below.
+  LEAD PERSISTS,
   still NOT DURABLE (Iteration 26). Slice (1) **1d lookback sweep** DONE (Iteration 25): a **12–15-bar
   plateau** CONFIRMS the **trailing** 240d window (lb=14: in +49.1/oos +42.7bps) and is
   **taker-survivable** (maker +46.2 → taker-3x +36.7bps). Slice (2) **regime-gate at 1d** DONE
@@ -124,6 +138,14 @@ Keep it ruthlessly prioritized: the top item should always be the highest-levera
   has no edge even where funding is high, so widening femr (also funding-driven) to
   alts is unlikely to help — the honest move is to **retire it from the live roster**
   until there's a universe+variant with a demonstrated G0 PASS. No live change either way.
+- [x] **B-baskets — Canonical named coin baskets for reproducible backtests.** DONE (Iteration 27).
+  Every recorded confirm/backtest number is only honest if its exact universe is known, but the search
+  hand-types baskets (majors, alts_highfunding, alts_heldout, majors_wide) on every run — one typo
+  silently changes a result. New pure `backtest/baskets.py`: `BASKETS` presets (pinned to the iterations
+  that used them) + `resolve_basket(spec)` that expands preset names and passes bare symbols through
+  (backward compatible: `--coins BTC,ETH` unchanged, `--coins majors` expands, `--coins majors,DOGE`
+  mixes/dedupes). Wired into `confirm`/`backtest`/`backtest-fetch` (research commands only; live tick
+  paths untouched). +7 unit tests. Numbers in PROGRESS.md Iteration 27.
 - [x] **B-params — `--params` config override for `confirm`/`backtest`.** DONE (Iteration 25).
   The factories hardcoded `config={}`, so every parameter sweep meant editing code. New
   `--params 'lookback_bars=14,enter_return=0.05'` threads a typed override dict (pure

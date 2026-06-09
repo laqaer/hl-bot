@@ -697,10 +697,11 @@ def backtest_fetch(
     """
     import time as _time
 
+    from ..backtest.baskets import resolve_basket
     from ..backtest.data import cached_or_fetch, default_cache_path
 
     _, s = _conn()
-    coin_list = [c.strip() for c in coins.split(",") if c.strip()]
+    coin_list = resolve_basket(coins)
     end_ms = None if end_offset_days <= 0 else int(_time.time() * 1000) - end_offset_days * 86_400_000
     path = default_cache_path(coin_list, interval, days, end_ms)
     window = f"{days}d{'' if end_ms is None else f' ending {end_offset_days}d ago'}"
@@ -736,11 +737,12 @@ def backtest(
 
     ``--params 'lookback_bars=7'`` overrides the agent's config for a sweep.
     """
+    from ..backtest.baskets import resolve_basket
     from ..backtest.data import cached_or_fetch, load_frames
     from ..backtest.engine import Backtester, CostModel
 
     _, s = _conn()
-    coin_list = [c.strip() for c in coins.split(",") if c.strip()]
+    coin_list = resolve_basket(coins)
     try:
         cfg = _parse_agent_params(params)
     except ValueError as e:
@@ -892,11 +894,12 @@ def confirm(
     """
     import time as _time
 
+    from ..backtest.baskets import resolve_basket
     from ..backtest.confirm import confirm_across_windows, confirm_strategy
     from ..backtest.data import cached_or_fetch, load_frames
 
     _, s = _conn()
-    coin_list = [c.strip() for c in coins.split(",") if c.strip()]
+    coin_list = resolve_basket(coins)
     try:
         cfg = _parse_agent_params(params)
     except ValueError as e:
