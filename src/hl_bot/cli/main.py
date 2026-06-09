@@ -1207,6 +1207,23 @@ def edge_search(out: Path = Path("data/edge_search")):
 
 
 @app.command()
+def allocator_packet(out: Path = Path("data/allocator_packet")):
+    """Export the complete allocator packet (chassis + track record + edge search).
+
+    Writes allocator_packet.{json,md}: the deployment chassis (audited safety/
+    accounting/supervision/risk strengths), the live track record, and the
+    ten-thesis edge-search negative result, in one bundle for capital/AUM due
+    diligence (Path C) and the go-live gate. Read-only on the DB.
+    """
+    from ..reports.allocator_packet import export
+
+    conn, _ = _conn()
+    jp, mp = export(conn, out)
+    console.print(mp.read_text())
+    console.print(f"[green]✓[/green] wrote {jp} and {mp}")
+
+
+@app.command()
 def report(send: bool = False):
     """Build daily report; optionally send to Telegram."""
     conn, s = _conn()

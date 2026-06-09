@@ -448,6 +448,21 @@ Keep it ruthlessly prioritized: the top item should always be the highest-levera
 
 ## P3 — capital formation (Path C)
 
+- [x] **B-allocator-packet — The complete allocator deliverable in one bundle (the Iter-40 named next
+  move (a)). DONE (Iteration 41).** With the edge-search artifact (Iter 40) and the track-record export
+  (B15) both shipped as separate pure reports, Path C still lacked the *one document* an allocator (or the
+  go-live gate) reads end-to-end: the deployment chassis + the live record + the negative edge search,
+  together. New pure `reports/allocator_packet.py` composes the two existing reports and adds a frozen,
+  audited `CHASSIS` record (the REVIEW "What's good" strengths — cloid attribution, ground-truth accounting,
+  order safety, supervisor semantics, risk scaling, research hygiene — each citing a real source module).
+  `build_allocator_packet(conn)` → {headline, chassis, track_record, edge_search}; `to_markdown` renders all
+  three sections (composing `track_record.to_markdown` + `edge_search.to_markdown` verbatim, no new numbers);
+  `export` writes `allocator_packet.{json,md}`. Wired as `hlbot allocator-packet` (read-only on the DB,
+  mirrors track-record/edge-search). The honest headline states capital is NOT warranted until a strategy
+  clears G0–G3 — the packet is evidence for the gate, not a solicitation. +4 tests (every chassis source is a
+  real file; both sub-reports carried faithfully; markdown renders all three sections + every chassis source;
+  JSON/MD export round-trip). No `data/` writes committed; no strategy/roster/live-mode change. Numbers in
+  PROGRESS Iter 41.
 - [x] **B-edge-summary — Edge-search summary report (the negative-result finding as a publishable
   artifact). DONE (Iteration 40).** With all ten structurally-different theses pruned and fine-cadence
   research retention-blocked (Iter 39), the honest next-unblocked move named by Iter 38/39 was to turn the

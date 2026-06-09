@@ -2472,3 +2472,44 @@ the chart export it still TODOs. The only route back to *finding* an edge is sou
 fine-cadence archive (forward-record WS now, or a 3rd-party feed) — a standalone infra bet (B-exec-tickmark /
 direction (a)), not a one-shot iteration. This iteration makes the search's negative verdict a first-class,
 reproducible deliverable rather than prose buried in this log.
+
+## Iteration 41 — 2026-06-08 — B-allocator-packet: chassis + track record + edge search in one bundle (`hlbot allocator-packet`)
+
+**Context.** Iter 40 shipped the edge-search artifact and named the honest next-unblocked Path-C move (a):
+fold it into a single allocator-grade bundle alongside the chassis evidence and the live track record. The
+two pure reports already existed separately (`track_record` = live numbers, `edge_search` = the ten-thesis
+negative result), but an allocator (or the supervisor's own go-live gate) had to read three scattered files
+to get the whole picture: *here is the machine, here is its live record, here is everything we tried and
+rejected.* The complete packet is the deliverable.
+
+**What I built (pure, tested).** New `src/hl_bot/reports/allocator_packet.py` — it **composes** the two
+existing reports and adds one new section, introducing **no numbers of its own**. A frozen `ChassisItem`
+dataclass + `CHASSIS` tuple encodes the REVIEW "What's good (keep it)" strengths — cloid attribution
+(`agents/cloid.py`), ground-truth accounting (`ingest/hyperliquid.py`), order safety (`exec/orders.py`),
+supervisor semantics (`supervisor/goals.py`), risk scaling (`risk/scaling.py`), research hygiene
+(`research/strategy_health.py`) — each citing a **real source module** (all six verified present at
+authoring; a test re-asserts every cited path is a file so the chassis claim can't silently rot).
+`build_allocator_packet(conn)` → `{generated_ms, headline, chassis, track_record, edge_search}` (calls
+`build_track_record` + `build_edge_search`); `to_markdown` renders the chassis table then splices in
+`track_record.to_markdown` + `edge_search.to_markdown` verbatim (sub-reports keep their own headers, so the
+packet can never drift from the canonical reports); `export` writes `allocator_packet.{json,md}`. Wired as
+`hlbot allocator-packet` (read-only on the DB, mirrors the `track-record`/`edge-search` command shape).
+
+**Honesty gate (why this is evidence, not a pitch).** The `HEADLINE` states plainly that capital is NOT
+warranted until a strategy clears the durability bar (G0–G3) — the packet is the evidence the go-live gate
+references, explicitly "not a solicitation." It carries the literal search verdict (0 of 10 deployable) and
+the same `score_agent`-derived live numbers used in production, so it cannot flatter reality.
+
+**Evidence (gate).** `uv run pytest -q` → **234 passed** (+4 allocator-packet: chassis sources are real
+files; both sub-reports carried faithfully [thesis count + all-pruned, live agent present]; markdown renders
+all three sections + every chassis source; JSON/MD export round-trip). `ruff check src tests scripts` →
+clean. `hlbot allocator-packet` runs and writes both files (under gitignored `data/`, nothing committed). No
+strategy/roster/live-mode change — pure composition over the recorded reports.
+
+**What's next (loop).** Path C now has its single allocator deliverable. Remaining P3 items are genuine
+spikes gated behind a real edge: B16 (HL vault evaluation — requirements/fees/risk, gated behind a G3 track
+record) and B17 (moonshot sleeve spec — ring-fenced, loss-bounded, spec-only). Both are design/spec work, no
+edge required. The only route back to *finding* an edge is sourcing an external fine-cadence archive
+(forward-record WS now, or a 3rd-party feed) — a standalone infra bet (direction (a) / B-exec-tickmark), not
+a one-shot iteration. This iteration completes the "publish the honest state" arc the last two iterations
+started.
