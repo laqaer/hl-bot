@@ -619,8 +619,20 @@ Keep it ruthlessly prioritized: the top item should always be the highest-levera
   `track_record.svg` too (returns 3 paths) and the markdown references it. +2 tests
   (plots N points / handles empty+single-point). Allocator-packet unaffected (uses
   build/to_markdown, not export). Numbers in PROGRESS Iter 51.
-- [ ] **B16 — Hyperliquid vault evaluation.** Spike: requirements, fees, risk of
-  running an HL vault; gate behind a real track record (G3).
+- [x] **B16 — Hyperliquid vault evaluation. DONE (Iteration 52).** Path-C spike as a pure, tested report
+  module `reports/vault_evaluation.py` (mirrors edge_search/allocator_packet): a frozen `VaultAspect` record
+  enumerating the six things to evaluate before running an HL vault — leader skin-in-the-game, profit
+  share/HWM, depositor lockup, capacity/strategy-fit-at-scale, operational/smart-contract risk, regulatory/
+  disclosure — each carrying the operator's *current understanding* but flagged **`verified=False`** (every
+  protocol fact is external HL knowledge that MUST be re-confirmed against live HL docs; the integrity rule
+  forbids laundering a half-remembered fee number into a publishable artifact). The load-bearing part is the
+  computed `vault_ready(g3_cleared)` gate: a vault opens only on **G3** (durable net-of-cost edge + live track
+  record), which is NOT met (edge search exhausted, no edge) → verdict **NOT READY**, citing the
+  evidence-before-capital rule. `build_vault_evaluation`/`to_markdown`/`export` + `hlbot vault-evaluation`
+  (offline, no DB/network; `--g3-cleared` flips the gate for the future case). +7 tests (gate not-ready until
+  G3 / ready when G3; default not-ready; all aspects unverified by design; aspects populated; markdown renders
+  gate+aspects and READY when cleared; JSON/MD export round-trip). Spec only, no live change. Numbers in
+  PROGRESS Iter 52.
 - [ ] **B17 — Moonshot sleeve spec.** Design the ring-fenced, loss-bounded Path B
   sleeve (separate sub-account, hard cap, defined max loss). Spec only; no live.
 

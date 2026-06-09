@@ -3061,3 +3061,55 @@ remains exhausted on HL historical candles; the only un-searched regime is the f
 archive (B-fine-record slice 3), which still needs calendar time + a deployed host's `recorded_candles.jsonl`
 before `hlbot record-coverage` can report READY. Until then the residual unblocked work is non-edge polish; the
 stale P2 B14a `[ ]` can be marked done (its EC2/systemd/Litestream/cron chassis already ships in deploy/).
+
+## Iteration 52 — 2026-06-09 — B16: Hyperliquid vault evaluation spike (Path C)
+
+**Context (orientation).** The HL-historical-candle edge search is exhausted: all twelve structurally-
+different theses AND every parked sub-angle are pruned (B-session-tod closed Iter 50; B-exec-tickmark needs
+tick/L2 data the 208d retention ceiling blocks). The one route to genuinely new edge evidence — B-fine-record
+slice 3 (re-run the fast theses on forward-recorded 1m/5m candles) — is blocked on calendar time AND needs a
+deployed host's `data/recorded_candles.jsonl` to run `hlbot record-coverage` (no recorded archive exists
+locally; `data/` has only the sqlite + backtest cache). Iter 51 finished the last Path-C reporting TODO (B15
+chart export) and noted the residual unblocked work is non-edge: P2 **B14a** (deploy automation) and P3
+capital-formation specs (**B16/B17**). I confirmed **B14a's chassis already ships** in `deploy/` (install.sh,
+update.sh, litestream.yml, AWS terraform, and all systemd units incl. loop/tick+timer/report+timer/update+
+timer/recorder/ws) — its `[ ]` is stale, the cron/DB-sync it asks for already exists via systemd timers +
+Litestream — so the cleanest *real, tested* unblocked increment was the highest-positioned remaining spec, B16.
+
+**What I built (pure, tested).** `reports/vault_evaluation.py`, following the established Path-C report pattern
+(`edge_search.py` / `allocator_packet.py`): a frozen `VaultAspect` record enumerating the six things to
+evaluate before running a Hyperliquid vault — (1) leader skin-in-the-game, (2) profit share / high-water mark,
+(3) depositor lockup/withdrawals, (4) capacity & strategy-fit-at-scale, (5) operational/smart-contract risk,
+(6) regulatory/disclosure — each with the operator's *current understanding*, a *why-it-matters*, and a
+`verified` flag. The computed `vault_ready(g3_cleared)` gate is the load-bearing piece:
+`build_vault_evaluation`/`to_markdown`/`export` + a new offline CLI `hlbot vault-evaluation` (`--g3-cleared`
+flips the gate; no DB/network).
+
+**Integrity decision (why all aspects are `verified=False`).** Every protocol fact (leader minimum stake,
+profit-share rate, lockup duration) is *external* HL knowledge, not derivable from this repo. The
+"stay honest / don't fabricate" rule forbids laundering a half-remembered number into a publishable allocator
+artifact, so each aspect is recorded as the operator's current understanding but flagged **unverified — confirm
+against live HL docs** (the markdown header counts "6 of 6 unverified"). The *firm* deliverable is the gate, not
+the numbers: a vault opens only on **G3** (a durable net-of-cost edge with a live track record), which is **NOT
+met** — the edge search is exhausted with no edge — so the gate returns **NOT READY**, citing the
+evidence-before-capital rule. That conclusion is *derived* (from g3_cleared=False), not asserted.
+
+**Why this matters (Path C).** B16 was the named capital-formation spike. It turns "could we run a vault?" into
+an auditable artifact an allocator / the go-live gate can read: here is what must be evaluated, here is what is
+still unverified, and here is the one gate (G3) that blocks it today. It composes naturally with the existing
+allocator packet's honest "capital is NOT warranted until G0–G3" headline.
+
+**Evidence (gate).** `uv run pytest -q` → **293 passed** (+7: gate not-ready until G3 / ready when G3; default
+not-ready; all aspects unverified by design; aspects populated; markdown renders gate+aspects and READY when
+cleared; JSON/MD export round-trip). `uv run ruff check src tests scripts` → clean. CLI smoke-tested
+(`hlbot vault-evaluation --out /tmp/...` → NOT READY). Offline/read-only; no `data/` writes committed; no
+strategy/roster/live-mode change; nothing touched capital. (Note: the Edit hook flagged the substring "eval"
+in the first command name `vault_eval` as a false-positive `eval()` warning, so the command is named
+`vault-evaluation`.)
+
+**What's next (loop).** The only remaining open backlog items are P3 **B17** (Moonshot sleeve spec — ring-fenced,
+loss-bounded Path-B sub-account; spec only, fully derivable from this repo's risk machinery so it can be written
+with full integrity + tests) and the stale P2 **B14a** `[ ]` (whose deploy chassis already ships — a future
+iteration can mark it done). The edge search remains exhausted on HL historical candles; genuinely new edge
+evidence still requires the forward-recorded fine-cadence archive (B-fine-record slice 3), which needs calendar
+time + a deployed host's `recorded_candles.jsonl` before `hlbot record-coverage` can report READY.

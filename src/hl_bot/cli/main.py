@@ -1328,6 +1328,22 @@ def edge_search(out: Path = Path("data/edge_search")):
 
 
 @app.command()
+def vault_evaluation(out: Path = Path("data/vault_evaluation"), g3_cleared: bool = False):
+    """Export the Hyperliquid vault evaluation spike (requirements, fees, risk, gate).
+
+    Writes vault_evaluation.{json,md}: the Path-C spike for running an HL vault.
+    The gate is G3 (a durable net-of-cost edge), NOT met today, so it reports NOT
+    READY. Protocol mechanics are flagged unverified until confirmed against live
+    HL docs. Pure data, no network or DB. Spec only — nothing touches capital.
+    """
+    from ..reports.vault_evaluation import export
+
+    jp, mp = export(out, g3_cleared=g3_cleared)
+    console.print(mp.read_text())
+    console.print(f"[green]✓[/green] wrote {jp} and {mp}")
+
+
+@app.command()
 def allocator_packet(out: Path = Path("data/allocator_packet")):
     """Export the complete allocator packet (chassis + track record + edge search).
 
