@@ -20,6 +20,7 @@ from ..agents.liq_cascade import LiqCascadeAgent
 from ..agents.meta_allocator import MetaAllocator, MetaAllocatorConfig
 from ..agents.pairs_reversion import PairsReversionAgent
 from ..agents.runtime import run_tick
+from ..agents.session_timing import SessionTimingAgent
 from ..agents.ts_momentum import TsMomentumAgent
 from ..agents.twap_mr import TwapMrAgent
 from ..agents.twap_mr_regime import TwapMrRegimeAgent
@@ -777,6 +778,7 @@ def backtest(
         "xfund_carry_v1": lambda conn: XFundCarryAgent(config=cfg, conn=conn),
         "xsect_momentum_v1": lambda conn: XSectMomentumAgent(config=cfg, conn=conn),
         "ts_momentum_v1": lambda conn: TsMomentumAgent(config=cfg, conn=conn),
+        "session_timing_v1": lambda conn: SessionTimingAgent(config=cfg, conn=conn),
         "pairs_reversion_v1": lambda conn: PairsReversionAgent(config=cfg, conn=conn),
         "liq_cascade_v1": lambda conn: LiqCascadeAgent(config=cfg, conn=conn),
         "basis_v1": lambda conn: BasisAgent(config=cfg, conn=conn),
@@ -967,6 +969,7 @@ def confirm(
         "xfund_carry_v1": XFundCarryAgent,
         "xsect_momentum_v1": XSectMomentumAgent,
         "ts_momentum_v1": TsMomentumAgent,
+        "session_timing_v1": SessionTimingAgent,
         "pairs_reversion_v1": PairsReversionAgent,
         "liq_cascade_v1": LiqCascadeAgent,
         "basis_v1": BasisAgent,

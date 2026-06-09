@@ -1950,3 +1950,82 @@ maker-rebate capture conditioned on realized spread vs queue position — an *ex
 timing** effect (deterministic funding accrual windows, not funding *level*); (c) **basis/term-structure**
 between perp and any available longer-horizon reference. The next iteration should pick one, specify it as a
 new agent, and run it through `confirm --windows 2` from the first run (never a single trailing window).
+
+## Iteration 34 — 2026-06-08 — B-session slice 1: session-timing — the EIGHTH structurally-different thesis (first that keys off NEITHER price NOR funding); sign-stable, mirror-consistent clock effect, but NOT durable (regime-sensitive lead)
+
+**Context.** Iter 33 closed the pairs investigation (all seven price/funding-derived theses now pruned or
+reduced to an over-conditioned point) and named three candidate orthogonal directions for the next thesis:
+(a) execution/maker-rebate, (b) **calendar/funding-settlement timing**, (c) basis/term-structure. This
+iteration picks (b) — the cheapest to adjudicate with the existing durability machinery and the only class
+that keys off **clock time, not recent prices or funding levels** — and runs it through the out-of-time bar
+from the first run.
+
+**Code increment (committed, with tests).** New `session_timing_v1` agent (`agents/session_timing.py`),
+registered in both `confirm`/`backtest` factory maps:
+- **Thesis (a priori, not data-mined):** liquid majors inherit TradFi equity beta, so they realize a
+  different average drift *during* the US equity cash session (~13:30–20:00 UTC, weekdays) than *overnight /
+  on weekends*. The agent takes net-directional LONG exposure **only inside an a-priori-fixed UTC hour band**
+  (default 14–21Z, weekdays) and is flat outside; the window is specified in advance from the TradFi
+  correlation (no hour search), which keeps it out of the data-mining trap the momentum leads fell into.
+- **Pure, unit-testable core:** `in_session(ts_ms, enter_hour_utc, exit_hour_utc, weekdays_only, invert)`
+  reads **zero** price/funding input — only the bar's UTC hour + weekday from `view.ts_ms`. An `invert` flag
+  trades the exact complement (overnight/weekend) at no extra code, so both halves of the clock are testable.
+- 8 unit tests (`tests/test_session_timing.py`): window-edge inclusivity (lower inclusive / upper
+  exclusive), weekend exclusion under `weekdays_only`, `invert` is the exact complement over all 24 hours,
+  midnight-wrapping window, and the decide() path (enters the eligible liquid universe long in-session,
+  filters illiquid coins, holds flat outside, flattens held positions when the session closes).
+
+**Evidence — durability bar (real HL history, network; majors = BTC,ETH,SOL,HYPE, 1h, 120d, `--windows 2`,
+`--prefer maker`; default 14–21Z weekday window; full = [trailing, older] window full-sample maker edge bps):**
+
+```
+BASE (long US session 14-21Z, weekdays):
+❌ NOT DURABLE  session_timing_v1  (2 windows, prefer=maker)
+  ❌ trailing 120d          full  +11.4bps   in +17.0  oos  -1.3
+  ❌ 120d ending 120d ago   full   +0.4bps   in  -3.2  oos  +8.9
+  - NOTE: full-sample edge POSITIVE & SIGN-STABLE across both windows — blocked only by within-window
+    walk-forward (regime-sensitive lead, NOT the cross-window artifact sign-flip)
+
+INVERT (long overnight/weekend — the complement):
+❌ NOT DURABLE  session_timing_v1  (2 windows, prefer=maker)
+  ❌ trailing 120d          full   -6.3bps   in  -0.5  oos -17.9
+  ❌ 120d ending 120d ago   full  -26.6bps   in -10.9  oos -62.4
+```
+
+**Honest read — a genuinely coherent, structurally-new signal, but still not durable.** Two things make this
+the *most coherent* first-run result of any thesis so far, and one thing keeps it a lead rather than a deploy:
+1. **The base long-US-session edge is positive and SIGN-STABLE across both disjoint 120d windows** (+11.4 /
+   +0.4 maker), tripping the harness "lead, not artifact" NOTE — it is *not* the cross-window sign-flip that
+   hand-pruned the six earlier theses.
+2. **The mirror is clean and directionally consistent:** the complement (long overnight/weekend) is
+   **negative in BOTH windows** (−6.3 / −26.6, no sign flip). So across two independent 120d windows majors
+   drift *up* in the US session and *down/flat* overnight — a coherent, repeatable clock effect, not a single
+   window's noise. This is exactly the cross-window consistency the seven price/funding theses lacked.
+3. **But the base case still fails the within-window walk-forward:** the trailing window's edge lives in its
+   in-sample half (+17.0) and evaporates OOS (−1.3); the older window inverts (in −3.2 / oos +8.9). The
+   in/oos relationship is itself regime-dependent, so walk-forward correctly rejects. Same failure *mode* as
+   the majors-1d momentum lead (Iter 25–27): sign-stable, cost-surviving, but regime-sensitive within each
+   window — a lead to push, not a deployable edge.
+
+**Net.** Session-timing is the **eighth** structurally-different thesis and the first to key off neither
+price nor funding. It produces a **sign-stable, mirror-consistent** session effect on majors (long-session
+positive, overnight negative, both across two disjoint windows) — stronger cross-window coherence than any
+pruned thesis — yet still **does not clear the durability bar** because the within-window walk-forward is
+regime-sensitive. It joins the "sign-stable lead, not deployable" bucket alongside majors-1d momentum, NOT
+the artifact-sign-flip prune bucket. `session_timing_v1` is real, well-tested, and stays in the roster for
+paper/measurement only. **Maker-only, nothing touches capital, no live change.**
+
+**Evidence (gate).** `uv run pytest -q` → **196 passed** (+8 incl. shared); `ruff check src tests scripts`
+→ clean. The confirm numbers are measurement (cached candles, no `data/` writes committed). No strategy in
+the live roster changed; no live mode enabled.
+
+**What's next (loop).** Session-timing is a *lead* (sign-stable + mirror-coherent), so unlike the prune
+bucket it is worth one or two cheap push-slices before a verdict — and they are the natural inverse of what
+broke the momentum leads: (1) **wider/longer windows** — `--windows 3` and longer per-window `--days` to see
+whether the within-window walk-forward failure is a boundary artifact or persists across ~2yr; (2) **basket
+breadth** — run on a wider majors set and on liquid alts to test whether the session effect is a
+majors/equity-beta property or generalizes; (3) **window plateau** — `--sweep` the enter/exit hours around
+the a-priori US-session band to confirm a contiguous plateau (a real session effect should not be a
+single-hour knife-edge). If the trailing OOS tail and the older-window in<oos inversion both survive (1)+(2),
+this becomes the strongest durability candidate yet; if they don't, it prunes cleanly as the eighth
+regime-sensitive lead. Either way it is adjudicated by the existing `confirm --windows`/`--sweep` machinery.

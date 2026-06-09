@@ -7,6 +7,23 @@ Keep it ruthlessly prioritized: the top item should always be the highest-levera
 
 ## P0 — find an edge (the whole point)
 
+- [~] **B-session — Session-timing (the EIGHTH structurally-different thesis; first that keys off NEITHER
+  price NOR funding).** Slice 1 DONE (Iteration 34). New `session_timing_v1`: net-directional LONG exposure
+  only inside an a-priori-fixed UTC hour band (default US equity session 14–21Z, weekdays), flat outside;
+  pure `in_session(ts_ms,...)` reads only the bar's UTC hour+weekday (zero price/funding), `invert` flag
+  trades the complement. Registered in confirm/backtest, 8 unit tests. **Result (majors, 1h, 120d×2 windows,
+  maker):** ❌ NOT DURABLE but a genuine LEAD — base long-US-session edge is **positive & SIGN-STABLE** both
+  windows (trailing +11.4 in+17.0/oos−1.3; older +0.4 in−3.2/oos+8.9; harness "lead, not artifact" NOTE), and
+  the **mirror is clean** — invert (long overnight/weekend) is **negative in BOTH windows** (−6.3 / −26.6, no
+  sign-flip). So across two disjoint 120d windows majors drift up in the US session / down overnight — a
+  coherent repeatable clock effect, stronger cross-window coherence than any pruned thesis. **Caveat (why a
+  lead, not a deploy):** base case still fails the within-window walk-forward (trailing edge lives in-sample
+  then evaporates OOS; older window inverts) — same regime-sensitive failure *mode* as the majors-1d momentum
+  lead, NOT the artifact sign-flip. Joins the "sign-stable lead, not deployable" bucket. **Push-slices to
+  run:** (2) `--windows 3` + longer per-window `--days` (boundary-artifact check); (3) basket breadth (wider
+  majors + liquid alts — is it equity-beta-specific or general?); (4) `--sweep` enter/exit hours around the
+  a-priori band (confirm a contiguous hour-plateau, not a knife-edge). Maker-only, no live change. Numbers in
+  PROGRESS.md Iteration 34.
 - [x] **B-pairs — Pairs / relative-value mean-reversion (the seventh, structurally-different
   thesis): THE FIRST SIGNAL TO CLEAR THE CANONICAL DURABILITY BAR.** Slice 1 DONE (Iteration 29).
   New `pairs_reversion_v1`: market-neutral statistical arbitrage on the **log-ratio spread** of a coin
