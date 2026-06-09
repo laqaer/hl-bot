@@ -1128,6 +1128,32 @@ def ws(
 
 
 @app.command()
+def record_trades(
+    coins: str = "BTC,ETH,SOL,HYPE",
+    archive: Path = Path("data/recorder/trades_1m.jsonl"),
+    interval: str = "1m",
+    seconds: float = 0.0,
+):
+    """Forward-record live WS trades into a fine-cadence candle archive.
+
+    HL retains only ~one candle cap of history (~17.5d at 5m), so sub-bar/
+    fine-cadence research can't be backtested from its historical API. This
+    long-running service (supervise via systemd) folds the live trades stream into
+    ``interval`` candles and appends them to ``archive`` (JSONL) so a 1m/5m dataset
+    accumulates for future backtesting. seconds=0 runs forever.
+    """
+    from ..backtest.recorder import run_recorder
+
+    _, s = _conn()
+    coin_list = [c.strip() for c in coins.split(",") if c.strip()]
+    console.print(f"[green]record-trades[/green] {coin_list} @ {interval} → {archive}")
+    run_recorder(
+        coin_list, archive, interval=interval,
+        base_url=s.hl_api_url, duration_s=(seconds or None),
+    )
+
+
+@app.command()
 def health(max_tick_age_s: int = 900, heartbeat: bool = True):
     """Assess bot health (tick/ingest freshness, equity, paused agents, 24h PnL).
 

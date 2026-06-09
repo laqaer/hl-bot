@@ -2513,3 +2513,55 @@ edge required. The only route back to *finding* an edge is sourcing an external 
 (forward-record WS now, or a 3rd-party feed) — a standalone infra bet (direction (a) / B-exec-tickmark), not
 a one-shot iteration. This iteration completes the "publish the honest state" arc the last two iterations
 started.
+
+## Iteration 42 — 2026-06-08 — B-fine-record: forward-record fine-cadence candles (`hlbot record-trades`) — the only route back to finding an edge
+
+**Context.** The edge search is exhausted on HL *historical* data: ten structurally-different theses pruned
+(Iter 16→38) and — critically — Iter 39 proved the dead "direction (a)" (REVIEW C7: sub-bar / cadence
+mismatch, the highest-leverage *unrun* angle) is **structurally un-backtestable** from HL's candle API,
+because HL retains only ~one `candleSnapshot` cap of history total (~3.6d at 1m, ~17.5d at 5m, ~52d at 15m).
+There is no older fine-cadence data to fetch. Iter 39/40/41 each closed naming the **same** honest move:
+the only route back to *finding* an edge is to **forward-record our own fine candles now**, so that months
+from now a 1m/5m archive exists that the existing backtester can replay. The last three iterations shipped
+the Path-C reporting that publishes the negative result (edge-search, allocator-packet); that arc is done.
+This iteration starts the one thing that can re-open the search.
+
+**What I built (pure core + thin loop + tested).** New `src/hl_bot/backtest/recorder.py`, split like
+`ingest/ws.py` into a pure, unit-tested core and a thin network loop:
+- `TradeCandleAggregator(interval)` — folds a trade stream (the dicts `MarketState` already produces from the
+  WS `trades` channel: coin/px/sz/ts) into OHLCV candles, emitting the **exact same dict shape**
+  `fetch_candles` returns: `{coin,t,T,o,h,l,c,v,n}`. `open`/`close` are tracked by trade **timestamp, not
+  arrival order**, so mildly out-of-order WS delivery still yields the correct first/last price; `h/l/v/n`
+  fold naturally. `flush_completed(now_ms)` pops every bucket strictly older than the bucket containing
+  `now_ms` (so the still-filling bucket is retained) → bounded memory over a long run; `pending_candles()`
+  peeks without removing.
+- `append_candles` / `load_recorded_candles` — an **append-only** JSONL archive (plain or `.gz`) under
+  gitignored `data/`. Append-only so a restarted recorder never rewrites history; `load_recorded_candles`
+  dedupes by (coin, open time `t`) **keeping the last line written** (a re-flushed bucket's newer value wins)
+  and returns a `candles_by_coin` dict that is a **drop-in for `data.build_frames`**. This closes the loop
+  recorded-JSONL → `build_frames` → the existing backtester with **zero adaptation**.
+- `run_recorder` — the thin WS connect loop (subscribes `{"type":"trades","coin":...}` per coin via the HL
+  SDK `Info`, folds each trade, appends completed candles every `flush_interval_s`; `pragma: no cover`).
+- Wired as `hlbot record-trades --coins BTC,ETH,SOL,HYPE --interval 1m --archive data/recorder/trades_1m.jsonl`
+  (`seconds=0` = forever), mirroring the `hlbot ws` command shape; supervise via systemd next to `hlbot-ws`.
+
+**Why this is the right shape.** The whole reason fine-cadence research died (Iter 39) is *data retention*,
+not tooling — so the fix is a data-accumulation service, and the highest-value property is that the recorded
+output is **byte-compatible with the backtester's input** (same candle dict, loader returns `candles_by_coin`)
+so no future glue is needed: the day enough data exists, the retention-blocked theses (B-exec-tickmark,
+sub-bar durability) run unchanged. The end-to-end test asserts exactly this: 60 synthetic 1m trades →
+aggregate → append → `load_recorded_candles` → `build_frames` produces real frames with `BTC` mids.
+
+**Evidence (gate).** `uv run pytest -q` → **244 passed** (+10 recorder: interval flooring; basic OHLCV across
+two buckets; open/close track trade-time under reordering; bad-trade rejection; `flush_completed` leaves the
+current bucket then releases it; multi-coin separation; unknown-interval `ValueError`; append+load dedup
+last-write-wins; empty append / missing file; end-to-end recorded→`build_frames`). `ruff check src tests
+scripts` → clean. `hlbot record-trades --help` registers. No `data/` writes committed; **no strategy, roster,
+or live-trading change** — this records public market data only; nothing places an order.
+
+**What's next (loop).** This is slice 1 (the machine). The remaining work is *operational, not a one-shot
+iteration*: (2) add `record-trades` to the deploy systemd units so it runs 24/7 alongside `hlbot-ws`, and (3)
+once ~30–60d of 1m/5m data has accumulated, re-run the sub-bar execution + fine-cadence durability theses the
+retention ceiling blocked. Until that archive fills, the search remains exhausted on HL historical data —
+this iteration just guarantees that the *next* attempt has data to run against, which it otherwise never
+would (every iteration of delay is a month of fine candles permanently lost to retention).

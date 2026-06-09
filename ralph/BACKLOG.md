@@ -7,6 +7,25 @@ Keep it ruthlessly prioritized: the top item should always be the highest-levera
 
 ## P0 — find an edge (the whole point)
 
+- [~] **B-fine-record — Forward-record fine-cadence candles (the ONLY route back to finding an edge).
+  Slice 1 DONE (Iteration 42): the recorder + archive + backtester loop is built and tested; it now needs
+  to actually RUN for weeks to accumulate data (operator/systemd, not a one-shot iteration).** Iter 39
+  proved fine-cadence (1m/5m/15m) durability research is structurally impossible from HL's historical candle
+  API — HL retains only ~one cap of history (~3.6d@1m, ~17.5d@5m), so the dead "direction (a)" (REVIEW C7
+  sub-bar / cadence-mismatch) can never be backtested from fetched candles. Iter 39/40/41 all named the same
+  honest next move: **forward-record our own fine candles now** so a months-long archive exists later. Built
+  `backtest/recorder.py`: pure `TradeCandleAggregator` folds the live WS `trades` stream into OHLCV candles
+  emitting the **exact** `{t,T,o,h,l,c,v,n}` dict `fetch_candles` returns (open/close tracked by trade *time*
+  not arrival order, so mild WS reordering is correct; `flush_completed(now)` releases only buckets older than
+  the current one, bounded memory); append-only JSONL archive (`append_candles`/`load_recorded_candles`,
+  dedupe by (coin,t) last-write-wins so a restarted recorder never rewrites history) whose loader returns a
+  `candles_by_coin` dict that is a **drop-in for `build_frames`** — closing the loop recorded→backtester with
+  zero adaptation. Thin `run_recorder` WS loop + `hlbot record-trades --coins --interval 1m --archive`
+  (mirrors `hlbot ws`; supervise via systemd). +10 tests incl. an end-to-end (recorded candles → `build_frames`
+  → frames). Maker/research-only, no live trading change. Numbers in PROGRESS Iter 42. **Next slices:** (2)
+  add `record-trades` to the deploy systemd units so it runs 24/7 alongside `hlbot-ws`; (3) once ~30–60d of
+  1m/5m data exists, re-run the sub-bar execution + fine-cadence durability theses the retention ceiling
+  blocked (B-exec-tickmark overlaps). Until then the search stays exhausted on HL historical data.
 - [x] **B-cadence-data — Can fine-cadence (5m/15m/1m) durability research be run on HL candles? NO —
   structurally blocked by HL data RETENTION, not by tooling (Iteration 39).** The "what's next" from
   Iter 37/38 named direction (a) **sub-bar / cadence-mismatch** (REVIEW C7) as the highest-leverage
