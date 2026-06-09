@@ -79,11 +79,16 @@ Keep it ruthlessly prioritized: the top item should always be the highest-levera
   (REVIEW C6. Iteration 12.)
 - [~] **B12 — Consolidate execution paths.** `runtime.run_tick` vs `femr_tick`
   duplicate logic; unify so the safe wrapper is what live uses. (REVIEW M3.)
-  **Done so far:** the live order-placement loop is extracted from `femr_tick`
+  **Done so far:** (a) the live order-placement loop is extracted from `femr_tick`
   into `runtime.execute_decisions` (pure of presentation, returns `ExecEvent`s)
-  and unit-tested with a fake exchange (M3/D2 — the live path was untested).
-  **Remaining:** fold the `femr_tick` view/risk/guardrail preamble into a
-  reusable harness so `run_tick` and `femr_tick` share one path end-to-end.
+  and unit-tested with a fake exchange (M3/D2). (b) the decision-gathering loop is
+  extracted into `runtime.gather_decisions` — both `run_tick` (paper) and
+  `femr_tick` (live) now share it, and `femr_tick` gained the per-agent `decide()`
+  crash isolation it lacked (a broken agent no longer aborts risk-reducing
+  flattens). Unit-tested. (Iteration 14.)
+  **Remaining:** fold the `femr_tick` view/risk/guardrail preamble (clearinghouse
+  fetch → position list → reconcile → allocator caps) into a reusable harness so
+  `run_tick` and `femr_tick` share one path end-to-end.
 - [ ] **B13 — Move hardcoded trader address to config.** (REVIEW M6.)
 - [x] **B14 — Go-live runbook in-repo.** `docs/GO_LIVE.md`: gated checklist,
   secrets/env, promote/kill-switch/rollback, monitoring. (REVIEW D3.)

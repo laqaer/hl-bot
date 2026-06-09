@@ -355,8 +355,7 @@ def femr_tick(live: bool = False, execution: str = "taker"):
     live: place real orders on MAIN account, gated by guardrails.
           Bot only touches positions it itself opened (cloid-tagged).
     """
-    from ..agents.decisions import log_decision
-    from ..agents.runtime import fetch_market_view
+    from ..agents.runtime import fetch_market_view, gather_decisions
     from ..exec.orders import (
         HL_TRADER_ADDRESS,
         GuardrailConfig,
@@ -550,18 +549,18 @@ def femr_tick(live: bool = False, execution: str = "taker"):
         f"bot-owned: {sorted(owned_all) or '∅'} · manual: {manual_coins or '∅'}[/dim]"
     )
 
-    all_decisions = []
-    for agent in agents:
-        decisions = agent.decide(view)
-        for d in decisions:
-            d.is_paper = not live
-            # Only log non-place/flatten actions immediately (holds skipped, rejected later).
-            # `place` and `flatten` are logged ONLY after exchange acceptance in the execution
-            # loop below — otherwise the cooldown check would see our own intent rows and
-            # block subsequent ticks forever.
-            if d.action not in ("hold", "place", "flatten"):
-                log_decision(conn, d)
-            all_decisions.append(d)
+    # Gather decisions through the shared, tested path (agents.runtime). `place`
+    # and `flatten` are logged ONLY after exchange acceptance in the execution
+    # loop below (defer_exec_logging) — otherwise the cooldown check would see our
+    # own intent rows and block subsequent ticks forever. A crashing agent is
+    # isolated so it can't abort risk-reducing flattens from healthy agents.
+    all_decisions = gather_decisions(
+        conn, agents, view,
+        is_paper=not live,
+        defer_exec_logging=True,
+        log_holds=False,
+        honor_enabled=False,
+    )
 
     console.print(f"[green]✓[/green] {len(all_decisions)} decisions (live={live})")
     for d in all_decisions:

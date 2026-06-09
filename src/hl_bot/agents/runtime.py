@@ -71,25 +71,40 @@ def _agent_mode(conn: sqlite3.Connection, agent: str) -> tuple[str, bool]:
     return row["mode"], bool(row["enabled"])
 
 
-def run_tick(
+def gather_decisions(
     conn: sqlite3.Connection,
     agents: list[Agent],
-    base_url: str,
-    coins: list[str],
+    view: MarketView,
     *,
-    force_paper: bool = True,
+    is_paper: bool,
+    defer_exec_logging: bool = False,
+    log_holds: bool = True,
+    honor_enabled: bool = True,
 ) -> list[Decision]:
-    """One scheduling tick: fetch view, ask each agent, log decisions.
+    """Ask each agent to ``decide()``, isolating failures, and log per policy.
 
-    If force_paper is True (default), every decision is recorded with
-    is_paper=True regardless of agent mode. Flip to False only when you've
-    wired and reviewed the live order adapter.
+    The single decision-gathering path shared by the paper ``tick`` command
+    (:func:`run_tick`) and the live ``femr_tick`` loop, so one tested function
+    owns what gets logged and when (REVIEW M3 — the two paths had diverged and
+    only the paper one isolated agent crashes).
+
+    Every returned decision has ``is_paper`` set to ``is_paper``. A ``decide()``
+    that raises is caught, recorded as an ``error`` row, and skipped — one broken
+    agent can no longer abort the whole tick, so risk-reducing flattens from
+    healthy agents still run on the live path (this isolation was previously
+    missing from ``femr_tick``).
+
+    Logging policy:
+    - ``honor_enabled``: skip agents marked ``enabled=0`` in ``agent_state``.
+    - ``log_holds``: when False, ``hold`` rows are returned but not logged (noise).
+    - ``defer_exec_logging``: when True (the live path), ``place``/``flatten`` are
+      returned but NOT logged here — they're logged only after the exchange
+      confirms, with the real fill px/sz (see :func:`execute_decisions`), so the
+      cooldown check never sees our own intent rows.
     """
-    view = fetch_market_view(base_url, coins)
-    all_decisions: list[Decision] = []
+    out: list[Decision] = []
     for agent in agents:
-        mode, enabled = _agent_mode(conn, agent.name)
-        if not enabled:
+        if honor_enabled and not _agent_mode(conn, agent.name)[1]:
             log.info("agent %s disabled, skipping", agent.name)
             continue
         try:
@@ -103,10 +118,30 @@ def run_tick(
             log.exception("agent %s decide() failed", agent.name)
             continue
         for d in decisions:
-            d.is_paper = True if force_paper else (mode == "paper")
-            log_decision(conn, d)
-            all_decisions.append(d)
-    return all_decisions
+            d.is_paper = is_paper
+            defer = d.action == "hold" and not log_holds
+            defer = defer or (defer_exec_logging and d.action in ("place", "flatten"))
+            if not defer:
+                log_decision(conn, d)
+            out.append(d)
+    return out
+
+
+def run_tick(
+    conn: sqlite3.Connection,
+    agents: list[Agent],
+    base_url: str,
+    coins: list[str],
+    *,
+    force_paper: bool = True,
+) -> list[Decision]:
+    """One scheduling tick: fetch view, ask each agent, log decisions.
+
+    Places no orders — this is the paper ``tick`` path. Every decision is recorded
+    with ``is_paper=force_paper`` (default True), so the logged book stays paper.
+    """
+    view = fetch_market_view(base_url, coins)
+    return gather_decisions(conn, agents, view, is_paper=force_paper)
 
 
 @dataclass

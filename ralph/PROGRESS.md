@@ -496,3 +496,50 @@ this is safety/structure plumbing.
 **What's next (loop).** Finish B12 (reusable tick harness so `run_tick` ==
 live path end-to-end), userFills WS for instant maker-fill detection, B4-RUN
 (confirm carry on real history — network-gated), B16 (HL vault eval for AUM).
+
+---
+
+## Iteration 14 — 2026-06-08 — share one decision-gathering path + crash isolation (B12 / M3 / D2)
+
+**Context.** Structure/devops leverage, continuing B12. After Iter 13 extracted
+the order-*placement* loop (`execute_decisions`), the order-*gathering* loop was
+still duplicated: `runtime.run_tick` (paper `tick` cmd) and `cli.femr_tick` (live)
+each had their own "ask each agent to `decide()`, set `is_paper`, log" loop with
+divergent policy. Critically, only `run_tick` isolated a crashing agent — in
+`femr_tick`, one agent's `decide()` raising would abort the **whole live tick**,
+so risk-reducing flattens from healthy agents wouldn't run. That's a real safety
+gap (REVIEW M3 "two paths; the safe wrapper is dead code for live" + D2).
+
+**Changed (1 commit).**
+- **`agents/runtime.py`** — new `gather_decisions(conn, agents, view, *, is_paper,
+  defer_exec_logging=False, log_holds=True, honor_enabled=True)`: one tested
+  function owning what gets logged and when. Catches a `decide()` that raises,
+  records an `error` row (always paper), and continues to the next agent.
+  `defer_exec_logging` returns `place`/`flatten` without logging them (the live
+  path logs them only post-fill, with real px/sz, so cooldown never sees intent
+  rows); `log_holds=False` drops hold noise; `honor_enabled` skips `enabled=0`
+  agents. `run_tick` is now a thin `fetch_market_view` + `gather_decisions(...,
+  is_paper=force_paper)` (it places no orders — paper path); its dead
+  `force_paper=False` per-agent-mode branch is gone.
+- **`cli/main.py` `femr_tick`** — the inlined gather loop is replaced by
+  `gather_decisions(..., is_paper=not live, defer_exec_logging=True,
+  log_holds=False, honor_enabled=False)`, faithfully preserving its logging policy
+  **and** gaining the crash isolation it lacked. Removed the now-unused
+  `log_decision` import.
+
+**Evidence.** 116 → **120 tests pass** (4 new in `test_gather_decisions.py`:
+paper policy logs holds+place immediately; live policy defers place/flatten and
+skips holds while still returning them; a crashing agent is isolated as an `error`
+row so a healthy agent's flatten survives; `honor_enabled` skips disabled agents
+and is bypassed on the femr path); `ruff check src tests scripts` clean; CLI
+imports/registers.
+
+**Why it matters.** The live decision path now shares one importable, tested
+function with the paper path instead of a hand-rolled loop, and a single bad agent
+can no longer take down a live tick — flattens (risk reduction) still execute.
+Safety/structure plumbing, not an edge claim.
+
+**What's next (loop).** Finish B12 (fold the femr_tick clearinghouse/position/
+reconcile/allocator preamble into a reusable harness so `run_tick` == live path
+end-to-end), userFills WS for instant maker-fill detection, B4-RUN (confirm carry
+on real history — network-gated), B16 (HL vault eval for AUM).
