@@ -1109,3 +1109,87 @@ too short/regime-dominated for *any* cross-sectional rank to be stable — longe
 horizons or fundamentally different structure may be required. (3) Retire femr from
 the live roster (B-femr-regime) — still dormant + funding-driven, and carry is pruned.
 Keep pruning until one signal clears the multi-window bar.
+
+---
+
+## Iteration 23 — 2026-06-08 — B-tsmom: time-series (absolute) momentum is the fifth thesis pruned (NOT DURABLE, both universes)
+
+**Context.** Four signals are pruned, all *relative* dollar-neutral cross-sectional
+ranks: TWAP-MR (B1), funding carry on majors + alts (B1-alt), cross-sectional momentum
+(B-mom), and its regime-gated variant (B-mom-regime). The standing next-step across the
+last three iterations was a **structurally-different** signal class. The orthogonal axis
+to a cross-sectional rank is *time-series (absolute) momentum* — trend-following — where
+each coin is traded independently on the sign of its **own** trailing return, so the book
+takes **net directional** exposure (all-long in a broad rally, all-short in a sell-off)
+instead of washing out beta. It is the single most-documented systematic edge (CTA) and
+the one directional strategy that is regime-*adaptive* (it flips short in downtrends).
+Whether net-directional trend survives costs *and* a disjoint out-of-time window is exactly
+what the Iteration-22 durability bar (`confirm --windows 2+`) exists to judge.
+
+**Code change (the committed increment, with tests).**
+- **`agents/ts_momentum.py` — `ts_momentum_v1`.** Per-coin trend signal (no cross-sectional
+  ranking): LONG when own `lookback_bars` trailing return ≥ `enter_return`, SHORT when
+  ≤ −`enter_return`; exit when |return| < `exit_return`, the trend flips sign, or it leaves
+  the band. Strongest trends funded first within the per-trade / total-notional /
+  concurrency caps. Maker-friendly (patient entries). A `reversion` flag fades the trend in
+  the same book. Volume-gated; reuses the repo's decision-log `_open_positions` replay.
+- **Registered** `ts_momentum_v1` in both the `backtest` and `confirm` CLI factories.
+- **`tests/test_ts_momentum.py` (+6):** longs up-trend / shorts down-trend / ignores the
+  calm name; **takes NET exposure** (two up-trends → two longs, the structural difference
+  from the dollar-neutral book); sub-band not traded; `reversion` fades; short series holds;
+  books positive maker PnL on a continuing trend.
+
+**Experiment — durability bar from the first run (measurement; caches gitignored).**
+`confirm --windows 2 --prefer maker`, walk-forward + cost ladder, two disjoint back-to-back
+120d/1h windows:
+
+| universe | window | in-sample | oos | maker full | verdict |
+|---|---|---|---|---|---|
+| **majors** (BTC,ETH,SOL,HYPE,AVAX,LINK) | trailing 120d | −2.7 | +15.4 | **+2.8** | ❌ not confirmed |
+|  | 120d ending 120d ago | −15.4 | +19.5 | **−4.6** | ❌ |
+| **high-funding alts** (INJ,PURR,TRUMP,AERO,NIL,APT,SPX,PYTH,EIGEN,S) | trailing 120d | −5.4 | +21.2 | **+2.4** | ❌ not confirmed |
+|  | 120d ending 120d ago | −15.8 | +1.9 | **−10.6** | ❌ |
+
+Both universes → **NOT DURABLE** (full-sample edge FLIPS SIGN across windows: majors
++2.8 → −4.6bps, alts +2.4 → −10.6bps).
+
+**Evidence — pruned, and pruned for the same reason as B-mom.** The result is decisive and
+structurally informative. On the trailing window the strategy looks marginally positive on
+the full sample (+2.8 / +2.4bps) but is **negative in-sample** (−2.7 / −5.4) with a strongly
+positive OOS (+15.4 / +21.2) — i.e. it doesn't even *confirm* within the recent window; the
+positive full-sample number is carried entirely by a mid-window regime inversion (the same
+in→oos sign-flip that sank plain cross-sectional momentum in B-mom). The
+immediately-preceding 120d then flips the full-sample edge firmly negative (−4.6 / −10.6bps).
+That is the textbook window-specific-artifact signature, and the durability bar names it
+explicitly. Net-directional trend over disjoint 120d windows is, as suspected, largely a bet
+on each window's regime — it does not carry a cost-surviving edge across regimes here.
+
+**Honest conclusion (the fifth thesis pruned).** **Time-series momentum is not a durable
+edge** on either majors or high-funding alts at the 1h/120d horizon, after maker costs and
+the out-of-time bar. The five structurally-different theses now pruned: TWAP-MR, funding
+carry (majors + alts), cross-sectional momentum, regime-gated cross-sectional momentum, and
+**time-series momentum** — i.e. *both* the relative (dollar-neutral) and the absolute
+(directional) momentum classes fail the same disjoint-window test, in the same way (a
+trailing-window artifact that reverses on the prior window). This sharpens the meta-lesson
+from Iteration 20/22: at the 1h/120d evaluation horizon, **price-return momentum in any form
+is regime-dominated** — the window's trend, not a persistent edge, is what the backtest
+measures. The chassis remains strong; no signal has cleared the multi-window bar. Negative
+result is the value: it stopped a CTA-style directional book from reaching paper on the
+strength of a single flattering window. No strategy/sizing/live-mode change.
+
+**Evidence (gate).** `uv run pytest -q` → **136 passed** (+6); `ruff check src tests
+scripts` → clean. Committed increment is the agent + registration + 6 tests (pure, offline);
+all confirm numbers are measurement (caches gitignored).
+
+**What's next (loop).** Five momentum/carry theses pruned; the honest read is that
+*price-return rank/trend at 1h/120d is regime-dominated and unlikely to yield a durable
+edge in any further variant.* The higher-leverage moves are now signals that are **not**
+price-return derivatives: (1) **microstructure / event** signals (liquidation-cascade
+follow-through, order-flow imbalance) — these need a tick/WS replay the offline candle
+harness can't yet provide, so the slice is *building that data path* (a fills/trades replay
+into `Frame`), then testing through `confirm --windows 2+`; (2) **basis / term-structure**
+(perp-vs-spot or funding term structure) — a genuinely different economic driver, though
+M5 flags the spot-scaling as fragile; (3) consider a **longer evaluation horizon** (4h/1d
+bars, >120d) to test whether the regime-domination is a horizon artifact before abandoning
+cross-sectional structure entirely. (4) Retire femr from the live roster (B-femr-regime).
+Keep pruning until one signal clears the multi-window bar.

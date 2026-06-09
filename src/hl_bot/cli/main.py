@@ -19,6 +19,7 @@ from ..agents.funding_carry import FundingCarryAgent
 from ..agents.liq_cascade import LiqCascadeAgent
 from ..agents.meta_allocator import MetaAllocator, MetaAllocatorConfig
 from ..agents.runtime import run_tick
+from ..agents.ts_momentum import TsMomentumAgent
 from ..agents.twap_mr import TwapMrAgent
 from ..agents.twap_mr_regime import TwapMrRegimeAgent
 from ..agents.veto import VetoAgent
@@ -745,6 +746,7 @@ def backtest(
         "funding_carry_v1": lambda conn: FundingCarryAgent(config={}, conn=conn),
         "xfund_carry_v1": lambda conn: XFundCarryAgent(config={}, conn=conn),
         "xsect_momentum_v1": lambda conn: XSectMomentumAgent(config={}, conn=conn),
+        "ts_momentum_v1": lambda conn: TsMomentumAgent(config={}, conn=conn),
         "liq_cascade_v1": lambda conn: LiqCascadeAgent(config={}, conn=conn),
         "basis_v1": lambda conn: BasisAgent(config={}, conn=conn),
     }
@@ -848,6 +850,7 @@ def confirm(
         "funding_carry_v1": lambda conn: FundingCarryAgent(config={}, conn=conn),
         "xfund_carry_v1": lambda conn: XFundCarryAgent(config={}, conn=conn),
         "xsect_momentum_v1": lambda conn: XSectMomentumAgent(config={}, conn=conn),
+        "ts_momentum_v1": lambda conn: TsMomentumAgent(config={}, conn=conn),
         "liq_cascade_v1": lambda conn: LiqCascadeAgent(config={}, conn=conn),
         "basis_v1": lambda conn: BasisAgent(config={}, conn=conn),
     }

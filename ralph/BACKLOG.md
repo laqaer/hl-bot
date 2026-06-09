@@ -90,6 +90,19 @@ Keep it ruthlessly prioritized: the top item should always be the highest-levera
   bar that hand-pruned the Iteration-19/20 momentum lead is now a single adversarial
   command — every future candidate runs `confirm --windows 2+` before any paper/live talk.
   Numbers in PROGRESS.md Iteration 22.
+- [x] **B-tsmom — Time-series (absolute) momentum: the structurally-different
+  directional signal. PRUNED (Iteration 23).** New `ts_momentum_v1`: trades each coin
+  independently on the sign of its *own* trailing return (LONG up-trend / SHORT
+  down-trend), so the book takes *net directional* exposure — the orthogonal class to
+  the four pruned dollar-neutral cross-sectional ranks; canonical trend-following (CTA)
+  edge. Registered in `backtest`/`confirm`, 6 unit tests. Run through the durability bar
+  (`confirm --windows 2 --prefer maker`) from the *first* run, not a single trailing
+  window. **Result: NOT DURABLE on majors AND high-funding alts.** Same artifact
+  signature as B-mom: trailing window marginally positive (majors full +2.8 / alts +2.4)
+  but **in-sample negative** (−2.7 / −5.4 → oos +15.4 / +21.2 — a mid-window regime
+  inversion), and the older 120d window **flips sign** (majors −4.6 / alts −10.6). Five
+  structurally-different theses now pruned after the out-of-time bar. Numbers in
+  PROGRESS.md Iteration 23.
 - [ ] **B-femr-regime — femr is dormant on majors; retire or repurpose.** femr's
   130%-APR entry never trips on liquid coins (B1). B1-alt now shows funding *carry*
   has no edge even where funding is high, so widening femr (also funding-driven) to
