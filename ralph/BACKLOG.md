@@ -7,17 +7,27 @@ Keep it ruthlessly prioritized: the top item should always be the highest-levera
 
 ## P0 — find an edge (the whole point)
 
-- [ ] **B-exec-roundtrip — (NINTH thesis, slice 2) round-trip / inventory-skew maker quoting.** Slice 1
-  (Iteration 36) built the maker-spread model and found the naive **symmetric** two-sided quote is
-  **net-negative & sign-stable** on majors at every half-spread and at both 1h/5m cadence (adverse selection
-  runs ~1.5–2bps above the captured half-spread — a bid fills precisely on down-bars). The ONE positive
-  structure the model found: bars where **both** sides fill (`n_both`) are adverse-free round-trips
-  (~2×spread − 2×fee, end flat); the entire bleed is from **single-sided fills carrying inventory into the
-  adverse move.** Slice 2: add a round-trip/inventory-skew mode to `maker_spread.py` (only book the
-  adverse-free both-sides fills, or cancel the resting side once inventory is held / skew quotes against
-  inventory) and run it on the two-window majors bar. If that also fails, the execution-spread thesis prunes
-  as the ninth. (A second refinement, **tick/touch-level marking** — 1h/5m close-marking over-attributes
-  intrabar drift as adverse — is parked below this.) Maker-only, no live change. Numbers in PROGRESS Iter 36.
+- [x] **B-exec-roundtrip — (NINTH thesis, slice 2) round-trip / inventory-skew maker quoting. DONE
+  (Iteration 37): the `n_both` rescue FAILS — net-NEGATIVE & sign-stable at every half-spread, both windows,
+  even WORSE per-event than the symmetric quote → the ninth (execution) thesis is PRUNED.** Added
+  `simulate_maker_inventory`/`simulate_universe_inventory` + `MakerInventoryResult` to `maker_spread.py`
+  (no-lookahead, ≤1 lot, skews fully against inventory: quotes both sides when flat, then only the exit side
+  once a lot is held; realizes PnL per completed round-trip; unclosed lots reported & unbooked; +6 tests).
+  **Result (real HL majors, 1h, maker_fee=1bp, 120d×2):** INV net **−4.9 to −6.5 bps/round-trip**, sign-stable
+  across both windows & all half-spreads (2/5/10/20bps). The in-bar round-trips are genuinely adverse-free
+  (`gross=2×hs`, adverse 0) and dominate by count (~70–87%), but **you can't pre-select two-sided bars** — the
+  ~13–37% *carried* round-trips (single-sided fills unwound to stay ≤1 lot) average ~**64bps adverse each** and
+  sink the pool. Skewing against inventory doesn't avoid adverse selection, it **defers** it
+  (fill-when-wrong → unwind-when-still-wrong). Both passive spread-capture forms (symmetric slice 1 +
+  inventory-skew slice 2) are net-negative & sign-stable. **The one positive structure (adverse-free in-bar
+  round-trips) is real but unharvestable.** Maker-only, no live change. Numbers in PROGRESS Iter 37.
+- [ ] **B-exec-tickmark — (parked, low priority; a model refinement, NOT a new thesis) sub-bar / tick-level
+  fill marking.** Both maker slices mark fills to the **bar close**, a pessimistic adverse proxy (a real maker
+  often recaptures the spread within seconds, so close-marking over-attributes intrabar continuation as
+  adverse). The inventory model (Iter 37) partly answers this — its carried round-trips wait whole bars
+  (avg hold up to 0.9 at 20bps) so much of their adverse is genuine multi-bar drift — and the structural prune
+  is robust to it (even the adverse-free in-bar round-trips can't be harvested). Only worth running if a future
+  iteration fetches trade-tick / L2 data anyway (overlaps the sub-bar execution angle). Maker-only, no live.
 - [x] **B-exec — Execution / maker-rebate capture (the NINTH structurally-different thesis; an *execution*
   edge, not a *direction* edge). Slice 1 DONE (Iteration 36): model built + naive symmetric quote is
   net-NEGATIVE & sign-stable.** Eight direction/relative theses are pruned or reduced to an

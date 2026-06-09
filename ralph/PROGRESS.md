@@ -2191,3 +2191,87 @@ mode to the model (only book the adverse-free both-sides fills, or cancel the re
 held) and run it through the two-window bar — the natural test of whether the execution edge lives in
 disciplined round-tripping; (2) if that also fails, the symmetric+skew execution thesis prunes cleanly as the
 ninth. File the round-trip slice as **B-exec-roundtrip**.
+
+## Iteration 37 — 2026-06-08 — B-exec-roundtrip (slice 2): inventory-skew / round-trip-only maker — the adverse-free `n_both` rescue FAILS; net-NEGATIVE & sign-stable at every half-spread & both windows → the NINTH (execution) thesis is PRUNED
+
+**Context.** Slice 1 (Iter 36) built the maker-spread model and found the naive **symmetric** two-sided
+quote net-negative & sign-stable on majors (−2.6 to −3.3bps/fill, both 120d windows, all half-spreads): adverse
+selection runs ~1.5–2bps above the captured half-spread because a resting bid fills precisely on down-bars.
+The ONE positive structure the model found was the **both-sides-fill bar** (`n_both`): an adverse-free
+in-bar round-trip (~2×spread − 2×fee, end flat) — the entire bleed comes from **single-sided fills carrying
+inventory into the adverse move.** Slice 2 tests the obvious rescue: a maker that *only* round-trips.
+
+**What changed (code, with tests).** Added an inventory-skew variant to `backtest/maker_spread.py`
+(`simulate_maker_inventory` / `simulate_universe_inventory` + `MakerInventoryResult`, no-lookahead, pure).
+It holds **at most one lot** and **skews fully against inventory**: while flat it quotes both sides at
+`m0*(1∓hs)`; a both-sides-fill bar books an adverse-free in-bar round-trip; a single-sided fill leaves a lot
+and from the next bar the maker quotes **only the reducing (exit) side** until it fills, then realizes the
+round-trip and resumes two-sided quoting. Realized PnL decomposes per completed round-trip into captured
+spread (≈2 half-spreads) − mid drift over the hold (adverse) − 2 maker fees; lots still open at series end are
+reported (`unclosed_inventory`) and **not** booked (no lookahead, no optimistic mark). +6 unit tests pin the
+in-bar adverse-free identity, the carried-round-trip hold-drift decomposition, the ≤1-lot/no-double-entry
+skew, unclosed handling, and universe pooling.
+
+**Evidence — real HL history, majors (BTC,ETH,SOL,HYPE,AVAX,LINK), 1h, maker_fee=1bp, no rebate, two disjoint
+120d windows. SYM = slice-1 symmetric (net bps/fill); INV = inventory-skew (net bps/round-trip):**
+
+```
+                    SYM net/fill      INV net/round-trip      INV decomposition (pooled over ALL round-trips)
+trailing 120d (17286 bars):
+  hs= 2bps   -3.14 (fr 93.5%)   -6.25  per-quote -5.50   rt=15194 (inbar 13259 / carr 1935, hold 0.1)  gross 4.0 − adv 8.2
+  hs= 5bps   -3.05 (fr 88.6%)   -6.11  per-quote -4.88   rt=13789 (inbar 10763 / carr 3026, hold 0.3)  gross 10.0 − adv 14.1
+  hs=10bps   -2.71 (fr 80.6%)   -5.07  per-quote -3.48   rt=11882 (inbar  7689 / carr 4193, hold 0.5)  gross 20.0 − adv 23.1
+  hs=20bps   -2.59 (fr 65.1%)   -4.89  per-quote -2.49   rt= 8783 (inbar  3724 / carr 5059, hold 0.9)  gross 40.0 − adv 42.9
+older 120d (12736 bars):
+  hs= 2bps   -3.26 (fr 93.8%)   -6.49  per-quote -5.75   rt=11273 (inbar  9923 / carr 1350, hold 0.1)  gross 4.0 − adv 8.5
+  hs= 5bps   -3.31 (fr 89.0%)   -6.46  per-quote -5.23   rt=10300 (inbar  8182 / carr 2118, hold 0.2)  gross 10.0 − adv 14.5
+  hs=10bps   -3.01 (fr 81.4%)   -5.95  per-quote -4.18   rt= 8940 (inbar  6015 / carr 2925, hold 0.4)  gross 20.0 − adv 23.9
+  hs=20bps   -2.75 (fr 67.2%)   -5.23  per-quote -2.82   rt= 6869 (inbar  3318 / carr 3551, hold 0.8)  gross 40.0 − adv 43.2
+```
+
+**Honest read — the rescue fails, and the decomposition shows exactly why.** Disciplined round-tripping is
+**net-negative at every half-spread, both windows, sign-stable** — and per-event *worse* than the symmetric
+bleed (−4.9 to −6.5 bps/round-trip vs −2.6 to −3.3 bps/fill). The in-bar round-trips really are adverse-free
+(`gross = 2×hs` exactly, adverse 0) and they dominate by **count** (~70–87% of round-trips), yet the pool
+nets negative because **you cannot pre-select two-sided bars.** The ~13–37% of round-trips that are *carried*
+(a single-sided fill you must unwind to stay ≤1 lot) inherit enormous realized adverse: e.g. at hs=2bps
+trailing, pooled adverse 8.2 over 15194 round-trips with the 13259 in-bar ones contributing 0 ⇒ the 1935
+carried round-trips average ~**64bps adverse each** (≈ −62bps net), and that tail alone sinks the whole book.
+Skewing against inventory doesn't *avoid* adverse selection — it just **defers** it from "fill-when-wrong" to
+"unwind-when-still-wrong." Widening the quote raises gross but adverse rises in lockstep (you only fill, and
+only get to exit, when price has already moved), so net stays pinned negative. Same sign-stable signature as
+slice 1: no direction = no regime to flip, but sign-stably *negative*.
+
+**Net — the ninth, *execution* thesis is PRUNED.** Both forms of passive spread capture on bar-marked liquid
+majors fail: the symmetric two-sided quote (slice 1) and the inventory-skew/round-trip-only variant (slice 2),
+each net-negative and sign-stable across two disjoint 120d windows and every half-spread. The one positive
+structure the model contained (adverse-free in-bar round-trips) is real but **unharvestable** — it cannot be
+isolated without lookahead, and the single-sided inventory you're forced to carry to chase it is precisely the
+slice-1 adverse bleed in deferred form. Nine structurally-different theses (eight directional + one execution)
+are now pruned or reduced to an over-conditioned point. `maker_spread.py` (symmetric + inventory) stays as a
+measurement/model tool; nothing touches capital, no live change.
+
+**One model refinement remains parked (low priority), NOT a new thesis.** Both slices mark fills to the
+**bar close**; a real maker often recaptures the spread within seconds, so 1h/5m close-marking is a
+*pessimistic* adverse proxy that over-attributes intrabar continuation as adverse (B-exec-tickmark). The
+inventory model partly answers this — its carried round-trips wait whole bars (avg hold up to 0.9 bars at
+20bps), so much of their adverse is genuine multi-bar realized drift, not a single-bar marking artifact — but
+a sub-bar (trade-tick) fill/mark study could still tighten the adverse estimate. It is parked below any fresh
+thesis: the structural conclusion (passive symmetric/skew spread capture is net-negative on majors) is robust
+to it, since even the *adverse-free* in-bar round-trips can't be harvested.
+
+**Evidence (gate).** `uv run pytest -q` → **212 passed** (+6 inventory-skew); `ruff check src tests scripts`
+→ clean. Edge numbers are measurement (live candle fetch, no `data/` writes committed). No strategy in the
+live roster changed; no live mode enabled.
+
+**What's next (loop).** Nine theses pruned across two orthogonal classes (direction and execution), all
+net-negative or regime-sensitive after costs on this universe/cadence. The cheap, model-only angles are
+exhausted; the remaining unexplored directions are structurally different *data/cadence* regimes rather than
+new signals on 1h majors candles: (a) **sub-bar execution** — fetch trade-tick / L2 data and re-test maker
+spread capture at the cadence the edge actually lives at (REVIEW C7: signal horizon ≫ 1h action cadence —
+this is the honest version of the parked tick-mark refinement and the natural next *infrastructure* slice);
+(b) **basis / term-structure** between perp and a longer-horizon reference (the one named candidate class from
+Iter 33 never run); (c) accept the search's verdict and pivot to **honest measurement / paper track-record**
+(Path C) so the negative-edge finding is itself the deliverable. The next iteration should pick one — (a) is
+the highest-leverage because it directly attacks the cadence mismatch that REVIEW flagged as a root cause and
+that every bar-marked backtest (incl. both maker slices) cannot rule out.
