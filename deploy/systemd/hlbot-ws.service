@@ -14,9 +14,7 @@ ExecStart=/usr/bin/env bash -lc 'uv run hlbot ws --coins "$${HLBOT_WS_COINS:-BTC
 Restart=always
 RestartSec=10
 NoNewPrivileges=true
-ProtectSystem=strict
-ProtectHome=read-only
-ReadWritePaths=/opt/hl-bot/data
+ProtectSystem=full
 PrivateTmp=true
 
 [Install]

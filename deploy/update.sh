@@ -27,6 +27,10 @@ as_hlbot 'uv sync --frozen -q' || { echo "[update] uv sync failed; aborting"; ex
 if as_hlbot 'uv run pytest -q' >/tmp/hlbot_update.log 2>&1; then
   echo "$current" > "$HOME_DIR/data/.deployed_sha"
   chown "$USER_":"$USER_" "$HOME_DIR/data/.deployed_sha" 2>/dev/null || true
+  # Propagate any systemd unit changes pulled with this commit, then reload.
+  cp "$HOME_DIR"/deploy/systemd/hlbot-*.service "$HOME_DIR"/deploy/systemd/hlbot-*.timer \
+     /etc/systemd/system/ 2>/dev/null || true
+  systemctl daemon-reload
   systemctl restart hlbot-tick.timer hlbot-ws.service 2>/dev/null || true
   echo "[update] deployed + restarted $current"
 else

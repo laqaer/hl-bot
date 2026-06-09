@@ -11,6 +11,4 @@ EnvironmentFile=/etc/hl-bot/env
 ExecStart=/usr/bin/env bash -c 'uv run hlbot report --send; uv run hlbot track-record'
 TimeoutStartSec=180
 NoNewPrivileges=true
-ProtectSystem=strict
-ProtectHome=read-only
-ReadWritePaths=/opt/hl-bot/data
+ProtectSystem=full

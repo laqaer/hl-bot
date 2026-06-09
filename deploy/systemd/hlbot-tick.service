@@ -11,9 +11,8 @@ EnvironmentFile=/etc/hl-bot/env
 ExecStart=/opt/hl-bot/deploy/run-tick.sh
 # Don't pile up overlapping runs if one is slow.
 TimeoutStartSec=300
-# Hardening
+# Hardening (full protects /usr,/etc,/boot but leaves /opt + /home writable so
+# uv can manage its venv + cache; read-only home breaks uv).
 NoNewPrivileges=true
-ProtectSystem=strict
-ProtectHome=read-only
-ReadWritePaths=/opt/hl-bot/data
+ProtectSystem=full
 PrivateTmp=true
