@@ -7,6 +7,28 @@ Keep it ruthlessly prioritized: the top item should always be the highest-levera
 
 ## P0 — find an edge (the whole point)
 
+- [x] **B-basis — Perp-vs-spot basis reversion (the TENTH structurally-different thesis; the LAST named
+  candidate class, flagged unrun in Iter 33/37). PRUNED as a deployable edge (Iteration 38): the pooled
+  sign-stable-positive point is a KNIFE-EDGE in every param AND an averaging artifact of coins whose
+  per-coin sign FLIPS across windows.** HL lists spot for the wrapped majors (UBTC `@142`, UETH `@151`,
+  USOL `@156`) + native HYPE (`@107`) — the only liquid perp/spot overlaps (verified vs spotMeta) — so a
+  same-venue basis `b=perp/spot−1` is directly measurable. New pure `backtest/basis_reversion.py`
+  (`BasisBar`/`bars_from_candles`/`simulate_basis_reversion`/`simulate_universe_basis` + `SPOT_MARKETS`,
+  no-lookahead rolling-z reversion: SHORT perp when basis rich z≥+entry / LONG when cheap z≤−entry, exit on
+  |z|≤exit; perp-only directional, decomposes each round-trip into perp-move − 2×maker-fee; +8 tests).
+  Orthogonal to all nine pruned theses: keys off the *cross-market price gap of the same asset*, not own
+  return / funding level / pairwise ratio / clock / execution. **Result (real HL, BTC/ETH/SOL/HYPE, 1h,
+  maker_fee=1bp, two disjoint 120d windows):** at lb=48/entry_z=2.0/exit_z=0.5 BOTH windows are net-POSITIVE
+  & sign-stable (**+1.6 / +11.1 bps/round-trip**) — the first sign-stable-positive candidate since pairs —
+  BUT it is a **knife-edge**: entry_z 1.5→−1.9/2.5→−4.9 (trailing sign-flips), lookback 24/36/72 flip,
+  exit_z 0.25→−5.0/1.0→trailing+ but older≈0. And the per-coin decomposition shows the pooled positivity is
+  an **averaging artifact**: BTC flips −7.0(trail)→+17.6(old), HYPE flips +5.2→−7.6; the older window's pool
+  is ETH/BTC-specific (+32/+18) and does not repeat. So no constituent carries a durable basis edge, and the
+  trailing-window majors basis is ~zero-to-marginal — **M5's prior (majors basis tiny & well-arbitraged) is
+  confirmed.** Same failure signature as pairs slice 4 (portfolio-averaging point that breaks under
+  decomposition). The universe CANNOT be widened (no other liquid perp/spot overlaps on HL), so there is no
+  rescue basket. Tenth thesis pruned; `basis_reversion.py` stays as a measurement tool. Maker-only, no live
+  change. Numbers in PROGRESS Iter 38.
 - [x] **B-exec-roundtrip — (NINTH thesis, slice 2) round-trip / inventory-skew maker quoting. DONE
   (Iteration 37): the `n_both` rescue FAILS — net-NEGATIVE & sign-stable at every half-spread, both windows,
   even WORSE per-event than the symmetric quote → the ninth (execution) thesis is PRUNED.** Added

@@ -2275,3 +2275,87 @@ Iter 33 never run); (c) accept the search's verdict and pivot to **honest measur
 (Path C) so the negative-edge finding is itself the deliverable. The next iteration should pick one — (a) is
 the highest-leverage because it directly attacks the cadence mismatch that REVIEW flagged as a root cause and
 that every bar-marked backtest (incl. both maker slices) cannot rule out.
+
+## Iteration 38 — 2026-06-08 — B-basis: perp-vs-spot basis reversion (TENTH thesis, the last named candidate class) — PRUNED; the one sign-stable-positive point is a knife-edge + per-coin-sign-flip averaging artifact
+
+**Context.** Nine theses are pruned (eight directional + one execution), and Iter 37 flagged the
+model-only candle search as exhausted with three named next directions: (a) sub-bar/tick execution, (b)
+**basis / term-structure** (the one named candidate class never run, from Iter 33), (c) pivot to
+measurement. (a) needs historical L2/trade-tick data HL doesn't serve deeply (blocked-ish); (b) turned out
+**unblocked** — HL lists spot markets for the wrapped majors (UBTC `@142`, UETH `@151`, USOL `@156`) plus
+native HYPE (`@107`), verified against `spotMeta`, so a same-venue perp-vs-spot basis `b = perp/spot − 1`
+is directly measurable for the majors basket. Ran (b).
+
+**Thesis (tenth, structurally-different).** The perp trades rich/cheap to its own spot between funding
+stamps; cash-and-carry pressure pulls it back. Signal = rolling z-score of the basis: **SHORT the perp when
+rich (z ≥ +entry), LONG when cheap (z ≤ −entry), exit on |z| ≤ exit.** It is *perp-only and directional*
+(does not hold the spot leg — the engine trades perps only, so this is not a delta-neutral cash-and-carry
+arb). Orthogonal to all nine pruned theses: keys off the **cross-market price gap of the same asset**, not a
+coin's own return (momentum), funding *level* (carry), a *pairwise* ratio of two coins (pairs), the *clock*
+(session), or *execution* microstructure. REVIEW M5's prior: majors basis is "tiny and well-arbitraged" — a
+prior to test with a number, not assume.
+
+**What changed (code, with tests).** New pure `src/hl_bot/backtest/basis_reversion.py` (mirrors the
+self-contained `maker_spread.py` model, since the replay `Frame` has no spot reference and plumbing one in
+for an unproven thesis is unjustified): `BasisBar` (perp+spot close, `.basis` property), `bars_from_candles`
+(inner-join perp+spot raw candles by open time `t`), `SPOT_MARKETS` mapping, and no-lookahead
+`simulate_basis_reversion` / `simulate_universe_basis` with a `BasisReversionResult` decomposing each
+completed round-trip into the captured perp move (`direction × (perp_exit/perp_entry − 1)`) minus the
+round-trip maker fee. The z-score at bar `i` uses only the trailing `lookback_bars` basis values ending at
+`i` (all known at close `i`); positions still open at series end are reported `unclosed` and **not** booked
+(no optimistic mark). +8 unit tests pin the basis math, the inner-join alignment, the warmup bar count, the
+rich→short / cheap→long direction with the perp-move−fee identity, and unclosed handling.
+
+**Evidence — real HL history, BTC/ETH/SOL/HYPE, 1h, maker_fee=1bp, two disjoint 120d windows. `net` =
+per-round-trip net-of-cost edge (bps):**
+
+```
+Param sweeps (pooled universe), trailing / older net bps/round-trip:
+  entry_z (lb=48, exit=0.5):  1.5 → -1.92 / +14.15  (trailing SIGN-FLIPS)
+                              1.75→ -1.89 / +12.00  (flip)
+                              2.0 → +1.60 / +11.06  ← SIGN-STABLE+ (the only one)
+                              2.25→ -4.94 / +14.44  (flip)
+                              2.5 → -5.17 /  -1.59  (both negative)
+  lookback (ez=2.0, exit=0.5): 24 → -0.91 / +11.45  | 36 → -1.77 / +12.41
+                               48 → +1.60 / +11.06  | 72 → -3.52 /  +8.63  | 96 → +0.40 / +10.41
+  exit_z (ez=2.0, lb=48):     0.0 →  0.00 /  0.00 (no trades) | 0.25 → -5.02 / +28.12
+                              0.5 → +1.60 / +11.06 | 1.0 → +1.11 / -0.01
+
+Per-coin decomposition at the lone sign-stable point (lb=48, ez=2.0, exit=0.5), net bps/RT:
+  trailing:  BTC -6.97 | ETH +4.39 | SOL +3.85 | HYPE +5.24   (pool +1.60)
+  older:     BTC +17.57| ETH +31.97| SOL +0.80 | HYPE -7.59   (pool +11.06)
+```
+
+**Honest read — a lead-shaped artifact, pruned.** At exactly lb=48 / entry_z=2.0 / exit_z=0.5 BOTH disjoint
+windows are net-positive and sign-stable (+1.6 / +11.1) — the first sign-stable-positive candidate since
+pairs. But it fails on two independent counts: **(1) knife-edge** — it is the *only* sign-stable-positive
+point in the whole sweep; every neighbor flips the trailing window negative (entry_z 1.5/1.75/2.25/2.5,
+lookback 24/36/72, exit_z 0.25/1.0), so it is a data-mined point, not a plateau. **(2) per-coin sign-flip /
+averaging artifact** — the pooled positivity is not a coherent effect: BTC flips −7.0(trailing)→+17.6(older)
+and HYPE flips +5.2→−7.6 across the two windows, and the older pool is ETH/BTC-specific (+32/+18) that does
+not repeat in trailing. No constituent carries a durable basis edge; the pooled "+1.6/+11.1 sign-stable" is
+the same portfolio-averaging illusion that broke pairs under leave-one-out (Iter 32/33). The trailing-window
+majors basis is ~zero-to-marginal, **confirming REVIEW M5's prior** (majors basis tiny & well-arbitraged).
+
+**Net — the tenth thesis is PRUNED.** Crucially, the basis universe **cannot be widened**: UBTC/UETH/USOL
++ HYPE are the *only* liquid perp/spot overlaps on HL (other spot tokens are HL-native memes without perps),
+so there is no disjoint rescue basket to push to — unlike pairs/session, the prune is structurally complete
+in one slice. Ten structurally-different theses now pruned (eight directional + one execution + one
+cross-market), every one either net-negative after costs or non-durable (regime-/window-/param-specific) on
+HL majors+alts at 1h cadence. `basis_reversion.py` stays as a measurement/model tool; nothing touches
+capital, no live change.
+
+**Evidence (gate).** `uv run pytest -q` → **220 passed** (+8 basis-reversion); `ruff check src tests
+scripts` → clean. Edge numbers are measurement (live candle fetch, no `data/` writes committed). No strategy
+in the live roster changed; no live mode enabled.
+
+**What's next (loop).** The fresh-thesis search on HL's available data (1h+ perp candles, funding, the four
+perp/spot overlaps) is now genuinely exhausted across direction, execution, and cross-market classes — ten
+prunes with the same regime/window-sensitivity or net-negative-after-cost signature. The two honest
+remaining directions are: (a) **sub-bar / event-driven execution** — re-test the fast MR/maker edges at the
+cadence REVIEW C7 says they actually live at, which requires fetching trade-tick / L2 data (an
+*infrastructure* slice, and the only direction that attacks a root cause no bar-marked backtest can rule
+out); or (b) accept the search verdict and make the **negative-edge finding itself the deliverable** —
+pivot to Path C honest measurement / paper track-record (the supervisor/accounting/risk chassis is the
+strong part of the repo, per REVIEW). The next iteration should pick one; (a) is higher-leverage if
+trade-tick history is reachable, else (b) is the honest close.
