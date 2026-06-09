@@ -13,9 +13,16 @@ from __future__ import annotations
 from hl_bot.agents.base import MarketView
 from hl_bot.agents.decisions import Decision, log_decision
 from hl_bot.agents.funding_carry import FundingCarryAgent
-from hl_bot.agents.xfund_carry import XFundCarryAgent
+from hl_bot.agents.xfund_carry import XFundCarryAgent, rolling_beta
 from hl_bot.backtest.engine import Backtester, CostModel, Frame
 from hl_bot.db.schema import init_db
+
+
+def _closes_from_returns(rets: list[float], base: float = 100.0) -> list[float]:
+    out = [base]
+    for r in rets:
+        out.append(out[-1] * (1 + r))
+    return out
 
 HOUR = 3_600_000
 
@@ -109,6 +116,56 @@ def test_hold_while_eligible_still_exits_on_flip_and_normalize():
     reasons = {d.coin: d.reasoning for d in out if d.action == "flatten"}
     assert "FLIP" in reasons and "FLIPPED" in reasons["FLIP"]
     assert "CALM" in reasons and "NORMALIZED" in reasons["CALM"]
+
+
+def test_rolling_beta_recovers_known_slope():
+    # coin returns are exactly 2x the market's -> OLS beta == 2.0 (mean-invariant).
+    mkt_rets = [0.01, -0.02, 0.03, -0.01, 0.02, -0.015, 0.025]
+    mkt = _closes_from_returns(mkt_rets)
+    coin = _closes_from_returns([2 * r for r in mkt_rets])
+    b = rolling_beta(coin, mkt)
+    assert b is not None
+    assert abs(b - 2.0) < 1e-9
+
+
+def test_rolling_beta_none_on_degenerate_input():
+    assert rolling_beta([100.0, 101.0], [100.0, 101.0]) is None  # too few returns
+    assert rolling_beta([100, 101, 102, 103], [100, 100, 100, 100]) is None  # flat mkt
+
+
+def test_beta_neutral_shrinks_the_higher_beta_leg():
+    # SHORT HOT (+funding, beta 1.5) vs LONG COLD (-funding, beta 0.5). Dollar-
+    # neutral sizes them equally; beta-neutral shrinks the high-beta short so the
+    # book's net market exposure cancels.
+    base_rets = [0.01, -0.02, 0.03, -0.01, 0.02, -0.015, 0.025, -0.005]
+    btc = _closes_from_returns(base_rets)
+    hot = _closes_from_returns([1.5 * r for r in base_rets])
+    cold = _closes_from_returns([0.5 * r for r in base_rets])
+    view = MarketView(
+        ts_ms=10 * HOUR,
+        mids={"HOT": 100.0, "COLD": 100.0, "BTC": 100.0},
+        funding={"HOT": 0.0010, "COLD": -0.0010, "BTC": 0.0},
+        extra={
+            "day_ntl_vlm": {"HOT": 5e7, "COLD": 5e7, "BTC": 5e7},
+            "closes": {"HOT": hot, "COLD": cold, "BTC": btc},
+        },
+    )
+
+    def _sizes(cfg):
+        conn = init_db(":memory:")
+        out = XFundCarryAgent(config=cfg, conn=conn).decide(view)
+        return {d.coin: d.sz for d in out if d.action == "place"}
+
+    base = _sizes({})
+    bn = _sizes({"beta_neutral": True})
+    # dollar-neutral: equal sizes on both legs
+    assert abs(base["HOT"] - base["COLD"]) < 1e-9
+    # beta-neutral: high-beta short leg is shrunk vs the low-beta long leg...
+    assert bn["HOT"] < bn["COLD"]
+    # ...the low-beta leg keeps full size (scale ref/ref = 1.0)...
+    assert abs(bn["COLD"] - base["COLD"]) < 1e-9
+    # ...and the shrink ratio tracks the beta ratio (0.5/1.5) up to sz rounding.
+    assert abs(bn["HOT"] / bn["COLD"] - (0.5 / 1.5)) < 1e-3
 
 
 def test_carry_skips_calm_funding():

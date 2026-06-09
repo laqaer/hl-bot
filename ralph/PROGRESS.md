@@ -1002,3 +1002,68 @@ alts — likely the real reason price variance buries the carry; needs rolling-b
 sizing, available in backtest via the `closes` series), or (c) a lower cadence
 (4h/1d) where funding accrual outweighs per-bar price noise. Then resume B12
 consolidation.
+
+---
+
+## Iteration 24 — 2026-06-08 — B1c: beta-neutralise the cross-section (helps robustly, still negative)
+
+**Context.** Network reachable (HL `meta` → 200); corrected-funding caches present
+(10- and 20-coin, 90d 1h). B1c — the edge hunt on xfund_carry — was the top
+unblocked P0. Iter 23 left two un-pruned levers; took the most principled one:
+**(b) beta-neutralise the cross-section.** The diagnosis across Iters 20–23 was
+"price variance buries the carry"; the specific hypothesis here is that a
+*dollar*-neutral book is not *market*-neutral — the high-positive-funding coins we
+SHORT are typically higher-beta squeezing alts, so the book is net-short the market
+and that residual directional variance eats the few-bp/hr carry.
+
+**Changed (1 commit).**
+- **`agents/xfund_carry.py`** — new pure `rolling_beta(coin_closes, mkt_closes)`
+  (OLS beta of a coin's returns on a market proxy's, aligned on the overlapping
+  trailing closes the engine/live view already carry) and a `beta_neutral: bool =
+  False` lever (+ `beta_market="BTC"`, `beta_lookback=48`, `beta_floor=0.3`,
+  `beta_cap=3.0`). When on, `_beta_scales` sizes each leg by `ref/clamp(|beta|)`
+  where `ref` is the smallest clamped beta in the book, so every leg carries equal
+  beta-dollars (book beta-neutral) and the largest scale is exactly 1.0 —
+  **tightening-only**, legs only shrink vs the dollar-neutral baseline, never grow
+  past the per-trade cap (respects the risk-tighten-only rule). Default off → CI/
+  behavior unchanged. The over-tight inner `notional<5` guard switched `break`→
+  `continue` so a beta-shrunk leg can't abort the whole entry loop (unreachable in
+  baseline).
+- **`tests/test_funding_carry.py`** — 3 new: `rolling_beta` recovers a known 2.0
+  slope (mean-invariant) and returns None on degenerate input (too few returns /
+  flat market); and beta-neutral mode shrinks the high-beta short leg vs the
+  low-beta long leg with the shrink ratio tracking the beta ratio, while
+  dollar-neutral keeps them equal.
+
+**Evidence (tests/lint).** 142 → **145 tests pass**; `ruff check src tests scripts`
+clean. Caches stay gitignored.
+
+**B1c result (xfund_carry_v1, 90d 1h, maker; reproducible via `--config`).**
+- *10-coin* (ADA,AVAX,BTC,DOGE,ETH,HYPE,LINK,SOL,TRX,ZEC): baseline maker
+  **−4.3bps** / Sharpe −0.45 / 62 trades → `beta_neutral` maker **−2.3bps** /
+  Sharpe −0.23 / 58 trades. (taker −9.8 → −7.8bps.)
+- *20-coin* (+SUI,APT,INJ,TIA,SEI,LTC,ARB,OP,WIF,NEAR): baseline maker **−12.1bps**
+  / Sharpe −2.39 / 154 trades → `beta_neutral` maker **−8.7bps** / Sharpe −1.69 /
+  150 trades. (taker −17.6 → −14.2bps.)
+- `confirm --prefer maker --config '{"beta_neutral":true}'`: **NOT CONFIRMED** both
+  universes. 10-coin OOS-maker **+6.3bps / +1.04sh** (in-sample −43.7); 20-coin
+  OOS-maker **−19.8bps / −3.98sh** (in-sample +1.3). The OOS sign *flips between
+  universes* → the positive OOS is noise, not a robust edge.
+
+**Why it matters (the finding).** This is the FIRST B1c lever that *helps* — and it
+helps *robustly in the same direction on both universes* (~+2bps/+3.4bps full-sample
+maker), which **confirms the root-cause hypothesis**: residual market exposure
+(dollar≠market-neutral) was burying roughly half the bleed. It is a genuine
+improvement worth keeping. BUT it does **not** cross to positive: the best config in
+the book is now `beta_neutral` 10-coin at **−2.3bps maker — still negative** — and
+`confirm` shows no robust OOS edge. **No edge; nothing promoted; all paper/gated.**
+The lever is kept (default off, tested) so it composes with future levers without
+re-exploration.
+
+**What's next (loop).** The last un-pruned B1c lever: **(c) a lower cadence (4h/1d)**
+where funding accrual per bar outweighs per-bar price noise — the data/engine already
+scale funding by `bar_hours`, so this needs a 4h/1d cache fetch + a beta_neutral run
+at that cadence (network-gated). If lower cadence + beta-neutral still doesn't cross
+zero, xfund carry on liquid alts is likely structurally negative net-of-cost and the
+hunt should pivot (e.g. funding-decile spot-vs-perp basis, or a different signal).
+Then resume B12 consolidation.

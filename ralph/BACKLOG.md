@@ -69,10 +69,18 @@ Keep it ruthlessly prioritized: the top item should always be the highest-levera
   net). Root cause: the churn wasn't waste — it concentrates the book into the
   *highest*-funding names; holding rank-rotated lower-funding legs collects less
   carry while still eating price variance over a longer hold. The config lever is
-  kept (default off, tested) so the dead end isn't re-explored. Remaining to try:
-  funding-decile *neutralised-by-beta* cross-section (dollar-neutral ≠ market-neutral
-  when shorts are higher-beta alts), or a different (lower) cadence so funding accrual
-  outweighs per-bar price noise. Evidence-gated; nothing promoted.
+  kept (default off, tested) so the dead end isn't re-explored. **Fourth hypothesis
+  tested (Iter 24): beta-neutralise the cross-section** (`beta_neutral` lever — size
+  each leg by `ref/|beta|` vs a BTC proxy so the book's signed beta-dollars net to ~0,
+  tightening-only). This is the FIRST lever that *helps* and does so *robustly across
+  both universes*: 10-coin maker −4.3 → **−2.3bps** (Sharpe −0.45→−0.23), 20-coin maker
+  −12.1 → **−8.7bps** (Sharpe −2.39→−1.69). Confirms the root-cause diagnosis —
+  dollar-neutral ≠ market-neutral because the high-+funding shorts are higher-beta alts,
+  so residual net-short-the-market variance was burying ~half the bleed. BUT it does
+  NOT cross to positive: best is still −2.3bps maker, and `confirm` OOS sign-flips
+  between universes (10-coin OOS +6.3bps, 20-coin OOS −19.8bps) → no robust positive
+  edge. **Not promoted.** Lever kept (default off, tested). Remaining un-pruned lever:
+  a lower cadence (4h/1d) where funding accrual outweighs per-bar price noise.
 
 ## P1 — honest measurement (so the supervisor can trust itself)
 

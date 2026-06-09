@@ -26,6 +26,34 @@ from .cloid import make_cloid
 from .decisions import Decision
 
 
+def rolling_beta(coin_closes: list[float], mkt_closes: list[float]) -> float | None:
+    """OLS beta of a coin's returns on the market's returns.
+
+    ``beta = cov(coin_ret, mkt_ret) / var(mkt_ret)``. The two close series are
+    aligned on their most-recent overlapping bars (HL gives liquid coins a bar
+    every interval, so trailing windows line up). Returns ``None`` when there is
+    too little data or the market has no variance (beta undefined).
+    """
+    n = min(len(coin_closes), len(mkt_closes))
+    if n < 3:
+        return None
+    cc = coin_closes[-n:]
+    mc = mkt_closes[-n:]
+    cr = [(cc[i] - cc[i - 1]) / cc[i - 1] for i in range(1, n) if cc[i - 1]]
+    mr = [(mc[i] - mc[i - 1]) / mc[i - 1] for i in range(1, n) if mc[i - 1]]
+    m = min(len(cr), len(mr))
+    if m < 2:
+        return None
+    cr, mr = cr[-m:], mr[-m:]
+    mbar = sum(mr) / m
+    cbar = sum(cr) / m
+    var_m = sum((x - mbar) ** 2 for x in mr) / m
+    if var_m <= 0:
+        return None
+    cov = sum((cr[i] - cbar) * (mr[i] - mbar) for i in range(m)) / m
+    return cov / var_m
+
+
 @dataclass
 class XFundCarryConfig:
     enter_funding_per_hr: float = 0.0001       # |rate| to be eligible for a leg
@@ -40,6 +68,19 @@ class XFundCarryConfig:
     # exit threshold) and on the correct side. This decouples exits from rank
     # rotation to cut the cross/fee churn that buries a hold-to-collect carry.
     hold_while_eligible: bool = False
+    # When True, size each leg to be *beta-neutral* (not just dollar-neutral): a
+    # leg's notional is shrunk in proportion to its market beta so the book's net
+    # market exposure (sum of signed beta-dollars) nets to ~0. Motivation: the
+    # high-positive-funding coins we SHORT are typically higher-beta squeezing
+    # alts, so a dollar-neutral book is net-short the market and the residual
+    # directional variance buries the carry. Sizing is tightening-only — legs
+    # only ever shrink vs the dollar-neutral baseline, never grow past the
+    # per-trade cap — so it respects the risk-changes-tighten-only rule.
+    beta_neutral: bool = False
+    beta_market: str = "BTC"        # market proxy whose returns define beta=1
+    beta_lookback: int = 48         # bars of trailing closes for the regression
+    beta_floor: float = 0.3         # clamp |beta| from below (avoid huge upsizing)
+    beta_cap: float = 3.0           # clamp |beta| from above
 
 
 class XFundCarryAgent(Agent):
@@ -60,6 +101,11 @@ class XFundCarryAgent(Agent):
             max_total_notional=float(c.get("max_total_notional", 100.0)),
             max_concurrent_positions=int(c.get("max_concurrent_positions", 6)),
             hold_while_eligible=bool(c.get("hold_while_eligible", False)),
+            beta_neutral=bool(c.get("beta_neutral", False)),
+            beta_market=str(c.get("beta_market", "BTC")),
+            beta_lookback=int(c.get("beta_lookback", 48)),
+            beta_floor=float(c.get("beta_floor", 0.3)),
+            beta_cap=float(c.get("beta_cap", 3.0)),
         )
         self.conn = conn
 
@@ -67,6 +113,33 @@ class XFundCarryAgent(Agent):
         """Side a carry leg should hold for funding ``f``: short (+f) collects,
         long (−f) collects."""
         return "A" if f > 0 else "B"
+
+    def _beta_scales(self, coins: list[str], view: MarketView) -> dict[str, float]:
+        """Per-leg notional multiplier (in ``(0, 1]``) for beta-neutral sizing.
+
+        Returns ``{}`` (→ caller uses 1.0, i.e. dollar-neutral) when disabled or
+        when the market proxy / betas can't be computed. Otherwise each leg is
+        scaled by ``ref / clamp(|beta|)`` where ``ref`` is the smallest clamped
+        beta in the book, so every leg carries the same beta-dollars (book
+        beta-neutral) and the largest scale is exactly 1.0 (tightening-only).
+        """
+        if not self.cfg.beta_neutral:
+            return {}
+        closes = view.extra.get("closes", {}) or {}
+        win = self.cfg.beta_lookback + 1  # +1 close → beta_lookback returns
+        mkt = (closes.get(self.cfg.beta_market) or [])[-win:]
+        if len(mkt) < 3:
+            return {}
+        clamped: dict[str, float] = {}
+        for c in coins:
+            b = rolling_beta((closes.get(c) or [])[-win:], mkt)
+            if b is None:
+                continue
+            clamped[c] = min(max(abs(b), self.cfg.beta_floor), self.cfg.beta_cap)
+        if len(clamped) < 2:
+            return {}
+        ref = min(clamped.values())
+        return {c: ref / b for c, b in clamped.items()}
 
     def _open_positions(self) -> dict[str, dict]:
         if self.conn is None:
@@ -136,6 +209,7 @@ class XFundCarryAgent(Agent):
             for c, p in open_pos.items() if c not in flattening
         )
         room_notional = self.cfg.max_total_notional - active_notional
+        beta_scales = self._beta_scales(list(desired), view)
 
         for coin, side in desired.items():
             if room <= 0 or room_notional < 5.0:
@@ -146,9 +220,10 @@ class XFundCarryAgent(Agent):
             f = funding.get(coin)
             if not mid or f is None:
                 continue
-            notional = min(self.cfg.max_notional_per_trade, room_notional)
+            scale = beta_scales.get(coin, 1.0)
+            notional = min(self.cfg.max_notional_per_trade * scale, room_notional)
             if notional < 5.0:
-                break
+                continue  # beta-scaled too small to be worth the min ticket; try next leg
             sz = round(notional / mid, 5)
             direction = "short" if side == "A" else "long"
             apr = (f or 0) * 8760 * 100
