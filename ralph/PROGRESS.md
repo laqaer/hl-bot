@@ -2852,3 +2852,70 @@ now the decisive deploy-vs-prune test: if the Amihud ratio is durable across 3+ 
 despite the un-attributable driver; if it fails the third window it joins the pruned bucket as another
 over-conditioned point. The `signal` decomposition machinery is reusable to confound-check any future
 ratio-style factor.
+
+## Iteration 48 — 2026-06-08 — B-illiq slice (4): the decisive 3rd-window test → illiq PRUNED
+
+**Context.** The twelfth thesis (cross-sectional Amihud illiquidity) was the strongest result of the whole
+search and the only candidate to clear the canonical durability bar since pairs: ✅ DURABLE on high-funding
+alts (+42.0/+13.2 maker), sign-stable-positive on a disjoint alt basket, survives leave-one-coin-out with NO
+sign-flip (Iter 46). But three fragilities were already known (lookback knife-edge lb≈48; basket knife-edge
+full+3/10 drops; and Iter 47's decomposition showed NEITHER standalone Amihud component is durable — the pure
+`volume` size tilt carries the bigger magnitude but SIGN-FLIPS, so the durable edge is an un-attributable
+ratio-interaction artifact, not a clean liquidity premium). Iter 47 named slice (4) — longer baseline /
+`--windows 3` — the **DECISIVE deploy-vs-prune test**: does the ratio's PASS survive a 3rd disjoint window?
+
+**What I ran (the harness already supports it; no new backtest code).**
+- Reproduced the canonical bar offline to confirm the wiring is sound: `confirm --agent xsect_illiq_v1
+  --coins alts_highfunding --interval 1h --days 120 --prefer maker --windows 2 --params illiq_lookback=48`
+  → **✅ DURABLE (+42.0 / +13.2)**, matching Iter 45/46 exactly.
+- `--windows 3 --interval 1h`: the 3rd disjoint 120d window (240d ago) is **EMPTY** — `full — / in — / oos —`.
+  HL retains only ~208d of 1h candles (the B-cadence-data ceiling, Iter 39), so a 3rd disjoint 120d window is
+  **structurally unreachable at the cadence the edge was found at**. The fetch was attempted live (network
+  reachable) and returned no rows — a retention wall, not a fetch bug.
+- The only way to reach a 3rd disjoint window is a coarser cadence. 4h retains ~833d (5000×4h), so 3×120d=360d
+  fits. Ran `--interval 4h --windows 3 --prefer maker` two ways:
+  - **calendar-matched lb=12** (12×4h = 2 days = the canonical 1h×48 lookback; the faithful analogue):
+    **❌ NOT DURABLE and SIGN-FLIPS** — **+41.1 / −10.6 / +139.5 bps**. The trailing window reproduces the 1h
+    result almost exactly (+41.1 vs +42.0), confirming the 4h/lb=12 signal is a faithful re-sampling.
+  - lb=48 at 4h (8-day lookback, off-analogue): **+120.9 / −126.2 / +285.3**, also NOT DURABLE / sign-flips.
+
+**Conclusion — illiq is PRUNED as a deployable edge.** Two decisive findings:
+1. **The 3rd-window test sign-flips.** At the calendar-matched cadence the full-sample maker edge across three
+   disjoint 120d windows is +41.1 / −10.6 / +139.5 — the textbook artifact signature (a sign flip across
+   windows) the durability bar was built to catch. The Amihud ratio's PASS does NOT survive a third window.
+2. **The 2-window PASS does not even survive a cadence change.** The same calendar window-2 that was **+13.2
+   DURABLE at 1h is −10.6 at 4h**. So the deployable 2-window result was conditioned on the 1h *cadence* — a
+   FOURTH over-conditioning dimension on top of the three already known (lb≈48 AND full basket AND the exact
+   Amihud-ratio form). A genuine edge does not flip sign just from sampling the same calendar window at 4h
+   instead of 1h.
+So illiq joins pairs (Iter 33) as the second candidate to clear the 2-window bar and then fail every stress:
+a real, sign-robust *signal* whose deployable PASS is so heavily over-conditioned (lookback AND basket AND
+ratio-form AND cadence AND window-count) that it is structurally un-deployable, and whose only reachable
+extension test sign-flips. Slice (5) (strip the majors static tilt) is now moot — it cannot un-prune. The
+illiq investigation is CLOSED.
+
+**What I built (pure, tested) — recorded the prune in the publishable edge-search artifact.** The
+`reports/edge_search.py` record had gone stale at ten theses (built Iter 40, before low-vol and illiq). Brought
+it current to all **twelve** structurally-different theses: added the 11th (`B-lowvol`, BAB — wrong sign on
+majors, regime-sensitive on alts) and 12th (`B-illiq`, Amihud — the slice-4 prune above), each citing its
+backlog id / iterations / universe / recorded headline / prune reason. Introduced a `cross-sectional` `klass`
+for the two factor-rank theses (the dollar-neutral volatility-rank and liquidity-rank bets, structurally
+distinct from the price-direction ranks already labelled `directional`). Extended `SEARCH_BOUNDARY` to note the
+208d/1h retention ceiling ALSO caps the durability bar at two 120d windows at 1h — a 3rd disjoint window is only
+reachable at 4h, where illiq sign-flips. +1 test (illiq is thesis #12, `cross-sectional`, pruned on the
+sign-flip) and updated the class-breakdown test to {directional:8, execution:1, cross-market:1,
+cross-sectional:2}. The allocator packet (which composes edge_search) carries the two new theses for free
+(its tests assert `len(THESES)`, not a hardcoded count).
+
+**Evidence (gate).** `uv run pytest -q` → **276 passed** (+1 edge-search test). `uv run ruff check src tests
+scripts` → clean. All confirm runs offline against the existing gitignored cache except the 4h fetch (public
+market data only; no `data/` writes committed). No strategy promoted, no roster live-mode change; nothing
+touched capital.
+
+**What's next (loop).** With pairs and illiq both pruned, every one of the twelve structurally-different theses
+is closed, and the edge-search artifact now records all twelve for Path C. The remaining honest routes are the
+ones already named in the backlog: (a) **B-fine-record** — let the deployed recorder accumulate ~30–60d of own
+1m/5m candles, then re-run the sub-bar / fine-cadence theses the HL retention ceiling structurally blocks (the
+only un-searched cadence regime); this needs calendar time, not an iteration. (b) Path C honest-measurement /
+reporting polish. The directional/relative/execution/cross-market/cross-sectional search on HL *historical*
+candles is exhausted; the next genuinely new evidence requires the forward-recorded fine-cadence archive.

@@ -1,10 +1,10 @@
 """Edge-search summary — the negative-result finding as a publishable artifact.
 
-The ten-iteration backtest search (Iterations 16–39) tested ten structurally
-different alpha theses against real Hyperliquid history through one adversarial
-durability bar (two disjoint ~120d windows, walk-forward, maker-cost net). Every
-one was pruned: net-negative after costs, or non-durable (regime-/window-/param-
-specific). That negative result is itself a Path-C deliverable — an allocator or
+The backtest search (Iterations 16–48) tested twelve structurally different alpha
+theses against real Hyperliquid history through one adversarial durability bar
+(two disjoint ~120d windows, walk-forward, maker-cost net). Every one was pruned:
+net-negative after costs, or non-durable (regime-/window-/param-specific). That
+negative result is itself a Path-C deliverable — an allocator or
 the supervisor's go-live gate needs to know *what was searched, on what universe,
 over what windows, and why each was rejected*, not just "no edge yet".
 
@@ -29,10 +29,10 @@ DEFAULT_BAR = "1h candles, two disjoint ~120d windows, walk-forward, maker-cost 
 class Thesis:
     """One structurally-different alpha thesis and how the search rejected it."""
 
-    num: int  # 1..10, the order it was investigated
+    num: int  # 1..N, the order it was investigated
     key: str  # backlog id (auditable against ralph/BACKLOG.md)
     name: str
-    klass: str  # directional | execution | cross-market
+    klass: str  # directional | execution | cross-market | cross-sectional
     iterations: str  # PROGRESS iteration(s) that produced the verdict
     universe: str
     bar: str  # cadence / windows the verdict rests on
@@ -173,6 +173,36 @@ THESES: tuple[Thesis, ...] = (
         prune_reason="Knife-edge (every neighbor flips) AND a per-coin averaging artifact "
         "(BTC −7.0→+17.6, HYPE +5.2→−7.6). Universe cannot be widened. Confirms REVIEW M5.",
     ),
+    Thesis(
+        num=11,
+        key="B-lowvol",
+        name="Cross-sectional low-volatility / betting-against-volatility (BAB)",
+        klass="cross-sectional",
+        iterations="44",
+        universe="majors + high-funding alts",
+        bar=DEFAULT_BAR,
+        headline="majors base net-NEGATIVE & sign-stable (full −32.7 / −8.5bps, oos −134 / −77); "
+        "high-funding alts marginally + but NOT DURABLE (+5.9 / +4.3, oos −1.2 / −15.7)",
+        prune_reason="BAB is the wrong sign on crypto majors (high-vol / lottery-chase outperforms — "
+        "the invert mirror is + but not durable) and only a regime-sensitive lead on alts. Clears neither.",
+    ),
+    Thesis(
+        num=12,
+        key="B-illiq",
+        name="Cross-sectional illiquidity / Amihud premium (price-impact per $ volume)",
+        klass="cross-sectional",
+        iterations="45–48",
+        universe="high-funding alts + held-out alts (also majors)",
+        bar="1h, two 120d windows (a 3rd disjoint window is retention-blocked at 1h; re-tested at 4h)",
+        headline="the strongest lead since pairs: ✅ DURABLE on hi-fund alts (+42.0 / +13.2), "
+        "survives leave-one-coin-out with NO sign-flip — but the durable PASS is over-conditioned "
+        "(lb≈48 AND full basket AND the exact Amihud ratio form)",
+        prune_reason="Neither standalone Amihud component is durable (pure size carries the bigger "
+        "magnitude +73.6 but SIGN-FLIPS to −19.4), so the edge is an un-attributable ratio interaction, "
+        "not a liquidity premium; and the decisive 3rd-window test (only possible at 4h — 1h history caps "
+        "at ~208d) SIGN-FLIPS at the calendar-matched lookback (+41.1 / −10.6 / +139.5), so even the "
+        "2-window PASS does not survive a cadence change.",
+    ),
 )
 
 # Why the search is considered exhausted rather than merely paused (Iter 39).
@@ -183,7 +213,9 @@ SEARCH_BOUNDARY = (
     "durability bar needs two disjoint ~120d windows, which is impossible below 1h. "
     "Re-testing the fast edges at the cadence REVIEW C7 says they live at would require "
     "an external tick/candle archive (forward-recording or 3rd-party) — an infrastructure "
-    "bet, not a candle fetch."
+    "bet, not a candle fetch. The same ~208d/1h ceiling also caps the durability bar at "
+    "TWO disjoint 120d windows at 1h: a 3rd disjoint window (Iter 48, the illiq deploy-vs-"
+    "prune test) is only reachable at a coarser cadence (4h), where the illiq edge sign-flips."
 )
 
 

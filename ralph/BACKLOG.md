@@ -31,7 +31,7 @@ Keep it ruthlessly prioritized: the top item should always be the highest-levera
   (3) once ~30–60d of 1m/5m data exists, re-run the sub-bar execution + fine-cadence durability theses the
   retention ceiling blocked (B-exec-tickmark overlaps). Until then the search stays exhausted on HL historical
   data.
-- [~] **B-illiq — Cross-sectional illiquidity / Amihud premium (the TWELFTH structurally-different thesis;
+- [x] **B-illiq — Cross-sectional illiquidity / Amihud premium (the TWELFTH structurally-different thesis;
   the FIRST to key off VOLUME / liquidity, orthogonal to all eleven priors). A GENUINE LEAD (Iteration 45):
   the strongest cross-basket result of any thesis — DURABLE on high-funding alts AND sign-stable-positive on
   a disjoint alt basket (does NOT sign-flip, unlike pairs/momentum).** Every prior thesis keyed off price
@@ -79,9 +79,27 @@ Keep it ruthlessly prioritized: the top item should always be the highest-levera
   effect that smooths the size tilt's sign-flip — not a clean standalone liquidity premium (which should have
   left `volume` at least sign-stable). The PASS is now over-conditioned in a THIRD dimension (lb≈48 AND full
   basket AND the exact ratio form). **Net: still the only durable LEAD, but moved materially toward prune —
-  the driver is un-attributable.** Numbers in PROGRESS Iter 47. **Remaining push-slices:** (4) longer baseline
-  / `--windows 3` — now the DECISIVE deploy-vs-prune test (does even the ratio's PASS survive a 3rd disjoint
-  window?); (5) strip the majors static directional tilt. Maker-only, no live change.
+  the driver is un-attributable.** Numbers in PROGRESS Iter 47.
+  **Slice (4) DONE (Iteration 48): the DECISIVE deploy-vs-prune test PRUNES illiq — the durable PASS does NOT
+  survive a 3rd disjoint window, and the 2-window PASS does not even survive a cadence change.** A 3rd disjoint
+  120d window is UNREACHABLE at the canonical 1h cadence (HL retains only ~208d of 1h candles, so
+  `confirm --windows 3 --interval 1h` returns an EMPTY 3rd window: verified `full — / in — / oos —`). The only
+  way to reach a 3rd disjoint window is a coarser cadence (4h retains ~833d). At 4h with the **calendar-matched**
+  lookback lb=12 (=2 days, the faithful analogue of the canonical 1h/lb=48 — the trailing window reproduces the
+  1h result almost exactly, +41.1 vs +42.0), `--windows 3 --prefer maker` is **❌ NOT DURABLE and SIGN-FLIPS**
+  (+41.1 / **−10.6** / +139.5 — the artifact signature). Decisively, the same calendar window-2 that was
+  **+13.2 DURABLE at 1h is −10.6 at 4h**, so the deployable 2-window PASS was conditioned on the 1h *cadence*
+  too (a FOURTH over-conditioning dimension after lb≈48, full basket, exact Amihud-ratio form). lb=48 at 4h
+  (8-day lookback, off-analogue) is worse: +120.9 / −126.2 / +285.3, also sign-flips. **Net: illiq is PRUNED
+  as a deployable edge** — same fate as pairs (the only other candidate to clear the 2-window bar): a real,
+  sign-robust signal whose deployable PASS is so over-conditioned (lookback AND basket AND ratio-form AND
+  cadence AND window-count) that it is structurally un-deployable, and whose only reachable extension test
+  sign-flips. Slice (5) is moot (cannot un-prune). Recorded the prune in the edge-search artifact:
+  `reports/edge_search.py` now enumerates all **twelve** theses (added the 11th low-vol and 12th illiq with
+  their numbers/universes/prune reasons) and `SEARCH_BOUNDARY` notes the 208d/1h ceiling also caps the
+  durability bar at two 120d windows at 1h; +1 test (illiq is #12, cross-sectional, pruned on the sign-flip)
+  and the class-breakdown test updated. Maker-only, no live change. Numbers in PROGRESS Iter 48.
+  **Illiq investigation CLOSED.**
 - [x] **B-lowvol — Cross-sectional low-volatility / betting-against-volatility (the ELEVENTH structurally-
   different thesis; the FIRST to key off the volatility cross-section, orthogonal to all ten priors). PRUNED
   as a deployable edge (Iteration 44).** Every prior thesis keyed off price *return* (TWAP-MR, x-sect/ts/

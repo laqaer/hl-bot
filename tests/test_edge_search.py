@@ -23,11 +23,26 @@ def test_backlog_keys_are_unique():
 
 
 def test_class_breakdown_matches_narrative():
-    # PROGRESS Iter 38: "eight directional + one execution + one cross-market".
+    # Iter 38: eight directional + one execution + one cross-market; Iter 44/48
+    # added the two cross-sectional factor ranks (low-vol BAB, illiquidity/Amihud).
     by_class: dict[str, int] = {}
     for t in THESES:
         by_class[t.klass] = by_class.get(t.klass, 0) + 1
-    assert by_class == {"directional": 8, "execution": 1, "cross-market": 1}
+    assert by_class == {
+        "directional": 8,
+        "execution": 1,
+        "cross-market": 1,
+        "cross-sectional": 2,
+    }
+
+
+def test_illiq_is_the_twelfth_thesis_and_pruned_on_the_third_window():
+    # Iter 48 (B-illiq slice 4): the strongest lead since pairs is pruned because
+    # the 3rd-window test sign-flips at the calendar-matched cadence.
+    illiq = next(t for t in THESES if t.key == "B-illiq")
+    assert illiq.num == 12
+    assert illiq.klass == "cross-sectional"
+    assert "SIGN-FLIP" in illiq.prune_reason.upper()
 
 
 def test_every_thesis_has_a_prune_reason_and_headline():
