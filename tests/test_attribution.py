@@ -98,3 +98,36 @@ def test_single_day_has_no_sharpe(conn):
         _fill(conn, "twap_mr_v1", "BTC", now - i * 1000, pnl=5.0)  # all same day
     sc = score_agent(conn, "twap_mr_v1", "all")
     assert sc.sharpe is None
+
+
+def test_per_agent_drawdown_needs_capital_base(conn):
+    now = int(time.time() * 1000)
+    # +100, +100, -300 on 3 distinct (chronological) days.
+    for day, pnl in ((2, 100.0), (1, 100.0), (0, -300.0)):
+        _fill(conn, "twap_mr_v1", "BTC", now - day * DAY, pnl=pnl, fee=0.0)
+    # Without a capital base, drawdown stays N/A (the historical bug).
+    assert score_agent(conn, "twap_mr_v1", "all").max_drawdown is None
+    # With a base, equity = [1000, 1100, 1200, 900] -> -25% drawdown.
+    sc = score_agent(conn, "twap_mr_v1", "all", capital_base=1000.0)
+    assert sc.max_drawdown == pytest.approx(-0.25)
+    assert sc.calmar is not None
+
+
+def test_drawdown_guardrail_can_fire(conn):
+    from hl_bot.supervisor.goals import AgentGoals, evaluate
+
+    now = int(time.time() * 1000)
+    for day, pnl in ((2, 100.0), (1, 100.0), (0, -300.0)):
+        _fill(conn, "twap_mr_v1", "BTC", now - day * DAY, pnl=pnl, fee=0.0)
+    g = AgentGoals.model_validate({
+        "agent": "twap_mr_v1",
+        "capital": 1000,
+        "guardrails": [
+            {"metric": "max_drawdown", "window": "all", "op": ">=",
+             "threshold": -0.10, "action": "demote", "reason": "dd > 10%"},
+        ],
+    })
+    evals = {e.goal_name: e for e in evaluate(conn, g)}
+    gr = evals["guardrail:max_drawdown"]
+    # -25% breaches the -10% floor -> the guardrail fires (no longer N/A).
+    assert gr.status == "fail" and gr.action == "demote"

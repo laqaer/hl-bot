@@ -152,6 +152,44 @@ def _daily_pnl_sharpe(daily: list[float], periods_per_year: float = 365) -> floa
     return (mean / std * math.sqrt(periods_per_year)) if std > 0 else None
 
 
+def _daily_pnl_drawdown(
+    daily: list[float], capital_base: float, periods_per_year: float = 365
+) -> tuple[float | None, float | None]:
+    """Max drawdown (fraction) and Calmar for a per-agent daily-PnL series.
+
+    Builds a synthetic equity curve ``capital_base + cumsum(daily_pnl)`` so the
+    drawdown is expressed as a *fraction of capital* — the same units the account
+    curve uses, which is what drawdown guardrails (e.g. ``>= -0.10``) compare
+    against. Without this, per-agent ``max_drawdown`` is always None and any
+    drawdown guardrail is permanently N/A (can never fire). Needs a positive
+    base and ≥3 days of PnL.
+    """
+    if len(daily) < 3 or capital_base <= 0:
+        return None, None
+    equity = [capital_base]
+    cum = capital_base
+    for x in daily:
+        cum += x
+        equity.append(cum)
+    peak = equity[0]
+    max_dd = 0.0
+    for v in equity:
+        peak = max(peak, v)
+        if peak > 0:
+            max_dd = min(max_dd, (v - peak) / peak)
+    dd = max_dd if max_dd < 0 else 0.0
+    rets = [
+        (equity[i] - equity[i - 1]) / equity[i - 1]
+        for i in range(1, len(equity))
+        if equity[i - 1] != 0
+    ]
+    calmar = None
+    if dd < 0 and rets:
+        ann_ret = (1 + sum(rets) / len(rets)) ** periods_per_year - 1
+        calmar = ann_ret / abs(dd)
+    return dd, calmar
+
+
 def _equity_curve(conn: sqlite3.Connection, since_ms: int | None) -> pd.DataFrame:
     q = "SELECT ts_ms, account_value FROM equity_snapshots"
     params: list = []
@@ -176,7 +214,12 @@ def _max_dd(equity: pd.Series) -> float | None:
     return float(dd.min()) if not dd.empty else None
 
 
-def score_agent(conn: sqlite3.Connection, agent: str, window: Window) -> Scorecard:
+def score_agent(
+    conn: sqlite3.Connection,
+    agent: str,
+    window: Window,
+    capital_base: float | None = None,
+) -> Scorecard:
     now_ms = int(time.time() * 1000)
     w = WINDOW_MS[window]
     since = now_ms - w if w else None
@@ -233,7 +276,12 @@ def score_agent(conn: sqlite3.Connection, agent: str, window: Window) -> Scoreca
         for t, s in fund_payments:
             d = t // 86_400_000
             daily[d] = daily.get(d, 0.0) + s
-        sharpe = _daily_pnl_sharpe(list(daily.values()))
+        daily_series = [daily[k] for k in sorted(daily)]
+        sharpe = _daily_pnl_sharpe(daily_series)
+        # With a capital base, also compute fractional drawdown/Calmar so
+        # max_drawdown guardrails can fire for real agents (not just _account).
+        if capital_base is not None:
+            dd, calmar = _daily_pnl_drawdown(daily_series, capital_base)
 
     return Scorecard(
         agent=agent, window=window, n_trades=n_trades,

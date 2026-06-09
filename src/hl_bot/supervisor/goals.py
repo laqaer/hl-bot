@@ -82,6 +82,10 @@ class AgentGoals(BaseModel):
     agent: str
     description: str = ""
     mode: Literal["paper", "live_small", "live"] = "paper"
+    # Capital base ($) for per-agent fractional metrics (max_drawdown/Calmar).
+    # Required for a drawdown guardrail to be evaluable; without it that metric
+    # is N/A and the guardrail can never fire.
+    capital: float | None = None
     goals: dict[str, Any] = Field(default_factory=dict)
     guardrails: list[Guardrail] = Field(default_factory=list)
     promotion: Promotion | None = None
@@ -132,7 +136,9 @@ def evaluate(conn: sqlite3.Connection, g: AgentGoals) -> list[Evaluation]:
     for s in secondary if isinstance(secondary, list) else []:
         windows.add(s.get("window", "30d"))
 
-    cards: dict[Window, Scorecard] = {w: score_agent(conn, g.agent, w) for w in windows}
+    cards: dict[Window, Scorecard] = {
+        w: score_agent(conn, g.agent, w, capital_base=g.capital) for w in windows
+    }
 
     # Primary / secondary goals -> informational pass/fail (no action).
     def _status(ok: bool | None) -> str:

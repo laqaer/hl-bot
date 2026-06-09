@@ -47,10 +47,12 @@ Keep it ruthlessly prioritized: the top item should always be the highest-levera
 - [ ] **B6old — (superseded by B6/B7 above)** Map `funding_payments` to the agent
   holding the position at funding time (via cloid→position replay), so
   `scoring.metrics` includes funding in each agent's net. (REVIEW C4.)
-- [ ] **B7 — Per-agent equity curves + Sharpe/DD.** Reuse the backtest
-  equity-curve math (`engine._curve_stats`) to compute per-agent Sharpe/maxDD
-  from fills, so `funding_arb_v1.yaml`'s sharpe gate can actually evaluate.
-  Then standardize all goal configs. (REVIEW C5.)
+- [x] **B7 — Per-agent equity curves + Sharpe/DD.** Done: per-agent Sharpe from
+  daily PnL (Iter 7) + per-agent fractional `max_drawdown`/`calmar` from a
+  `capital`-based synthetic equity curve (`_daily_pnl_drawdown`), threaded via
+  `score_agent(capital_base=)` and a new `AgentGoals.capital` field — so
+  `funding_arb_v1.yaml`'s drawdown guardrail can finally fire (it was permanently
+  N/A). Configs that want fractional gates set `capital:`. (REVIEW C5. Iter 9.)
 - [x] **B8 — Record actual fill price.** Done: `femr_tick` now logs the confirmed
   `res.avg_px`/`res.filled_sz` on fill so stops/TPs key off the real entry. (M1.)
 - [ ] **B9 — fills→positions replay.** Populate the unused `positions` table from
@@ -62,8 +64,9 @@ Keep it ruthlessly prioritized: the top item should always be the highest-levera
   `hlbot ws` service writes a snapshot; live tick overlays it (HLBOT_WS_SNAPSHOT)
   for sub-second mids, L2 book_top, and a real liquidations feed (fixes C6), with
   REST fallback. Next: userFills WS for instant maker-fill detection. (Iteration 5.)
-- [ ] **B-book — Book-aware maker pricing.** Post at touch/microprice using L2
-  depth (needs B10) instead of mid; raises maker fill rate.
+- [x] **B-book — Book-aware maker pricing.** Done: `maker_limit_price` joins the
+  near touch (best bid/ask) from the WS L2 book; live maker entries price off
+  `view.book_top` (fallback mid, never cross). Tested. (Iteration 8.)
 - [ ] **B11 — Retire or feed liq_cascade.** Source real liquidation data (WS
   trades liquidation flag) or disable the agent until it can be fed. (REVIEW C6.)
 - [ ] **B12 — Consolidate execution paths.** `runtime.run_tick` vs `femr_tick`

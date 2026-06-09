@@ -1,6 +1,9 @@
 agent: funding_arb_v1
 description: Collect funding when 1h rate exits the band.
 mode: paper
+# Capital base ($) for fractional metrics; the max_drawdown guardrail below
+# divides cumulative PnL by this, so it must be set or the guardrail is N/A.
+capital: 1000
 
 goals:
   primary:

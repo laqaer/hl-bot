@@ -2,9 +2,9 @@ agent: twap_mr_v1
 description: TWAP mean-reversion — fade >2-sigma deviations from 1h VWAP.
 mode: paper
 
-# NOTE: sharpe / max_drawdown are only computed for the synthetic _account agent,
-# so per-agent guardrails below use net_pnl / edge_bps / n_trades, which ARE
-# computed per agent. Thresholds are sized for the small live notional in use.
+# NOTE: per-agent sharpe is computed from daily PnL; max_drawdown/Calmar need a
+# `capital:` base (see funding_arb_v1.yaml). This config uses net_pnl / edge_bps /
+# n_trades guardrails, sized for the small live notional in use.
 goals:
   primary:
     metric: edge_bps

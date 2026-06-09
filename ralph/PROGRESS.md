@@ -305,3 +305,35 @@ B4-RUN (confirm carry on real history), B16 (HL vault eval for AUM).
 - **Fastest live path** — `docs/AWS_NOVICE_SETUP.md` FAST PATH: one user-data block
   brings the box up live-armed (agent enabled, maker exec, loop on); trades start
   the moment the API wallet is added (one post-boot command). Off switch one line.
+
+---
+
+## Iteration 9 — 2026-06-08 — per-agent drawdown so guardrails can fire (C5/B7)
+
+**Context.** Honest-measurement leverage (#3). Even after Iter 7 added per-agent
+Sharpe, per-agent `max_drawdown`/`calmar` were still `None` for every real agent
+(only `_account` had them). So `funding_arb_v1.yaml`'s demote-on-7d-drawdown>10%
+guardrail was *permanently N/A and could never fire* — a risk control that looked
+present but did nothing. The twap configs even documented the caveat.
+
+**Changed (1 commit).**
+- **metrics.py** — new `_daily_pnl_drawdown(daily, capital_base)` builds a
+  synthetic equity curve `capital_base + cumsum(daily_pnl)` and returns fractional
+  max-drawdown + Calmar (same units the account curve uses, i.e. what a `-0.10`
+  guardrail compares against). `score_agent` gains a `capital_base` param; the
+  per-agent branch now sorts the daily series chronologically (cumsum needs order)
+  and fills dd/calmar when a base is given.
+- **goals.py** — `AgentGoals` gains a `capital` field; `evaluate` threads it into
+  `score_agent(capital_base=g.capital)`.
+- **configs** — `funding_arb_v1.yaml` sets `capital: 1000` so its drawdown
+  guardrail is evaluable; fixed the now-stale "max_drawdown is account-only" NOTE
+  in `twap_mr_v1.yaml`.
+- **tests** — `test_per_agent_drawdown_needs_capital_base` (N/A without base, −25%
+  with base on a +100/+100/−300 series) and `test_drawdown_guardrail_can_fire`
+  (the guardrail now returns fail/demote instead of N/A).
+
+**Evidence.** 91 → **93 tests pass**; `ruff check src tests scripts` clean.
+
+**What's next (loop).** B9 (fills→positions replay so attribution survives partial
+fills, M2), B12 (consolidate the two execution paths, M3), userFills WS for
+instant maker-fill detection, B4-RUN (confirm carry on real history — network-gated).
