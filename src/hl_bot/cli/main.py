@@ -7,6 +7,7 @@ import json
 import logging
 import time
 from pathlib import Path
+from typing import Any
 
 import typer
 from rich.console import Console
@@ -591,6 +592,43 @@ def femr_tick(live: bool = False, execution: str = "taker"):
         console.print(ev.message)
 
 
+def parse_agent_config(config: str) -> dict[str, Any]:
+    """Parse a ``--config`` JSON override string into a config dict for an agent.
+
+    Empty/whitespace → ``{}`` (use the agent's built-in defaults). The string
+    must decode to a JSON *object*; an array, scalar, or malformed JSON is a hard
+    error rather than a silent fall-back to defaults, so a typo in a parameter
+    sweep can't quietly run the default config and mislabel the result.
+    """
+    if not config or not config.strip():
+        return {}
+    try:
+        obj = json.loads(config)
+    except json.JSONDecodeError as e:
+        raise ValueError(f"--config is not valid JSON: {e}") from e
+    if not isinstance(obj, dict):
+        raise ValueError(f"--config must be a JSON object, got {type(obj).__name__}")
+    return obj
+
+
+def _backtest_factories(cfg: dict[str, Any]):
+    """Agent factories for backtest/confirm, with ``cfg`` overrides applied.
+
+    Only one agent is backtested per invocation, so passing the same override
+    dict to every factory is harmless — each agent reads only the keys it knows
+    and ignores the rest.
+    """
+    return {
+        "twap_mr_v1": lambda conn: TwapMrAgent(config=cfg, conn=conn),
+        "twap_mr_regime_v1": lambda conn: TwapMrRegimeAgent(config=cfg, conn=conn),
+        "femr_v1": lambda conn: FemrAgent(config=cfg, conn=conn),
+        "funding_carry_v1": lambda conn: FundingCarryAgent(config=cfg, conn=conn),
+        "xfund_carry_v1": lambda conn: XFundCarryAgent(config=cfg, conn=conn),
+        "liq_cascade_v1": lambda conn: LiqCascadeAgent(config=cfg, conn=conn),
+        "basis_v1": lambda conn: BasisAgent(config=cfg, conn=conn),
+    }
+
+
 @app.command()
 def backtest_fetch(
     coins: str = "BTC,ETH,SOL",
@@ -628,6 +666,7 @@ def backtest(
     compare: bool = True,
     starting_capital: float = 1000.0,
     cache: bool = True,
+    config: str = "",
 ):
     """Replay an agent over real Hyperliquid history with an explicit cost model.
 
@@ -643,15 +682,12 @@ def backtest(
     _, s = _conn()
     coin_list = [c.strip() for c in coins.split(",") if c.strip()]
 
-    factories = {
-        "twap_mr_v1": lambda conn: TwapMrAgent(config={}, conn=conn),
-        "twap_mr_regime_v1": lambda conn: TwapMrRegimeAgent(config={}, conn=conn),
-        "femr_v1": lambda conn: FemrAgent(config={}, conn=conn),
-        "funding_carry_v1": lambda conn: FundingCarryAgent(config={}, conn=conn),
-        "xfund_carry_v1": lambda conn: XFundCarryAgent(config={}, conn=conn),
-        "liq_cascade_v1": lambda conn: LiqCascadeAgent(config={}, conn=conn),
-        "basis_v1": lambda conn: BasisAgent(config={}, conn=conn),
-    }
+    try:
+        cfg = parse_agent_config(config)
+    except ValueError as e:
+        console.print(f"[red]{e}[/red]")
+        raise typer.Exit(1) from e
+    factories = _backtest_factories(cfg)
     if agent not in factories:
         console.print(f"[red]unknown agent {agent}; choose from {list(factories)}[/red]")
         raise typer.Exit(1)
@@ -674,7 +710,10 @@ def backtest(
                 "1h": 8_760, "4h": 2_190, "1d": 365}.get(interval, 8_760)
 
     modes = [False, True] if compare else [maker]
-    table = Table(title=f"Backtest {agent} ({days}d {interval})")
+    title = f"Backtest {agent} ({days}d {interval})"
+    if cfg:
+        title += f" cfg={json.dumps(cfg, separators=(',', ':'))}"
+    table = Table(title=title)
     for col in ("exec", "net_pnl", "edge_bps", "trades", "win", "sharpe", "maxDD"):
         table.add_column(col)
     for is_maker in modes:
@@ -710,6 +749,7 @@ def confirm(
     min_edge_bps: float = 3.0,
     min_sharpe: float = 1.0,
     cache: bool = True,
+    config: str = "",
 ):
     """Confirm a strategy through the G0 gate: walk-forward + cost stress.
 
@@ -721,15 +761,12 @@ def confirm(
 
     _, s = _conn()
     coin_list = [c.strip() for c in coins.split(",") if c.strip()]
-    factories = {
-        "twap_mr_v1": lambda conn: TwapMrAgent(config={}, conn=conn),
-        "twap_mr_regime_v1": lambda conn: TwapMrRegimeAgent(config={}, conn=conn),
-        "femr_v1": lambda conn: FemrAgent(config={}, conn=conn),
-        "funding_carry_v1": lambda conn: FundingCarryAgent(config={}, conn=conn),
-        "xfund_carry_v1": lambda conn: XFundCarryAgent(config={}, conn=conn),
-        "liq_cascade_v1": lambda conn: LiqCascadeAgent(config={}, conn=conn),
-        "basis_v1": lambda conn: BasisAgent(config={}, conn=conn),
-    }
+    try:
+        cfg = parse_agent_config(config)
+    except ValueError as e:
+        console.print(f"[red]{e}[/red]")
+        raise typer.Exit(1) from e
+    factories = _backtest_factories(cfg)
     if agent not in factories:
         console.print(f"[red]unknown agent {agent}; choose from {list(factories)}[/red]")
         raise typer.Exit(1)

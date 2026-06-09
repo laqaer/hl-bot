@@ -52,10 +52,20 @@ Keep it ruthlessly prioritized: the top item should always be the highest-levera
   "t", page_limit=CANDLE_PAGE_LIMIT)`, so fine intervals (1m/5m) over long windows
   no longer silently truncate the recent bars the way `fundingHistory` did.
   Unit-tested offline (fake httpx, shrunk cap).
-- [ ] **B1c — Edge hunt on corrected funding.** Now that carry backtests are valid
-  (B4-RUN), xfund_carry maker is the closest to break-even. Explore: wider/auto
-  high-funding universe (rank by historical |funding|, filter by liquidity),
-  longer max-hold, tighter entry, funding-decile cross-section. Evidence-gated.
+- [~] **B1c — Edge hunt on corrected funding.** Tooling done: `backtest`/`confirm`
+  now take `--config '{json}'` overrides (`parse_agent_config` + `_backtest_factories`,
+  tested) so xfund params sweep without code edits. **Two hypotheses pruned (Iter 22,
+  numbers in PROGRESS):** (1) *tighter entry* makes xfund WORSE not better
+  (2bp/hr → −40.5bps maker / 18 trades / 33% win; ≥3bp/hr → 0 trades, funding caps
+  ~2.7bp/hr); (2) *wider universe* (10→20 liquid alts) also WORSE (−4.3 → −12.1bps
+  maker, OOS −23.6bps) — the Iter-20 narrow-10-coin OOS +3.4bps was a sample
+  artifact, not robust. Root cause: high-|funding| alts are volatile *because*
+  funding is extreme, so price variance buries the carry whether you concentrate
+  OR diversify. `top_k>2` inert (eligible legs/side cap out). **Best config in book
+  is still the loosest baseline at −4.3bps maker — negative.** Remaining to try:
+  longer max-hold / no-rotation-churn (cut the 154-trade turnover), funding-decile
+  *neutralised-by-beta* cross-section, or a different (lower) cadence so funding
+  accrual outweighs per-bar price noise. Evidence-gated; nothing promoted.
 
 ## P1 — honest measurement (so the supervisor can trust itself)
 

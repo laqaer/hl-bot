@@ -896,3 +896,55 @@ candles: rank a wider universe by historical |funding|×liquidity, longer hold /
 tighter entry / funding-decile cross-section for xfund — network-gated), then
 resume B12 consolidation (fold remaining `femr_tick` preamble into a shared
 harness).
+
+## Iteration 22 — 2026-06-08 — `--config` sweep tool + B1c edge hunt prunes carry hypotheses
+
+**Context.** Network reachable (HL `meta` → 200) and the corrected-funding cache is
+present, so B1c (the edge hunt on xfund_carry, the closest-to-break-even candidate)
+was the top unblocked P0. Blocker found first: `backtest`/`confirm` built every
+agent with a hardcoded `config={}`, so **no parameter sweep was possible from the
+CLI** — you couldn't test "tighter entry" or "longer hold" without editing code.
+
+**Changed (1 commit).**
+- **`cli/main.py`** — new pure `parse_agent_config(s)` (empty→`{}`; must decode to a
+  JSON *object*; array/scalar/malformed is a hard error so a typo can't silently run
+  defaults and mislabel a sweep) and `_backtest_factories(cfg)` (one factory map with
+  the override baked in, replacing the duplicated dict in both commands). `backtest`
+  and `confirm` gained a `--config '{json}'` flag; the backtest table title echoes
+  `cfg=…` so a sweep result is self-documenting.
+- **`tests/test_backtest.py`** — `test_parse_agent_config_and_factory_override`:
+  empty/whitespace→defaults; valid object parses; `[1,2]`/`5`/`"x"`/`{not json}` all
+  raise; and the override actually reaches the constructed agent
+  (`enter_funding_per_hr` 0.0001→0.0003) while an un-overridden agent keeps defaults.
+
+**Evidence (tests/lint).** 139 → **140 tests pass**; `ruff check src tests scripts`
+clean. Caches stay gitignored (`git status` shows only the 2 source files).
+
+**B1c edge hunt (xfund_carry_v1, 90d 1h, maker numbers; reproducible via the new
+`--config`).**
+- *Baseline 10-coin* (ADA,AVAX,BTC,DOGE,ETH,HYPE,LINK,SOL,TRX,ZEC): maker −4.3bps,
+  62 trades, 48% win, Sharpe −0.45. (Matches Iter 20.)
+- *Tighter entry* `enter=0.0002`: maker **−40.5bps**, 18 trades, 33% win, Sharpe
+  −3.17 — much WORSE. `enter≥0.0003`: **0 trades** (per-hr funding caps ~2.7bp/hr on
+  this universe, so the threshold just starves the book).
+- *`top_k` 1/4/6, bigger book*: ~inert vs baseline (eligible legs/side cap out;
+  notional wasn't binding).
+- *Wider 20-coin* (added SUI,APT,INJ,TIA,SEI,LTC,ARB,OP,WIF,NEAR — cached): maker
+  **−12.1bps**, 154 trades, 42% win, Sharpe −2.39 — clearly WORSE than 10-coin.
+  `hlbot confirm --prefer maker` → **NOT CONFIRMED**, OOS-maker **−23.6bps / −5.13
+  Sharpe** (no faint-positive OOS like Iter 20's narrow run). `top_k=4/6` inert.
+
+**Why it matters (the finding).** Both naive B1c directions are now empirically
+**pruned as wrong**: tightening entry AND widening the universe each make xfund carry
+*worse*, because high-|funding| alts carry extreme funding *because* they're
+volatile/squeezing — the residual price variance of the cross-sectional book buries
+the few-bp/hr funding spread whether you concentrate or diversify. The Iter-20
+"OOS-maker +3.4bps" was a narrow-10-coin sample artifact, not a robust edge. The
+single best config in the book remains the loosest, most-diversified baseline at
+**−4.3bps maker — still negative.** No edge; nothing promoted; all paper/gated.
+
+**What's next (loop).** Continue B1c on the *un-pruned* levers: (a) longer max-hold /
+kill the rotation churn (154 trades over 90d is a lot of cross/fee for a "hold to
+collect" thesis), (b) beta-neutralise the cross-section (dollar-neutral ≠ market-
+neutral when the short legs are higher-beta alts), (c) a lower cadence where funding
+accrual outweighs per-bar price noise. Then resume B12 consolidation.

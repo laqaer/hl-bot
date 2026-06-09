@@ -211,3 +211,33 @@ def test_frame_cache_roundtrip(tmp_path):
     r1 = Backtester(CostModel(maker=True, maker_fee_bps=0.0), conn=c1).run(TwapMrAgent(config={}, conn=c1), frames)
     r2 = Backtester(CostModel(maker=True, maker_fee_bps=0.0), conn=c2).run(TwapMrAgent(config={}, conn=c2), loaded)
     assert r1.net_pnl == r2.net_pnl
+
+
+def test_parse_agent_config_and_factory_override():
+    """--config parses to a dict and actually reaches the agent's config."""
+    from hl_bot.cli.main import _backtest_factories, parse_agent_config
+
+    # empty / whitespace → defaults
+    assert parse_agent_config("") == {}
+    assert parse_agent_config("   ") == {}
+
+    # valid JSON object
+    cfg = parse_agent_config('{"enter_funding_per_hr": 0.0003, "top_k": 3}')
+    assert cfg == {"enter_funding_per_hr": 0.0003, "top_k": 3}
+
+    # non-object / malformed are hard errors, never a silent default
+    for bad in ("[1,2]", "5", '"x"', "{not json}"):
+        try:
+            parse_agent_config(bad)
+            raise AssertionError(f"{bad!r} should have raised")
+        except ValueError:
+            pass
+
+    # the override reaches the constructed agent (not the default)
+    conn = init_db(":memory:")
+    agent = _backtest_factories(cfg)["xfund_carry_v1"](conn)
+    assert agent.cfg.enter_funding_per_hr == 0.0003
+    assert agent.cfg.top_k == 3
+    # an un-overridden agent keeps its defaults
+    default = _backtest_factories({})["xfund_carry_v1"](conn)
+    assert default.cfg.enter_funding_per_hr == 0.0001
