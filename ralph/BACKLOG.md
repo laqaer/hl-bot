@@ -65,9 +65,23 @@ Keep it ruthlessly prioritized: the top item should always be the highest-levera
   the other 7 demote only via within-window walk-forward (NOT the sign-flip that killed pairs leave-one-out,
   Iter 32). So a genuine *pooled* effect, not one lucky coin. **Net: still the best LEAD in the search, still
   not a deploy** — sign-robust but the deployable-PASS is over-conditioned (lb≈48, full basket). Numbers in
-  PROGRESS Iter 46. **Remaining push-slices:** (3) liquidity-vs-confound decomposition (Amihud premium vs
-  low-volume-alt pumper confound — now the highest-value next move, decides deploy-vs-prune); (4) longer
-  baseline / `--windows 3`; (5) strip the majors static directional tilt. Maker-only, no live change.
+  PROGRESS Iter 46.
+  **Slice (3) DONE (Iteration 47): the liquidity-vs-confound decomposition WEAKENS the deploy case — the
+  durable edge is an Amihud-RATIO interaction artifact, NOT an attributable liquidity/size premium.** Added a
+  `signal` config (`amihud|volume|absret`) so the same book harvests each Amihud component on the identical
+  eligible universe: `volume`=1/dollar_vol (pure size, no return term), `absret`=mean|log-ret| (pure vol
+  numerator); +4 tests, runs offline. **Result (lb=48, both alt baskets, 120d×2 maker):** the full `amihud`
+  is ✅ DURABLE on high-funding alts (+42.0/+13.2) but **NEITHER standalone component is durable on EITHER
+  basket.** Pure `volume` carries the *bigger* trailing magnitude (+73.6 hi-fund / +81.0 heldout) but
+  **SIGN-FLIPS** (older −19.4 / −2.8) — the raw long-low-volume-alt tilt IS window-specific, substantially
+  validating the pumper-confound concern (the illiquid alts were the trailing window's outperformers, not the
+  older window's). Pure `absret` is net-negative/sign-flipping. So the ratio's durability is a normalization
+  effect that smooths the size tilt's sign-flip — not a clean standalone liquidity premium (which should have
+  left `volume` at least sign-stable). The PASS is now over-conditioned in a THIRD dimension (lb≈48 AND full
+  basket AND the exact ratio form). **Net: still the only durable LEAD, but moved materially toward prune —
+  the driver is un-attributable.** Numbers in PROGRESS Iter 47. **Remaining push-slices:** (4) longer baseline
+  / `--windows 3` — now the DECISIVE deploy-vs-prune test (does even the ratio's PASS survive a 3rd disjoint
+  window?); (5) strip the majors static directional tilt. Maker-only, no live change.
 - [x] **B-lowvol — Cross-sectional low-volatility / betting-against-volatility (the ELEVENTH structurally-
   different thesis; the FIRST to key off the volatility cross-section, orthogonal to all ten priors). PRUNED
   as a deployable edge (Iteration 44).** Every prior thesis keyed off price *return* (TWAP-MR, x-sect/ts/

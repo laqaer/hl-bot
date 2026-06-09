@@ -2785,3 +2785,70 @@ highest-value next iteration because the lead is sign-robust but the *economic i
 question that decides deploy-vs-prune. (4) longer baseline / `--windows 3`; (5) strip the majors static
 directional tilt. The `drop_coin`/`coins_in_frames` machinery is now reusable to retro-run leave-one-coin-out
 on any prior cross-sectional thesis if needed.
+
+## Iteration 47 — 2026-06-08 — B-illiq push slice (3): liquidity-vs-confound decomposition
+
+**Context.** The twelfth thesis (cross-sectional Amihud illiquidity) is the strongest cross-basket result of
+the whole search and the only candidate to clear the canonical durability bar since pairs: ✅ DURABLE on
+high-funding alts (+42.0/+13.2), sign-stable-positive on a disjoint alt basket, and (Iter 46) survives
+leave-one-coin-out with NO sign-flip. But two fragilities were already known (lookback knife-edge: only lb=48;
+basket knife-edge: only full + 3/10 single-coin drops clear the full bar). The open question that decides
+deploy-vs-prune was the **economic interpretation**: is the durable edge a genuine *liquidity/size premium*
+(the Amihud thesis) or just the **confound** that the low-volume alts happened to be these windows' pumpers
+(a size/momentum artifact)? Iter 45/46 named this decomposition the highest-value next move.
+
+**What I built (pure, tested).** Rather than a regression attribution (off-pattern for this all-backtest
+codebase), I made the *same book* harvest each component of the Amihud factor by adding a `signal` config to
+`XSectIlliqAgent` (`ILLIQ_SIGNALS = amihud|volume|absret`). Amihud = mean|log-ret| / dollar_vol decomposes
+into a |return| numerator and a dollar-volume denominator; `signal` selects the ranking key while keeping the
+**identical eligibility gating** so all three rank the same universe — an apples-to-apples confound split:
+- `amihud` (default): mean|log-ret| / dollar_vol — the full factor (unchanged behaviour).
+- `volume`: 1 / dollar_vol — the pure **liquidity/size** component, NO return term (long lowest-volume).
+- `absret`: mean|log-ret| — the pure **volatility/momentum** numerator (long highest-|return|).
+Refactored `_illiquidity(..., signal="amihud")` (default keeps the old 3-arg call working), threaded
+`self.cfg.signal`, and validate the signal in `__init__` (ValueError on a typo so sweeps fail loud). +4 unit
+tests (volume mode ranks by inverse-volume even when |ret| disagrees; absret mode ranks by |ret| even when
+volume disagrees; the three component values match the manual formula; bad signal raises). No new data
+plumbing; runs fully offline against the existing cache.
+
+**Result (real HL cache, 1h, maker_fee=1bp, `confirm --windows 2 --prefer maker`, lb=48, two disjoint 120d).**
+*high-funding alts (AERO,APT,EIGEN,INJ,NIL,PURR,PYTH,S,SPX,TRUMP):*
+- `amihud` (full factor): **✅ DURABLE** — trailing +42.0 (in +18.7/oos +98.7), older +13.2 (in +5.3/oos +67.0).
+- `volume` (pure size, no return term): **❌ NOT DURABLE — SIGN-FLIPS** — trailing **+73.6** (in +37.5/oos
+  +164.3) but older **−19.4** (in −51.9/oos +47.4). The size component carries the *bigger* trailing magnitude
+  than the full factor, but it is **window-specific** — exactly the artifact signature.
+- `absret` (pure |return| numerator): **❌ NOT DURABLE — net-NEGATIVE both windows** (−2.9 / −4.9, sign-stable
+  negative) — ranking long-high-|return| loses money, consistent with the pruned vol/momentum theses.
+
+*held-out alts (AAVE,ARB,ENA,JUP,LDO,OP,SEI,SUI,TIA,WLD) — same split, confirms the pattern:*
+- `volume`: trailing **+81.0** / older **−2.8** → SIGN-FLIPS, NOT DURABLE.
+- `absret`: trailing +8.1 / older −8.4 → SIGN-FLIPS, NOT DURABLE.
+
+**Conclusion — the decomposition WEAKENS the deploy case (but does not kill the lead).** The durable edge is a
+property of the **Amihud ratio specifically**: across BOTH alt baskets, *neither standalone component is
+durable*. The pure liquidity/size component (`volume`) is where the large trailing magnitude lives (+73.6 /
++81.0 — even bigger than the full factor) but it **sign-flips** across windows — i.e. the raw "long low-volume
+alts" tilt IS window-specific, **substantially validating the pumper-confound concern**: in the trailing
+window the illiquid/low-volume alts were the outperformers, in the older window they were not. The pure
+volatility numerator (`absret`) is net-negative. The full Amihud ratio is durable only because dividing the
+|return| numerator by volume reweights the window-specific size tilt enough to smooth the older-window
+sign-flip — a **normalization/interaction effect**, not a clean standalone liquidity premium. A genuine Amihud
+liquidity premium should have left the pure-`volume` rank at least sign-stable; it does not. So the durable
+PASS is now over-conditioned in a *third* dimension (lb≈48 AND full basket AND the exact ratio form — neither
+component alone survives), reinforcing the Iter-46 read that the deployable-PASS is fragile. **Net verdict:
+still the best LEAD in the search (the only durable candidate), but the decomposition fails to find a robust
+economic driver — the edge is an interaction artifact of the Amihud ratio, not an attributable liquidity/size
+factor — which moves it materially toward prune, not deploy.** `xsect_illiq_v1` stays maker-only paper;
+nothing touches capital.
+
+**Evidence (gate).** `uv run pytest -q` → **275 passed** (+4 decomposition tests). `uv run ruff check src
+tests scripts` → clean. All backtests offline against the existing gitignored cache (no `data/` writes
+committed). No strategy promoted, no roster live-mode change.
+
+**What's next (loop).** Remaining illiq push-slices: (4) longer baseline / `--windows 3` (does the full-factor
+durability survive a third disjoint window, or is even the ratio's PASS confined to the two 120d windows?);
+(5) strip the majors static directional tilt. Given the decomposition's negative-leaning read, slice (4) is
+now the decisive deploy-vs-prune test: if the Amihud ratio is durable across 3+ disjoint windows it survives
+despite the un-attributable driver; if it fails the third window it joins the pruned bucket as another
+over-conditioned point. The `signal` decomposition machinery is reusable to confound-check any future
+ratio-style factor.

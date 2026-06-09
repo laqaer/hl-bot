@@ -46,6 +46,16 @@ from .base import Agent, MarketView
 from .cloid import make_cloid
 from .decisions import Decision
 
+#: The Amihud factor decomposes into a |return| numerator and a dollar-volume
+#: denominator. ``signal`` selects which is harvested so the *same* book can
+#: attribute the edge (a confound check, not a new thesis):
+#:   * ``"amihud"`` — mean|log-ret| / dollar_vol  (the full factor, default)
+#:   * ``"volume"`` — 1 / dollar_vol              (pure liquidity/size; NO return term)
+#:   * ``"absret"`` — mean|log-ret|               (pure volatility/momentum numerator)
+#: All three rank the *identical* eligible universe (same gating); only the
+#: ranking key changes, so the comparison is apples-to-apples.
+ILLIQ_SIGNALS = ("amihud", "volume", "absret")
+
 
 @dataclass
 class XSectIlliqConfig:
@@ -56,6 +66,7 @@ class XSectIlliqConfig:
     max_total_notional: float = 100.0
     max_concurrent_positions: int = 6
     invert: bool = False                         # True: long liquid / short illiquid
+    signal: str = "amihud"                       # amihud | volume | absret (decomposition)
 
 
 class XSectIlliqAgent(Agent):
@@ -75,7 +86,12 @@ class XSectIlliqAgent(Agent):
             max_total_notional=float(c.get("max_total_notional", 100.0)),
             max_concurrent_positions=int(c.get("max_concurrent_positions", 6)),
             invert=bool(c.get("invert", False)),
+            signal=str(c.get("signal", "amihud")),
         )
+        if self.cfg.signal not in ILLIQ_SIGNALS:
+            raise ValueError(
+                f"signal must be one of {ILLIQ_SIGNALS}, got {self.cfg.signal!r}"
+            )
         self.conn = conn
 
     def _open_positions(self) -> dict[str, dict]:
@@ -99,12 +115,20 @@ class XSectIlliqAgent(Agent):
         return open_by_coin
 
     @staticmethod
-    def _illiquidity(closes: list[float], dollar_vol: float, lb: int) -> float | None:
-        """Amihud-style price impact per dollar of volume.
+    def _illiquidity(
+        closes: list[float], dollar_vol: float, lb: int, signal: str = "amihud"
+    ) -> float | None:
+        """Cross-sectional illiquidity rank key (Amihud or a decomposed component).
 
-        Mean absolute log-return over the last ``lb`` bars divided by the coin's
-        dollar volume. ``None`` if the series is too short, prices are bad, or the
-        dollar volume is non-positive (can't normalize).
+        Default (``signal="amihud"``) is Amihud price impact: mean absolute
+        log-return over the last ``lb`` bars divided by the coin's dollar volume.
+        ``"volume"`` returns ``1/dollar_vol`` (the pure liquidity/size component,
+        no return term) and ``"absret"`` returns the mean |log-return| alone (the
+        pure volatility/momentum numerator). All three share the *same* eligibility
+        gating so they rank the identical universe — a confound decomposition. A
+        higher value always means "more illiquid" (the long leg). ``None`` if the
+        series is too short, prices are bad, or the dollar volume is non-positive
+        (can't normalize).
         """
         if dollar_vol <= 0 or not closes or len(closes) < lb + 1:
             return None
@@ -116,7 +140,12 @@ class XSectIlliqAgent(Agent):
             abs_rets.append(abs(math.log(cur / prev)))
         if not abs_rets:
             return None
-        return (sum(abs_rets) / len(abs_rets)) / dollar_vol
+        mean_abs_ret = sum(abs_rets) / len(abs_rets)
+        if signal == "volume":
+            return 1.0 / dollar_vol
+        if signal == "absret":
+            return mean_abs_ret
+        return mean_abs_ret / dollar_vol
 
     def decide(self, view: MarketView) -> list[Decision]:
         out: list[Decision] = []
@@ -132,7 +161,9 @@ class XSectIlliqAgent(Agent):
                 continue
             if (view.mids.get(coin) or 0) <= 0:
                 continue
-            il = self._illiquidity(series, dollar_vol, self.cfg.illiq_lookback)
+            il = self._illiquidity(
+                series, dollar_vol, self.cfg.illiq_lookback, self.cfg.signal
+            )
             if il is not None:
                 illiq[coin] = il
 

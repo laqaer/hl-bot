@@ -117,3 +117,58 @@ def test_illiquidity_rises_with_return_and_falls_with_volume():
 
 def test_zero_volume_yields_none():
     assert XSectIlliqAgent._illiquidity(_walk(100.0, 0.010), 0.0, 48) is None
+
+
+def test_volume_signal_ranks_by_inverse_volume_only():
+    # Decomposition: the pure-liquidity component ignores the |return| numerator.
+    # LOWVOL has a *small* move but the least volume; HIGHVOL has a *large* move but
+    # the most volume. Under amihud HIGHVOL's big move could make it the long, but
+    # under signal="volume" the lowest-volume coin is the long regardless of |ret|.
+    closes = {"LOWVOL": _walk(100.0, 0.002), "MID": _walk(100.0, 0.010),
+              "HIGHVOL": _walk(100.0, 0.050)}
+    vol = {"LOWVOL": 2e7, "MID": 3e8, "HIGHVOL": 9e8}
+    agent = XSectIlliqAgent(
+        config={"illiq_lookback": 48, "top_k": 1, "signal": "volume"},
+        conn=init_db(":memory:"),
+    )
+    decs = {d.coin: d for d in agent.decide(_view(closes, vol)) if d.action == "place"}
+    assert decs["LOWVOL"].side == "B"     # least volume -> most illiquid -> long
+    assert decs["HIGHVOL"].side == "A"    # most volume -> most liquid -> short
+
+
+def test_absret_signal_ranks_by_absreturn_only():
+    # Decomposition: the pure-volatility numerator ignores the volume denominator.
+    # WILD has the biggest move AND the most volume; under amihud its high volume
+    # would damp illiquidity, but under signal="absret" it is the long because the
+    # ranking is mean|log-ret| alone.
+    closes = {"CALM": _walk(100.0, 0.002), "MID": _walk(100.0, 0.010),
+              "WILD": _walk(100.0, 0.050)}
+    vol = {"CALM": 2e7, "MID": 3e8, "WILD": 9e8}
+    agent = XSectIlliqAgent(
+        config={"illiq_lookback": 48, "top_k": 1, "signal": "absret"},
+        conn=init_db(":memory:"),
+    )
+    decs = {d.coin: d for d in agent.decide(_view(closes, vol)) if d.action == "place"}
+    assert decs["WILD"].side == "B"       # biggest |return| -> long despite high volume
+    assert decs["CALM"].side == "A"       # smallest |return| -> short despite low volume
+
+
+def test_signal_component_values_match_formula():
+    closes = _walk(100.0, 0.030, n=20)
+    dollar_vol = 4e8
+    window = closes[-20:]
+    abs_rets = [abs(math.log(b / a)) for a, b in zip(window, window[1:], strict=False)]
+    mean_abs = sum(abs_rets) / len(abs_rets)
+    amihud = XSectIlliqAgent._illiquidity(closes, dollar_vol, 19, "amihud")
+    volume = XSectIlliqAgent._illiquidity(closes, dollar_vol, 19, "volume")
+    absret = XSectIlliqAgent._illiquidity(closes, dollar_vol, 19, "absret")
+    assert amihud is not None and volume is not None and absret is not None
+    assert abs(amihud - mean_abs / dollar_vol) < 1e-18
+    assert abs(volume - 1.0 / dollar_vol) < 1e-18
+    assert abs(absret - mean_abs) < 1e-18
+
+
+def test_unknown_signal_raises():
+    import pytest
+    with pytest.raises(ValueError, match="signal must be one of"):
+        XSectIlliqAgent(config={"signal": "bogus"}, conn=init_db(":memory:"))
