@@ -62,6 +62,46 @@ def fetch_market_view(base_url: str, coins: list[str]) -> MarketView:
     )
 
 
+@dataclass
+class WsOverlay:
+    """Result of overlaying a WS snapshot onto the live REST view.
+
+    ``applied`` is False when no fresh snapshot was available (REST stays the
+    source of truth). ``n_mids`` / ``n_liqs`` are returned so the CLI can print a
+    one-line summary without re-reading the snapshot.
+    """
+
+    applied: bool
+    n_mids: int
+    n_liqs: int
+
+
+def overlay_ws_snapshot(view: MarketView, snap: MarketView | None) -> WsOverlay:
+    """Merge a fresh WS snapshot onto the live REST ``view`` in place.
+
+    Purely additive: sub-second mids/funding, the L2 ``book_top``, and a REAL
+    liquidations feed for liq_cascade. REST stays the fallback — when ``snap`` is
+    None nothing is touched. Extracted from the ``femr_tick`` preamble (REVIEW
+    M3 / B12) so the overlay is importable and unit-tested without filesystem IO;
+    the CLI keeps the env-read + ``load_fresh_snapshot`` and the console print.
+
+    A non-None snapshot IS a real liquidation feed (it comes from the WS trades
+    flag), even when no liquidations occurred this window — empty means a calm
+    market, not a broken feed — so ``liquidations_feed`` is set True and
+    liq_cascade entries are enabled.
+    """
+    if snap is None:
+        return WsOverlay(applied=False, n_mids=0, n_liqs=0)
+    view.mids.update(snap.mids)
+    view.funding.update(snap.funding)
+    if snap.book_top:
+        view.book_top.update(snap.book_top)
+    liqs = snap.extra.get("liquidations") or []
+    view.extra["liquidations"] = liqs
+    view.extra["liquidations_feed"] = True
+    return WsOverlay(applied=True, n_mids=len(snap.mids), n_liqs=len(liqs))
+
+
 def positions_from_clearinghouse(st: dict) -> list[dict]:
     """Normalize HL ``clearinghouseState`` into the bot's position-dict shape.
 

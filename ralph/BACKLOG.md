@@ -93,9 +93,13 @@ Keep it ruthlessly prioritized: the top item should always be the highest-levera
   per-agent cfg mutation) is extracted into tested `runtime.apply_allocator_caps`
   returning `AllocatorCaps`, removing ~30 lines + 2 now-dead imports from the CLI.
   (Iteration 16.)
+  (e) the WS snapshot overlay (additive merge of fresh mids/funding/book_top +
+  real liquidations feed) is extracted into tested `runtime.overlay_ws_snapshot`
+  returning `WsOverlay`; the CLI keeps only the env-read + file load + print.
+  (Iteration 17.)
   **Remaining:** fold the rest of the `femr_tick` preamble (clearinghouse fetch →
-  risk-cap → view enrich/WS overlay) into a reusable harness so `run_tick` and
-  `femr_tick` share one path end-to-end.
+  risk-cap → view enrich) into a reusable harness so `run_tick` and `femr_tick`
+  share one path end-to-end.
 - [x] **B13 — Move hardcoded trader address to config.** Done (Iter 6, M6):
   `exec/orders.py` and `scripts/daily_scorecard.py` both resolve the trader address
   from `HL_TRADER_ADDRESS`/`HL_ADDRESS` env, legacy default only as fallback.

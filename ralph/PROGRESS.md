@@ -645,3 +645,51 @@ clearinghouse fetch → risk-cap → view enrich/WS overlay — into a reusable 
 so `run_tick` == live path end-to-end), userFills WS for instant maker-fill
 detection, B4-RUN (confirm carry on real history — network-gated), B16 (HL vault
 eval for AUM).
+
+---
+
+## Iteration 17 — 2026-06-08 — extract + test the WS snapshot overlay (B12 / M3 / D2)
+
+**Context.** Structure/devops leverage, continuing B12. Iters 13–16 pulled the
+order-placement (`execute_decisions`), decision-gathering (`gather_decisions`),
+clearinghouse-parse/reconcile (`positions_from_clearinghouse`/`reconcile_agents`),
+and allocator-cap (`apply_allocator_caps`) loops out of `cli.femr_tick` into
+tested `runtime` functions. The next inlined, untested preamble block was the
+**WS snapshot overlay**: merge a fresh WS snapshot's mids/funding/book_top onto
+the live REST view and flip on the real liquidations feed for liq_cascade. ~18
+lines with zero direct coverage (REVIEW M3 "two paths; the safe wrapper is dead
+code for live" + D2 "no coverage of the live path"). The liquidations-feed
+semantics in particular ("a fresh-but-empty snapshot is a calm market, NOT a
+broken feed, so still enable entries") are subtle and were untested.
+
+**Changed (1 commit).**
+- **`agents/runtime.py`** — new `overlay_ws_snapshot(view, snap) -> WsOverlay`: a
+  pure, filesystem-free move of the inlined additive merge. Mutates `view` in
+  place (fresh snapshot mids/funding override; `book_top` merged; `liquidations`
+  set and `liquidations_feed=True` whenever a snapshot exists). Returns
+  `WsOverlay(applied, n_mids, n_liqs)` so the CLI can print its one-line summary.
+  `snap is None` → `applied=False`, view untouched (REST stays the source).
+- **`cli/main.py` `femr_tick`** — the ~18-line inlined block is replaced by
+  `ov = overlay_ws_snapshot(view, load_fresh_snapshot(...))` + a guarded print.
+  The CLI keeps only the `HLBOT_WS_SNAPSHOT` env-read + file load (IO) and the
+  console output. Added `overlay_ws_snapshot` to the runtime import.
+
+**Evidence.** 127 → **130 tests pass** (3 new in `test_tick_harness.py`: None is
+a no-op that leaves REST untouched and injects no feed flag; a real snapshot
+overrides BTC mid while preserving ETH, merges book_top, and enables the feed
+with both liqs; a fresh-but-empty snapshot still sets `liquidations_feed=True`
+with `liquidations=[]`); `ruff check src tests scripts` clean; `from
+hl_bot.cli.main import app, femr_tick` imports OK.
+
+**Why it matters.** The live WS-overlay path — including the subtle
+"empty-feed-is-still-a-feed" rule that gates liq_cascade entries — now lives in
+one importable, unit-tested function instead of buried untested CLI code. Another
+prerequisite for trusting the live path with capital and the next slice of B12
+toward `run_tick == femr_tick` end-to-end. Purely additive merge; safety/structure
+plumbing, not an edge claim.
+
+**What's next (loop).** Finish B12 (fold the remaining femr_tick preamble —
+clearinghouse fetch → risk-cap → view enrich — into a reusable harness so
+`run_tick` == live path end-to-end), userFills WS for instant maker-fill
+detection, B4-RUN (confirm carry on real history — network-gated), B16 (HL vault
+eval for AUM).

@@ -357,6 +357,7 @@ def femr_tick(live: bool = False, execution: str = "taker"):
         apply_allocator_caps,
         fetch_market_view,
         gather_decisions,
+        overlay_ws_snapshot,
         positions_from_clearinghouse,
         reconcile_agents,
     )
@@ -470,19 +471,10 @@ def femr_tick(live: bool = False, execution: str = "taker"):
     if ws_path:
         from ..ingest.ws import load_fresh_snapshot
         snap = load_fresh_snapshot(ws_path, max_age_s=30.0)
-        if snap is not None:
-            view.mids.update(snap.mids)
-            view.funding.update(snap.funding)
-            if snap.book_top:
-                view.book_top.update(snap.book_top)
-            # A fresh WS snapshot IS a real liquidation feed (trades flag), even
-            # when no liquidations occurred this window — empty means a calm
-            # market, not a broken feed — so liq_cascade entries are enabled.
-            liqs = snap.extra.get("liquidations") or []
-            view.extra["liquidations"] = liqs
-            view.extra["liquidations_feed"] = True
-            console.print(f"[dim]ws snapshot overlaid: {len(snap.mids)} mids, "
-                          f"{len(liqs)} liqs[/dim]")
+        ov = overlay_ws_snapshot(view, snap)
+        if ov.applied:
+            console.print(f"[dim]ws snapshot overlaid: {ov.n_mids} mids, "
+                          f"{ov.n_liqs} liqs[/dim]")
 
     # Build position list from HL truth (shared, tested parse).
     all_positions = positions_from_clearinghouse(st)

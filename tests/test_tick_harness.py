@@ -9,6 +9,8 @@ These functions were extracted from the inlined, untested ``femr_tick`` preamble
   returning only the agents that had something cleared.
 - ``apply_allocator_caps`` — allocate the 7d split, resolve the layered risk
   rule, and write the binding caps onto each agent's cfg.
+- ``overlay_ws_snapshot`` — additive merge of a fresh WS snapshot onto the live
+  REST view, enabling the real liquidations feed.
 """
 
 from __future__ import annotations
@@ -17,9 +19,11 @@ from types import SimpleNamespace
 
 import pytest
 
+from hl_bot.agents.base import MarketView
 from hl_bot.agents.decisions import Decision, log_decision
 from hl_bot.agents.runtime import (
     apply_allocator_caps,
+    overlay_ws_snapshot,
     positions_from_clearinghouse,
     reconcile_agents,
 )
@@ -137,3 +141,49 @@ def test_apply_allocator_caps_agent_without_cfg_left_untouched(conn):
     assert out.effective_caps["a"] == out.allocs["a"]
     assert "a" not in out.effective_order_caps
     assert not hasattr(agents[0], "cfg")
+
+
+def test_overlay_ws_snapshot_none_is_noop():
+    view = MarketView(ts_ms=0, mids={"BTC": 100.0}, funding={"BTC": 0.0001})
+    out = overlay_ws_snapshot(view, None)
+    assert out.applied is False
+    assert out.n_mids == 0 and out.n_liqs == 0
+    # REST view untouched; no liquidations feed flag injected.
+    assert view.mids == {"BTC": 100.0}
+    assert "liquidations_feed" not in view.extra
+
+
+def test_overlay_ws_snapshot_merges_and_enables_feed():
+    view = MarketView(
+        ts_ms=0,
+        mids={"BTC": 100.0, "ETH": 50.0},
+        funding={"BTC": 0.0001},
+        book_top={"BTC": (99.0, 101.0)},
+    )
+    snap = MarketView(
+        ts_ms=1,
+        mids={"BTC": 100.5},  # fresher BTC mid overrides; ETH preserved
+        funding={"BTC": 0.0002, "SOL": 0.0003},
+        book_top={"SOL": (9.9, 10.1)},
+        extra={"liquidations": [{"coin": "BTC"}, {"coin": "ETH"}]},
+    )
+    out = overlay_ws_snapshot(view, snap)
+    assert out.applied is True
+    assert out.n_mids == 1 and out.n_liqs == 2
+    assert view.mids == {"BTC": 100.5, "ETH": 50.0}
+    assert view.funding == {"BTC": 0.0002, "SOL": 0.0003}
+    assert view.book_top == {"BTC": (99.0, 101.0), "SOL": (9.9, 10.1)}
+    assert view.extra["liquidations"] == [{"coin": "BTC"}, {"coin": "ETH"}]
+    assert view.extra["liquidations_feed"] is True
+
+
+def test_overlay_ws_snapshot_empty_liqs_still_enables_feed():
+    # A fresh snapshot with no liquidations is a calm market, NOT a broken feed:
+    # the feed flag is still set so liq_cascade entries are enabled.
+    view = MarketView(ts_ms=0, mids={"BTC": 100.0})
+    snap = MarketView(ts_ms=1, mids={"BTC": 100.0}, extra={})
+    out = overlay_ws_snapshot(view, snap)
+    assert out.applied is True
+    assert out.n_liqs == 0
+    assert view.extra["liquidations"] == []
+    assert view.extra["liquidations_feed"] is True
