@@ -1,0 +1,25 @@
+[Unit]
+Description=hl-bot fine-cadence trade recorder (forward-records WS trades into a candle archive)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=hlbot
+WorkingDirectory=/opt/hl-bot
+EnvironmentFile=/etc/hl-bot/env
+# Long-running: folds the live WS trades stream into fine-cadence candles and
+# appends them to a JSONL archive. HL retains only ~one candle cap of history, so
+# this is the ONLY route to a months-long 1m/5m dataset for sub-bar research.
+# Records public market data only; never places an order.
+ExecStart=/usr/bin/env bash -lc 'uv run hlbot record-trades --coins "$${HLBOT_RECORD_COINS:-BTC,ETH,SOL,HYPE}" --interval "$${HLBOT_RECORD_INTERVAL:-1m}" --archive "$${HLBOT_RECORD_ARCHIVE:-/opt/hl-bot/data/recorder/trades_1m.jsonl}"'
+Restart=always
+RestartSec=10
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/opt/hl-bot/data
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

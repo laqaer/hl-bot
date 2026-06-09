@@ -67,10 +67,10 @@ for f in "${HLBOT_HOME}"/deploy/systemd/*; do
     "/etc/systemd/system/$(basename "$f")"
 done
 systemctl daemon-reload
-systemctl enable --now hlbot-tick.timer hlbot-report.timer hlbot-ws.service hlbot-update.timer
+systemctl enable --now hlbot-tick.timer hlbot-report.timer hlbot-ws.service hlbot-recorder.service hlbot-update.timer
 # Record the deployed commit so auto-update only fires on genuinely new commits.
 sudo -u "$HLBOT_USER" sh -c "cd '$HLBOT_HOME' && git rev-parse HEAD > data/.deployed_sha" || true
-log "  -> tick + report + ws + auto-update enabled (PAPER). hlbot-loop NOT enabled (needs claude auth)."
+log "  -> tick + report + ws + recorder + auto-update enabled (PAPER). hlbot-loop NOT enabled (needs claude auth)."
 
 log "8/8 optional Litestream backups"
 # shellcheck disable=SC1090

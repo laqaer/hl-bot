@@ -26,6 +26,7 @@ Re-run any time to update to the latest branch HEAD. What it does:
 | `hlbot-tick.timer` → `.service` | every 5 min | `deploy/run-tick.sh`: ingest → agents (paper unless `HLBOT_TICK_ARGS`) → supervisor → health |
 | `hlbot-report.timer` → `.service` | daily 13:00 UTC | Telegram report + `track-record` export |
 | `hlbot-ws.service` | continuous | WebSocket feed → snapshot the tick overlays (sub-second mids, L2, live liquidations); REST fallback when stale |
+| `hlbot-recorder.service` | continuous | forward-records the WS trades stream into a fine-cadence candle archive (`data/recorder/`) so a months-long 1m/5m dataset accumulates for sub-bar research; records public data only |
 | `hlbot-loop.service` | continuous | the Ralph self-improvement loop — **not auto-enabled**; `systemctl enable --now hlbot-loop` once `claude` is authed |
 
 ## Operate

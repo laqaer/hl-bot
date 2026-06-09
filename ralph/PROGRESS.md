@@ -2565,3 +2565,42 @@ once ~30–60d of 1m/5m data has accumulated, re-run the sub-bar execution + fin
 retention ceiling blocked. Until that archive fills, the search remains exhausted on HL historical data —
 this iteration just guarantees that the *next* attempt has data to run against, which it otherwise never
 would (every iteration of delay is a month of fine candles permanently lost to retention).
+
+## Iteration 43 — 2026-06-08 — B-fine-record slice 2: run `record-trades` 24/7 under systemd
+
+**Context.** Iter 42 built the recorder machine (pure `TradeCandleAggregator` + append-only JSONL archive +
+`hlbot record-trades`), but it only matters if it actually *runs* — HL retains ~one candle cap of history, so
+every day the recorder is NOT running is a day of fine candles permanently lost to retention. Iter 42's named
+slice 2 was to wire it into the deploy systemd units so the archive accumulates on every deployed host. This
+is that slice: pure deploy plumbing, no strategy/runtime change.
+
+**What I changed.** New `deploy/systemd/hlbot-recorder.service`, mirroring `hlbot-ws.service`: `Type=simple`,
+`Restart=always`/`RestartSec=10` (long-running supervised loop), the same sandbox (`NoNewPrivileges`,
+`ProtectSystem=strict`, `ProtectHome=read-only`, `ReadWritePaths=/opt/hl-bot/data`, `PrivateTmp`), and an
+env-driven `ExecStart` (`uv run hlbot record-trades --coins $HLBOT_RECORD_COINS --interval
+$HLBOT_RECORD_INTERVAL --archive $HLBOT_RECORD_ARCHIVE`, defaults BTC,ETH,SOL,HYPE / 1m /
+data/recorder/trades_1m.jsonl) so the operator tunes it without touching the unit. The header states plainly
+it records public market data only and never places an order.
+- `install.sh`: added `hlbot-recorder.service` to the `systemctl enable --now` line (so a fresh install — and
+  AWS user-data, which just calls install.sh — boots the recorder alongside ws/tick/report/update) and updated
+  the confirmation log line.
+- `update.sh`: added `hlbot-recorder.service` to the post-green-tests restart list, so the self-updating box
+  restarts the recorder on every deployed commit (picks up new coins/code without a manual restart).
+- `env.example`: documented `HLBOT_RECORD_COINS` / `HLBOT_RECORD_INTERVAL` / `HLBOT_RECORD_ARCHIVE` with a
+  note on why (HL retention ceiling → forward-record is the only route to a months-long 1m/5m dataset).
+- `deploy/README.md`: added the recorder row to the units table.
+
+**Evidence (gate).** `uv run pytest -q` → **250 passed** (+6 `tests/test_deploy_recorder.py`: unit file
+exists; ExecStart runs `hlbot record-trades` and references all three env vars; long-running + sandboxed
+[`Type=simple`/`Restart=always`/`ReadWritePaths=data`]; install.sh enables it; update.sh restarts it;
+env.example documents the vars — these guard against the unit silently drifting out of the deploy wiring).
+`ruff check src tests scripts` → clean. `bash -n` on both shell scripts → syntax OK. No `data/` writes
+committed; **no strategy, roster, or live-trading change** — deploy plumbing only.
+
+**What's next (loop).** The recorder now accumulates 1m candles 24/7 on every deployed host. Remaining
+work on this thread is purely the passage of time + slice 3: once ~30–60d of 1m/5m data has built up,
+re-run the sub-bar execution + fine-cadence durability theses the HL retention ceiling blocked (Iter 39;
+B-exec-tickmark overlaps) against the recorded archive (drop-in for `build_frames`, no glue). Until that
+archive fills, the edge search stays exhausted on HL historical data — but the data is now being captured
+rather than lost. Other unblocked tracks: P3 spikes B16 (HL vault eval) / B17 (moonshot sleeve spec), both
+design-only.

@@ -22,10 +22,15 @@ Keep it ruthlessly prioritized: the top item should always be the highest-levera
   `candles_by_coin` dict that is a **drop-in for `build_frames`** — closing the loop recorded→backtester with
   zero adaptation. Thin `run_recorder` WS loop + `hlbot record-trades --coins --interval 1m --archive`
   (mirrors `hlbot ws`; supervise via systemd). +10 tests incl. an end-to-end (recorded candles → `build_frames`
-  → frames). Maker/research-only, no live trading change. Numbers in PROGRESS Iter 42. **Next slices:** (2)
-  add `record-trades` to the deploy systemd units so it runs 24/7 alongside `hlbot-ws`; (3) once ~30–60d of
-  1m/5m data exists, re-run the sub-bar execution + fine-cadence durability theses the retention ceiling
-  blocked (B-exec-tickmark overlaps). Until then the search stays exhausted on HL historical data.
+  → frames). Maker/research-only, no live trading change. Numbers in PROGRESS Iter 42. Slice 2 DONE (Iteration 43):
+  `record-trades` now runs 24/7 under systemd — new `deploy/systemd/hlbot-recorder.service` (mirrors
+  `hlbot-ws.service`: Type=simple, Restart=always, sandboxed ReadWritePaths=data/, env-driven coins/interval/
+  archive), enabled by `install.sh` and restarted by `update.sh` alongside ws, documented in deploy/README +
+  env.example. +6 deploy-consistency tests. So the archive now accumulates on every deployed host (AWS
+  user-data inherits via install.sh). Records public market data only; nothing places an order. **Next slice:**
+  (3) once ~30–60d of 1m/5m data exists, re-run the sub-bar execution + fine-cadence durability theses the
+  retention ceiling blocked (B-exec-tickmark overlaps). Until then the search stays exhausted on HL historical
+  data.
 - [x] **B-cadence-data — Can fine-cadence (5m/15m/1m) durability research be run on HL candles? NO —
   structurally blocked by HL data RETENTION, not by tooling (Iteration 39).** The "what's next" from
   Iter 37/38 named direction (a) **sub-bar / cadence-mismatch** (REVIEW C7) as the highest-leverage

@@ -27,7 +27,7 @@ as_hlbot 'uv sync --frozen -q' || { echo "[update] uv sync failed; aborting"; ex
 if as_hlbot 'uv run pytest -q' >/tmp/hlbot_update.log 2>&1; then
   echo "$current" > "$HOME_DIR/data/.deployed_sha"
   chown "$USER_":"$USER_" "$HOME_DIR/data/.deployed_sha" 2>/dev/null || true
-  systemctl restart hlbot-tick.timer hlbot-ws.service 2>/dev/null || true
+  systemctl restart hlbot-tick.timer hlbot-ws.service hlbot-recorder.service 2>/dev/null || true
   echo "[update] deployed + restarted $current"
 else
   echo "[update] tests RED at $current — NOT deploying (frozen at $deployed)"
