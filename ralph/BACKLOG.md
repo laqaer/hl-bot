@@ -16,7 +16,14 @@ Keep it ruthlessly prioritized: the top item should always be the highest-levera
   different times). Robust: 11/20 coins positive, top coin only 25% of net, net
   ex-top still +$87.77 — not a single-name artifact. (Iteration 30, numbers in
   PROGRESS.) The 4-major and 10-coin universes do NOT clear it (in-sample +1.1 /
-  −5.2bps) — the edge REQUIRES the wide universe.
+  −5.2bps) — the edge REQUIRES the wide universe. **HARDENED on a doubled window
+  (Iter 35):** `confirm` over **180d** 1h (2× the G0 window, more regime cycles)
+  still ✅ CONFIRMS under maker — in-sample +5.5bps/+0.85sh, oos +22.8bps/+2.88sh,
+  robust to 2× slippage, cost-robust to taker-3× (+1.6bps). Maker is the
+  load-bearing lever: prefer=taker does NOT confirm (older 90d half flat at taker
+  cost, −0.0bps; OOS still +17.3bps, full-sample taker-1× +5.6bps) — the older
+  regime's edge survives only at maker cost, consistent with REVIEW C1. This
+  closes "what's next (b) — longer-history confirm for G0 stability."
 - [x] **B1d-trend-deploy — Wire trend_breakout to PAPER on the 20-coin universe.**
   G0→paper is the next gate. **BLOCKER (honest):** live `cli/main.py::_enrich_view`
   fills `view.extra['closes']` with **60×1-MINUTE** candles (the VWAP feed), but the

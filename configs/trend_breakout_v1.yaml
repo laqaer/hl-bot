@@ -6,6 +6,11 @@ description: >-
   Its edge is a cross-sectional breadth effect — different coins trend at
   different times — so it MUST be run on a wide universe (~20 names), not the
   4 majors (where the older/choppy half goes negative).
+  HARDENED on a doubled window (Iter 35): `confirm` over 180d 1h still ✅ CONFIRMS
+  under maker (in-sample +5.5bps/+0.85sh, oos +22.8bps/+2.88sh, robust to 2x
+  slippage, cost-robust to taker-3x +1.6bps). Maker is the load-bearing lever:
+  prefer=taker does NOT confirm because the older 90d half is flat at taker cost
+  (-0.0bps) — so this stays a maker-execution strategy (REVIEW C1).
 mode: paper
 
 # Per-agent metrics only (sharpe/max_drawdown are account-level). G1 paper gate

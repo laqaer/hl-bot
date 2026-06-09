@@ -1709,3 +1709,63 @@ B1d candidate (i) spot-vs-perp basis at funding deciles for a second uncorrelate
 (needs network). Offline alternative: a longer-history backtest fixture or a regime-aware
 *allocation* benchmark for trend (run-only-in-trend vs buy-and-hold) since G0's symmetric
 two-half rule structurally penalises a pure trend-follower in chop.
+
+---
+
+## Iteration 35 — 2026-06-09 — G0 edge HARDENED on a doubled window: `trend_breakout_v1` still ✅ CONFIRMS over 180d 1h under maker.
+
+**Context.** Iter 30 cleared G0 for `trend_breakout_v1` on a **90d** 20-coin
+universe; Iters 31–34 wired it to paper and made the G1 clock observable. The
+standing "what's next (b)" across the last several iterations was a longer-history
+`confirm` to test G0 stability across *more regime cycles* — the single most
+decisive piece of evidence before the (human-gated) live_small flip, and exactly
+"evidence before capital." Network is reachable on this host, so this is now
+unblocked. Picked over (c) spot-vs-perp basis (a new, larger, speculative edge
+hunt) because hardening the *one edge we already have* is higher leverage than
+starting a second one.
+
+**What I did.**
+- Fetched **180d 1h** for the G0 universe (ADA,APT,ARB,AVAX,BTC,DOGE,ETH,HYPE,INJ,
+  LINK,LTC,NEAR,OP,SEI,SOL,SUI,TIA,TRX,WIF,ZEC) → 4321 frames cached
+  (`backtest-fetch`, gzipped, gitignored). Doubles the G0 window (90d→180d).
+- Ran `hlbot confirm --agent trend_breakout_v1 --days 180` at the G0-confirmed
+  defaults, under **both** preferred-execution modes.
+
+**Evidence (the numbers).**
+- **prefer=maker → ✅ CONFIRMED (4321 frames):**
+  - walk-forward: in-sample(maker) net $+50.83 / **+5.5bps** / +0.85sh / 1130 trades;
+    oos(maker) net $+83.84 / **+22.8bps** / +2.88sh / 456 trades.
+  - cost ladder (full sample): maker +11.1bps / taker-1× +5.6bps / taker-2× +3.6bps /
+    **taker-3× +1.6bps**; **robust to 2× slippage: True**.
+  - verdict: clears +3bps in & out of sample with sharpe ≥ 1.0.
+- **prefer=taker → ❌ NOT CONFIRMED**, for one honest reason: the **older** in-sample
+  half is **flat at taker cost** (in-sample(taker) net −$0.39 / **−0.0bps** / +0.09sh),
+  while oos(taker) is strongly positive (net $+63.60 / **+17.3bps** / +2.21sh) and the
+  full-sample taker-1× is +5.6bps. So the older regime's trend edge survives **only at
+  maker cost** — directly confirming REVIEW C1 (taker tax is the structural bleed) and
+  validating that this agent is correctly deployed as a **maker** strategy.
+
+**Interpretation.** The edge is not a 90d regime artifact: it reproduces walk-forward
+on a second, longer, more regime-diverse window under its *intended* execution. The
+maker-vs-taker split is the load-bearing detail — the older choppier regime is the one
+that needs maker pricing to stay positive, which is the whole thesis behind running
+this strategy post-only. This is the strongest pre-live evidence to date.
+
+**Changed (in-repo artifacts, no code logic).**
+- `configs/trend_breakout_v1.yaml` — description now cites the 180d maker
+  confirmation + the taker caveat, so the hardening evidence lives next to the agent.
+- `ralph/BACKLOG.md` — annotated the G0-CLEARED entry with the 180d result; closes
+  "what's next (b)".
+
+**Evidence (tests/lint).** 165 pass (unchanged — doc/config edits only);
+`ruff check src tests scripts` clean.
+
+**Why it matters.** Two independent walk-forward windows (90d and 180d) now confirm
+the one edge in the entire hunt that survives costs, under maker execution. The G1
+paper clock keeps running on forward data; this gives a human the longest-history
+backtest evidence to weigh the (always human-gated) live_small decision against.
+
+**What's next (loop).** (a) Let the G1 paper clock run (time-gated). (b) Optional
+further hardening: an even-longer window if HL 1h history extends past 180d, or a
+365d-equivalent at 4h. (c) The remaining B1d candidate (i) — spot-vs-perp basis at
+funding deciles — for a *second uncorrelated* edge, now that the first is twice-confirmed.
