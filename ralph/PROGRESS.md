@@ -2604,3 +2604,59 @@ B-exec-tickmark overlaps) against the recorded archive (drop-in for `build_frame
 archive fills, the edge search stays exhausted on HL historical data — but the data is now being captured
 rather than lost. Other unblocked tracks: P3 spikes B16 (HL vault eval) / B17 (moonshot sleeve spec), both
 design-only.
+
+## Iteration 44 — 2026-06-08 — B-lowvol: cross-sectional low-volatility (betting-against-volatility) — the ELEVENTH thesis, PRUNED
+
+**Context.** Ten structurally-different theses are pruned (Iter 16→38) and the fine-cadence direction is
+retention-blocked on HL candles (Iter 39); the recorder now forward-captures 1m data for a *future* slice-3
+re-run (Iter 42/43), but that thread is data-/time-gated, not a one-shot iteration. The operator's standing
+preference is real-data edge work over reporting/governance polish, so rather than another Path-C report I
+tested **one** genuinely new, a-priori-motivated, structurally-different thesis that the search had never
+touched: the **cross-section of realized volatility**. Every prior candidate keyed off price *return*
+(TWAP-MR, x-sect/ts/majors-1d momentum), *funding level* (carry), a *pairwise ratio* (pairs), a *cross-market
+gap* (basis), the *clock* (session), or *microstructure* (maker spread) — none off **how volatile each coin
+is**. The low-volatility anomaly (Frazzini-Pedersen "betting against beta") is one of TradFi's most robust
+cross-asset factors (low-risk names deliver higher *risk-adjusted* returns because leverage-constrained
+buyers overpay for high-beta), and realized vol is far more *persistent* bar-to-bar than realized return —
+the exact property that sign-flipped the momentum leads across disjoint windows — so it was worth a clean
+durability test, not a guess.
+
+**What I built (pure, tested).** New `src/hl_bot/agents/xsect_lowvol.py` (`XSectLowVolAgent` /
+`XSectLowVolConfig`), mirroring the `xsect_momentum` machinery but with the signal swapped from return-rank to
+**realized-vol rank**: `_realized_vol(closes, lb)` = sample std (ddof=1) of the last `lb` log-returns;
+dollar-neutral LONG the calmest `top_k` / SHORT the wildest `top_k`, requiring ≥`2*top_k` eligible coins to
+form both legs; exits when a coin drops out of the rank set or switches legs; an `invert` flag flips the legs
+(LONG high-vol / SHORT low-vol — the "lottery-demand / high-vol-chase" mirror) at no extra code. Registered in
+both `confirm`/`backtest` CLI factories. +7 unit tests (longs calmest/shorts wildest; invert flips both legs;
+needs ≥2*top_k coins else holds; thin coins filtered; short series holds; realized vol == manual log-return
+std; higher oscillation → higher vol).
+
+**Result (real HL cache, 1h, maker_fee=1bp, `confirm --windows 2 --prefer maker`, two disjoint 120d windows).**
+- **majors (AVAX,BTC,ETH,HYPE,LINK,SOL) base (low-vol):** ❌ NOT DURABLE — full-sample **net-NEGATIVE &
+  sign-stable** (trailing −32.7bps, in −5.4/oos −134.1; older −8.5bps, in +16.1/oos −76.7). This is the
+  *cleanest prune signature*: BAB is the **wrong sign** in crypto majors — high-vol coins outperform low-vol
+  (risk-on beta / lottery-demand dominates the leverage-constraint premium).
+- **majors invert (high-vol chase):** ❌ NOT DURABLE but the mirror — full-sample **positive & sign-stable**
+  (trailing +21.3, older +5.3) yet blocked by within-window walk-forward (regime-sensitive: trailing oos
+  +97.2 but in only +5.0; older in −18.2). Same "sign-stable lead, not deployable" bucket as the majors-1d
+  momentum and session leads — not the cross-window artifact sign-flip, but not durable either.
+- **high-funding alts (AERO,APT,EIGEN,INJ,NIL,PURR,PYTH,S,SPX,TRUMP) base (low-vol):** ❌ NOT DURABLE —
+  marginally positive full-sample (trailing +5.9, older +4.3) but **OOS negative in BOTH windows** (oos −1.2
+  / −15.7), the regime-sensitive failure mode.
+
+**Conclusion.** The eleventh thesis does not clear the durability bar on either universe: **wrong sign on
+majors** (the right-sign mirror is only a regime-sensitive lead) and a **regime-sensitive non-durable** result
+on alts. The volatility cross-section joins the pruned set; `xsect_lowvol_v1` stays in the roster for
+paper/measurement only. Maker-only, no live change.
+
+**Evidence (gate).** `uv run pytest -q` → **257 passed** (+7 xsect_lowvol). `uv run ruff check src tests
+scripts` → clean. Backtests ran fully offline against the existing gitignored cache (no `data/` writes
+committed). No strategy promoted, no roster live-mode change.
+
+**What's next (loop).** Eleven structurally-different theses now pruned on HL historical data; the search
+remains exhausted on what HL candle history can support. The only route back to *finding* an edge is the
+fine-cadence archive the recorder is now accumulating (slice 3, data-/time-gated). Genuinely-new untouched
+classes are getting scarce — remaining candidates would be combinations of pruned signals (not structurally
+new) or require data HL doesn't retain (sub-bar/tick). Remaining unblocked non-edge tracks are the P3 design
+spikes (B16 HL vault eval, B17 moonshot sleeve spec), both design-only and gated behind a real edge before
+any capital.

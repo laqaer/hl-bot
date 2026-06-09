@@ -26,6 +26,7 @@ from ..agents.twap_mr import TwapMrAgent
 from ..agents.twap_mr_regime import TwapMrRegimeAgent
 from ..agents.veto import VetoAgent
 from ..agents.xfund_carry import XFundCarryAgent
+from ..agents.xsect_lowvol import XSectLowVolAgent
 from ..agents.xsect_momentum import XSectMomentumAgent
 from ..config import CONFIG_DIR, Settings
 from ..db.schema import init_db
@@ -777,6 +778,7 @@ def backtest(
         "funding_carry_v1": lambda conn: FundingCarryAgent(config=cfg, conn=conn),
         "xfund_carry_v1": lambda conn: XFundCarryAgent(config=cfg, conn=conn),
         "xsect_momentum_v1": lambda conn: XSectMomentumAgent(config=cfg, conn=conn),
+        "xsect_lowvol_v1": lambda conn: XSectLowVolAgent(config=cfg, conn=conn),
         "ts_momentum_v1": lambda conn: TsMomentumAgent(config=cfg, conn=conn),
         "session_timing_v1": lambda conn: SessionTimingAgent(config=cfg, conn=conn),
         "pairs_reversion_v1": lambda conn: PairsReversionAgent(config=cfg, conn=conn),
@@ -968,6 +970,7 @@ def confirm(
         "funding_carry_v1": FundingCarryAgent,
         "xfund_carry_v1": XFundCarryAgent,
         "xsect_momentum_v1": XSectMomentumAgent,
+        "xsect_lowvol_v1": XSectLowVolAgent,
         "ts_momentum_v1": TsMomentumAgent,
         "session_timing_v1": SessionTimingAgent,
         "pairs_reversion_v1": PairsReversionAgent,

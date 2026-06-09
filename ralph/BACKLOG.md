@@ -31,6 +31,25 @@ Keep it ruthlessly prioritized: the top item should always be the highest-levera
   (3) once ~30–60d of 1m/5m data exists, re-run the sub-bar execution + fine-cadence durability theses the
   retention ceiling blocked (B-exec-tickmark overlaps). Until then the search stays exhausted on HL historical
   data.
+- [x] **B-lowvol — Cross-sectional low-volatility / betting-against-volatility (the ELEVENTH structurally-
+  different thesis; the FIRST to key off the volatility cross-section, orthogonal to all ten priors). PRUNED
+  as a deployable edge (Iteration 44).** Every prior thesis keyed off price *return* (TWAP-MR, x-sect/ts/
+  majors-1d momentum), *funding level* (carry), a *pairwise ratio* (pairs), a *cross-market gap* (basis), the
+  *clock* (session), or *microstructure* (maker spread); none off **realized-volatility rank**. The low-vol
+  anomaly (Frazzini-Pedersen BAB) is one of TradFi's most robust factors — a-priori, not data-mined — and vol
+  is far more *persistent* bar-to-bar than return, the property that sign-flipped the momentum leads, so it
+  was worth a clean test. New pure `agents/xsect_lowvol.py` (`XSectLowVolAgent`): ranks the eligible universe
+  by sample-std of trailing log-returns over `vol_lookback`, dollar-neutral LONG the calmest top_k / SHORT the
+  wildest top_k; `invert` flag flips the legs (high-vol chase) at no extra code. Registered in confirm/
+  backtest, +7 unit tests. **Result (real HL cache, 1h, maker, 120d×2 disjoint windows):** **majors** base
+  (low-vol) is net-**NEGATIVE & sign-stable** (full −32.7 / −8.5 bps, oos −134 / −77) — the cleanest prune
+  signature: BAB is the *wrong sign* in crypto majors (high-vol outperforms — risk-on beta/lottery chase
+  dominates); the `invert` mirror is positive & sign-stable (+21.3 / +5.3) but NOT DURABLE (regime-sensitive
+  within-window, the same failure as the majors-1d momentum / session leads). **high-funding alts** base is
+  marginally positive but NOT DURABLE (full +5.9 / +4.3, oos −1.2 / −15.7 — regime-sensitive both windows).
+  **Net: the eleventh thesis does not clear the durability bar on either universe** — wrong sign on majors,
+  regime-sensitive lead at best on alts. `xsect_lowvol_v1` stays in the roster for paper/measurement only;
+  maker-only, no live change. Numbers in PROGRESS Iter 44.
 - [x] **B-cadence-data — Can fine-cadence (5m/15m/1m) durability research be run on HL candles? NO —
   structurally blocked by HL data RETENTION, not by tooling (Iteration 39).** The "what's next" from
   Iter 37/38 named direction (a) **sub-bar / cadence-mismatch** (REVIEW C7) as the highest-leverage
