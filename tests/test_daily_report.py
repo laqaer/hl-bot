@@ -7,11 +7,11 @@ command — folding `promotion_progress` into the report (Iter 34).
 
 from __future__ import annotations
 
-import time
 from pathlib import Path
 
 import pytest
 
+from hl_bot.agents.decisions import Decision, log_decision
 from hl_bot.db.schema import init_db
 from hl_bot.reports.daily import build, render_gate_progress
 from hl_bot.supervisor.goals import ConditionProgress, GateProgress
@@ -22,17 +22,6 @@ CONFIG_DIR = Path(__file__).resolve().parents[1] / "configs"
 @pytest.fixture
 def conn(tmp_path):
     return init_db(tmp_path / "report.sqlite")
-
-
-def _insert_fill(conn, agent, coin, t_ms, pnl, fee=0.1, sz=10.0, px=1.0):
-    conn.execute(
-        """INSERT INTO fills(hash, tid, time_ms, coin, side, px, sz,
-           start_position, dir, closed_pnl, fee, fee_token, builder_fee,
-           cloid, agent, raw_json)
-           VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
-        (f"h{coin}{t_ms}", t_ms, t_ms, coin, "B", px, sz, 0, "Close Long",
-         pnl, fee, "USDC", 0, None, agent, "{}"),
-    )
 
 
 def test_render_gate_progress_empty_is_blank():
@@ -70,18 +59,23 @@ def test_render_gate_progress_ready_header():
 
 
 def test_build_includes_gate_progress_for_partial_trend(conn):
-    """A real config + fills: the digest shows the gate section with the
-    n_trades condition met but the edge condition still short."""
-    now = int(time.time() * 1000)
-    for i in range(200):
-        # tiny edge: net +$0.005/trade, notional 100 -> ~+0.5bps (< +5 gate).
-        _insert_fill(
-            conn, "trend_breakout_v1", "BTC", now - (i + 1) * 1000,
-            pnl=0.105, fee=0.10, sz=100.0, px=1.0,
-        )
+    """A real (paper) config + paper decisions: the digest shows the gate section
+    scored from the simulated forward-test, with the n_trades condition met but
+    the edge condition still short. (trend_breakout_v1 is paper-mode, so the gate
+    is measured from simulated fills, not real ones.)"""
+    # 80 round-trips -> 160 simulated fills (n_trades >= 150 ✓); each gains only
+    # +0.10/100 of price so the maker round-trip edge is ~+4bps (< +5 gate ✗).
+    for _ in range(80):
+        log_decision(conn, Decision(agent="trend_breakout_v1", action="place",
+                                    coin="BTC", side="B", sz=100.0, px=100.0,
+                                    is_paper=True))
+        log_decision(conn, Decision(agent="trend_breakout_v1", action="flatten",
+                                    coin="BTC", side="A", sz=100.0, px=100.10,
+                                    is_paper=True))
     md = build(conn, configs=CONFIG_DIR)
     assert "## HL bot daily report" in md  # base section still present
     assert "## Gate progress" in md
     assert "trend_breakout_v1 — paper → live_small" in md
+    assert "paper-sim forward-test" in md  # basis disclosed in the header
     assert "✓ `n_trades(30d) >= 150`" in md
     assert "✗ `edge_bps(30d) >= 5`" in md

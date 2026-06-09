@@ -59,7 +59,10 @@ def render_gate_progress(reports: Iterable[GateProgress]) -> str:
     lines: list[str] = ["## Gate progress", ""]
     for gp in reports:
         head = "READY" if gp.ready else f"{gp.n_met}/{gp.n_total} met"
-        lines.append(f"### {gp.agent} — {gp.from_mode} → {gp.to_mode} ({head})")
+        basis = " — paper-sim forward-test" if gp.simulated else ""
+        lines.append(
+            f"### {gp.agent} — {gp.from_mode} → {gp.to_mode} ({head}){basis}"
+        )
         for c in gp.conditions:
             mark = _STATUS_MARK[c.status]
             val = _fmt(c.value)

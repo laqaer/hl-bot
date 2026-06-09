@@ -1931,3 +1931,70 @@ supervisor change — it currently scores real fills only, so paper agents are p
 N/A at the gate). (b) Let the (now-measurable) paper clock run + watch `hlbot paper_score`.
 (c) The remaining B1d candidate (i) — spot-vs-perp basis at funding deciles — for a second
 uncorrelated edge.
+
+---
+
+## Iteration 39 — 2026-06-09 — Paper G1 gate now scored on the simulated forward-test (`promotion_progress` reads paper-sim for paper agents; auto-promotion stays on real fills). Closes B1d-trend-G1gate.
+
+**Context.** Iter 38 built `score_paper_forward` (simulate fills off the paper decision
+log under the edge-confirming maker cost model) and exposed it as `hlbot paper_score`,
+but flagged the residual gap as its explicit "what's next (a)": `promotion_progress` —
+hence `hlbot gate-progress` AND the daily digest — still read the **real `fills` table
+only**, so for any paper-mode agent every G1 condition rendered **N/A forever**. The
+trend agent produces no exchange fills, so the "distance-to-live" display the supervisor
+shows a human was permanently blank for the one edge we have. Picked this — the top
+unblocked P1 item and Iter 38's named follow-up — over the speculative spot-vs-perp basis
+hunt, because a gate we cannot *observe* is a silent blocker on the pre-live decision
+("evidence before capital" needs the evidence to be visible).
+
+**The safety question that made this a "separately-reviewed supervisor change."**
+`run_once` (loop.py:68) **auto-promotes** when `evaluate()` returns a `promote`
+Evaluation — it calls `_set_mode(agent, g.promotion.to_mode)`, and trend_breakout's
+`to_mode` is `live_small`. Today the de-facto human gate is exactly that paper agents
+have **no real fills** → conditions N/A → `evaluate` never emits `promote`. Naively
+routing `evaluate` through `score_paper_forward` would let a paper agent that clears its
+gate *in simulation* be **auto-flipped to live_small** — a direct violation of the hard
+rule "never enable or scale live trading; promotion is human-gated." So the change is
+deliberately asymmetric.
+
+**Changed (1 commit).**
+- **`supervisor/goals.py`** — `promotion_progress(conn, g, cost=None)` branches on the
+  agent's *current* mode: **paper** → score each condition from `score_paper_forward`
+  (function-local import; default maker cost), **live_small/live** → real `score_agent`
+  as before. `GateProgress` gained `simulated: bool` (True iff paper). Docstring spells
+  out the deliberate divergence: `promotion_progress` is *read-only observability*; the
+  *action* path (`evaluate`/`run_once`) is untouched and still scores real fills, so a
+  paper agent is never auto-promoted to live size on simulated edge.
+- **`reports/daily.py`** + **`cli/main.py`** — both gate-progress renderers append a
+  "paper-sim forward-test" / "(paper-sim forward-test)" basis tag when `gp.simulated`,
+  so a human reading the digest/CLI always knows the numbers are simulated, not real.
+- **`tests/test_supervisor_configs.py`** (+2) — (1) a paper agent with logged paper
+  decisions now reports `simulated=True`, n_trades counted (10 from 5 round-trips), edge
+  & net not-None, and the live `fills` table stays empty (read-only); (2) **SAFETY**: 80
+  profitable round-trips make the forward-test `ready=True`, yet `run_once` does **not**
+  promote (real fills empty → N/A) and `agent_state.mode` is never `live_small`. The two
+  pre-existing real-fills `promotion_progress` tests set `g.mode='live_small'` to keep
+  exercising the real-fills branch (and assert `simulated is False`).
+- **`tests/test_daily_report.py`** — the partial-trend build test now logs paper
+  decisions (80 round-trips, ~+4bps maker edge < +5 gate, n_trades 160 ≥ 150) instead of
+  inserting real fills, since the paper agent's gate is now correctly measured from its
+  forward-test; asserts the "paper-sim forward-test" basis shows in the digest. Removed
+  the now-unused `_insert_fill` helper + `time` import.
+
+**Evidence (tests/lint).** 178 → **180 pass**; `ruff check src tests scripts` clean.
+No edge claim — measurement/observability plumbing over the Iter-30/35 twice-G0-confirmed
+trend signal; edge numbers stand from `hlbot confirm` (90d + 180d maker).
+
+**Why it matters.** The G1 paper forward-test is the decisive pre-live gate. Iter 38 made
+its *score* computable (`paper_score`); Iter 39 makes that score show up in the
+supervisor's own distance-to-gate views (`gate-progress`, daily digest) so a human can
+watch the trend agent's paper clock approach +5bps/$50/150-trades — while the automated
+promotion path provably cannot act on those simulated numbers. The observe/act split is
+the safety design: simulated edge informs a human decision, never an automatic one.
+
+**What's next (loop).** (a) Let the (now-observable) paper clock accumulate real paper
+decisions and watch `gate-progress`. (b) The remaining B1d candidate (i) — spot-vs-perp
+basis at funding deciles — for a second uncorrelated edge, now that the first is
+twice-confirmed, faithfully deployed, AND measurably gated. (c) Optional: a human-gated
+`hlbot promote --agent` helper that reads `promotion_progress(ready=True)` and flips
+paper→live_small explicitly (keeps the human in the loop while removing manual SQL).

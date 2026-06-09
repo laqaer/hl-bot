@@ -13,6 +13,7 @@ from pathlib import Path
 
 import pytest
 
+from hl_bot.agents.decisions import Decision, log_decision
 from hl_bot.db.schema import init_db
 from hl_bot.supervisor.goals import load_goals, promotion_progress
 from hl_bot.supervisor.loop import run_once
@@ -103,7 +104,8 @@ def test_losing_agent_is_not_promoted(conn):
 
 def test_promotion_progress_reports_per_condition_distance(conn):
     """Distance-to-gate exposes every condition's value vs threshold, even when
-    only some are met (so partial G1 progress is observable)."""
+    only some are met (so partial G1 progress is observable). For a live_small
+    agent the gate is scored from real exchange fills."""
     now = int(time.time() * 1000)
     # Many small wins: clears n_trades(>=150) and net_pnl(>=50), but the per-trade
     # edge is tiny so edge_bps(>=5) stays below threshold.
@@ -116,9 +118,11 @@ def test_promotion_progress_reports_per_condition_distance(conn):
         )
 
     g = load_goals(CONFIG_DIR / "trend_breakout_v1.yaml")[0]
+    g.mode = "live_small"  # real-fills branch (paper would simulate from decisions)
     gp = promotion_progress(conn, g)
 
     assert gp is not None
+    assert gp.simulated is False
     assert gp.agent == "trend_breakout_v1"
     assert gp.to_mode == "live_small"
     assert gp.n_total == len(g.promotion.conditions) == 3
@@ -145,6 +149,7 @@ def test_promotion_progress_ready_when_all_conditions_pass(conn):
             pnl=0.70, fee=0.10, sz=10.0, px=1.0,
         )
     g = load_goals(CONFIG_DIR / "trend_breakout_v1.yaml")[0]
+    g.mode = "live_small"  # real-fills branch
     gp = promotion_progress(conn, g)
     assert gp is not None
     assert gp.ready is True
@@ -155,6 +160,62 @@ def test_promotion_progress_none_without_promotion_block(conn):
     g = load_goals(CONFIG_DIR / "trend_breakout_v1.yaml")[0]
     g.promotion = None
     assert promotion_progress(conn, g) is None
+
+
+def _log_paper_round_trips(conn, agent, n, entry_px=100.0, exit_px=110.0, sz=10.0):
+    """Log ``n`` profitable paper round-trips (place long + flatten) the way the
+    live paper tick logs them — these produce NO real fills, only decisions."""
+    for _ in range(n):
+        log_decision(conn, Decision(agent=agent, action="place", coin="BTC",
+                                    side="B", sz=sz, px=entry_px, is_paper=True))
+        log_decision(conn, Decision(agent=agent, action="flatten", coin="BTC",
+                                    side="A", sz=sz, px=exit_px, is_paper=True))
+
+
+def test_promotion_progress_simulates_forward_test_for_paper_agent(conn):
+    """A paper agent has no real fills, so the gate must be scored from simulated
+    fills replayed off its decision log. Without this the G1 conditions are N/A
+    forever and the paper clock has no hands."""
+    _log_paper_round_trips(conn, "trend_breakout_v1", 5)
+    g = load_goals(CONFIG_DIR / "trend_breakout_v1.yaml")[0]
+    assert g.mode == "paper"
+
+    gp = promotion_progress(conn, g)
+    assert gp is not None
+    assert gp.simulated is True
+    by_metric = {c.metric: c for c in gp.conditions}
+    # 5 round-trips -> 10 simulated fills counted as trades; measured, not N/A.
+    assert by_metric["n_trades"].value == 10
+    assert by_metric["n_trades"].status != "na"
+    assert by_metric["edge_bps"].value is not None
+    assert by_metric["net_pnl"].value is not None
+    # Read-only: the live ground-truth fills table is never written.
+    assert conn.execute("SELECT COUNT(*) FROM fills").fetchone()[0] == 0
+
+
+def test_paper_agent_never_auto_promoted_on_simulated_edge(conn):
+    """SAFETY: even when the paper forward-test would clear every G1 condition,
+    the supervisor's action path (evaluate/run_once) scores REAL fills — of which
+    a paper agent has none — so it never auto-promotes paper -> live_small.
+    Promotion to live size stays a human action (docs/GO_LIVE.md)."""
+    # 80 profitable round-trips: edge_bps, net_pnl and n_trades(>=150) all clear
+    # the gate *in simulation*.
+    _log_paper_round_trips(conn, "trend_breakout_v1", 80)
+    g = load_goals(CONFIG_DIR / "trend_breakout_v1.yaml")[0]
+
+    # The observability path shows the gate is ready on the forward-test...
+    gp = promotion_progress(conn, g)
+    assert gp is not None and gp.simulated is True and gp.ready is True
+
+    # ...but the action path must NOT promote (no real fills -> conditions N/A).
+    actions = run_once(conn, [g])
+    promoted = any("PROMOTE" in a for a in actions.get("trend_breakout_v1", []))
+    assert promoted is False
+    row = conn.execute(
+        "SELECT mode FROM agent_state WHERE agent='trend_breakout_v1'"
+    ).fetchone()
+    # mode is either untouched (no row) or still paper — never live_small.
+    assert row is None or row["mode"] == "paper"
 
 
 def test_guardrail_failure_blocks_promotion_even_if_longer_window_passes(conn):

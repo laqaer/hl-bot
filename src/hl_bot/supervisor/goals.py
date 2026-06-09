@@ -121,6 +121,10 @@ class GateProgress:
     conditions pass — this reports every condition's current value vs threshold,
     so the distance to the gate is observable while the paper clock is still
     running. Read-only; computes nothing the supervisor doesn't already compute.
+
+    ``simulated`` is True when the agent is in ``paper`` mode, in which case the
+    conditions are scored from *simulated* paper fills (the forward-test), not
+    real exchange fills — see ``promotion_progress``.
     """
 
     agent: str
@@ -130,6 +134,7 @@ class GateProgress:
     n_met: int
     n_total: int
     ready: bool
+    simulated: bool = False
 
 
 def load_goals(config_path: str | Path) -> list[AgentGoals]:
@@ -226,20 +231,43 @@ def evaluate(conn: sqlite3.Connection, g: AgentGoals) -> list[Evaluation]:
 
 
 def promotion_progress(
-    conn: sqlite3.Connection, g: AgentGoals
+    conn: sqlite3.Connection, g: AgentGoals, cost: Any = None
 ) -> GateProgress | None:
     """Distance-to-gate report for an agent's promotion conditions.
 
-    Returns None if the agent has no promotion block. Each condition is scored
-    with the same ``score_agent``/``Condition.evaluate`` the supervisor uses, so
-    ``ready`` here matches what ``evaluate`` would promote on (modulo guardrails,
-    which are a separate, dominating check). Pure / read-only.
+    Returns None if the agent has no promotion block.
+
+    Scoring basis depends on the agent's *current* mode:
+
+    * **paper** — a paper agent produces no exchange fills, so scoring real fills
+      reports 0 trades / ``None`` edge and the G1 gate is unmeasurable forever.
+      Here we score the **forward-test**: simulated fills replayed from the paper
+      decision log (``score_paper_forward``) under the same cost model the edge
+      was confirmed under (default maker). ``simulated`` is set True.
+    * **live_small / live** — scored from real exchange fills (``score_agent``),
+      as before.
+
+    This makes the paper G1 distance *observable* (``hlbot gate-progress``, daily
+    digest) without changing the *action* path: ``evaluate``/``run_once`` still
+    score real fills, so a paper agent is **never auto-promoted to live_small on
+    simulated edge** — promotion remains a human action (``docs/GO_LIVE.md``).
+    That deliberate divergence is why this is read-only reporting, not a gate the
+    supervisor acts on. Pure / read-only w.r.t. ``conn``.
     """
     if not g.promotion:
         return None
+    simulated = g.mode == "paper"
+    if simulated:
+        from ..scoring.paper_fills import score_paper_forward
+
     conds: list[ConditionProgress] = []
     for c in g.promotion.conditions:
-        sc = score_agent(conn, g.agent, c.window, capital_base=g.capital)
+        if simulated:
+            sc = score_paper_forward(
+                conn, g.agent, c.window, cost, capital_base=g.capital
+            )
+        else:
+            sc = score_agent(conn, g.agent, c.window, capital_base=g.capital)
         ok, v = c.evaluate(sc)
         conds.append(ConditionProgress(
             metric=c.metric, window=c.window, op=c.op,
@@ -256,6 +284,7 @@ def promotion_progress(
         n_met=n_met,
         n_total=len(conds),
         ready=ready,
+        simulated=simulated,
     )
 
 

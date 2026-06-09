@@ -243,6 +243,25 @@ Keep it ruthlessly prioritized: the top item should always be the highest-levera
 
 ## P1 — honest measurement (so the supervisor can trust itself)
 
+- [x] **B1d-trend-G1gate — Score the paper G1 gate on the simulated forward-test.**
+  Done (Iter 39). Iter 38 built `score_paper_forward` but `promotion_progress`/
+  `gate-progress`/the daily digest still read **real fills only**, so for any
+  paper-mode agent every G1 condition showed N/A forever (the trend agent produces
+  no exchange fills). Fix: `promotion_progress(conn, g, cost=None)` now branches on
+  the agent's *current* mode — **paper** → score each condition from
+  `score_paper_forward` (simulated fills replayed off the paper decision log under the
+  edge-confirming maker cost model), **live_small/live** → real `score_agent` as before;
+  `GateProgress` gained a `simulated` flag and both renderers (`hlbot gate-progress`,
+  daily report) disclose "paper-sim forward-test" so the basis is never hidden.
+  **CRITICAL safety boundary (the reason this was held for separate review):** the
+  *action* path — `evaluate`/`run_once`, which AUTO-PROMOTES on a `promote` Evaluation
+  (loop.py:68 → `_set_mode(to_mode)`) — is **deliberately left scoring real fills**, so a
+  paper agent is NEVER auto-flipped to live_small on simulated edge. Promotion to live
+  size stays a human action (docs/GO_LIVE.md). New tests pin both halves: a paper agent's
+  gate is now measurable (simulated=True, n_trades counted, edge/net not-None) AND, even
+  when the forward-test would clear every condition (`ready=True`), `run_once` does not
+  promote (real fills empty → conditions N/A → no `promote`). 178→180. No edge claim —
+  measurement/observability plumbing over the twice-G0-confirmed trend signal.
 - [x] **B1d-trend-G1measure — Make the paper forward-test measurable (G1 clock with hands).**
   Done (Iter 38). Found the G1 "paper clock" was unmeasurable: a paper agent logs
   `place`/`flatten` to `agent_decisions` but produces no exchange `fills`, and

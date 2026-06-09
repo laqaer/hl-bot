@@ -170,8 +170,9 @@ def gate_progress(agent: str = "", configs: Path = CONFIG_DIR):
 
     for gp in reports:
         head = "[green]READY[/green]" if gp.ready else f"{gp.n_met}/{gp.n_total} met"
+        basis = "  [dim](paper-sim forward-test)[/dim]" if gp.simulated else ""
         console.print(
-            f"\n[bold]{gp.agent}[/bold] {gp.from_mode} → {gp.to_mode}  ({head})"
+            f"\n[bold]{gp.agent}[/bold] {gp.from_mode} → {gp.to_mode}  ({head}){basis}"
         )
         table = Table()
         for col in ("condition", "current", "status"):
