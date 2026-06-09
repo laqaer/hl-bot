@@ -1056,3 +1056,56 @@ yet tested (event/liquidation microstructure, or basis/term-structure) — and r
 `hlbot confirm` CLI (fetch trailing + one or more `--end-offset-days` windows and emit the
 durability verdict) so the bar is one command, not a script. (3) Retire femr from the live
 roster (B-femr-regime). Keep pruning until one signal clears the *multi-window* bar.
+
+
+---
+
+## Iteration 22 — 2026-06-08 — B-mw-cli: the out-of-time durability bar is now one command (`confirm --windows N`)
+
+**Context.** Iteration 21 built `confirm_across_windows` — the reusable DURABLE /
+NOT DURABLE harness that codifies Iteration 20's lesson (a trailing-window G0 PASS
+that reverses sign on a disjoint earlier window is a window-specific artifact, not an
+edge). But it was library-only: running the bar still meant a hand script (fetch
+trailing + each `--end-offset-days` window, call the function). Iteration 21's
+next-step (2) was to make the bar a single CLI command so the next candidate's
+evaluation is adversarial *by default*. That is this iteration.
+
+**Code change (the committed increment, with tests).**
+- **`cli/main.py` — `confirm --windows N`.** When `N>=2`, `confirm` now fetches N
+  disjoint, back-to-back `days`-long windows (trailing + N-1 older ones via the
+  existing `end_ms` plumbing) and runs `confirm_across_windows`, printing the single
+  DURABLE / NOT DURABLE verdict (per-window ✅/❌ table + FLIPS-SIGN reason on
+  failure). `--windows 1` (the default) is unchanged — legacy single-window
+  PASS/FAIL — so the command is backward-compatible. Exit code is non-zero when not
+  durable (so CI / a gate script can branch on it).
+- **`_window_specs(windows, days, now_ms)` — pure helper.** Returns the
+  `[(label, end_ms), ...]` newest-first window spec: window 0 trails to *now*
+  (`end_ms=None`), window i ends `i*days` days earlier so the windows abut without
+  overlapping. Extracted out of the command body so the window math is unit-testable
+  (repo style: pure functions over inline CLI logic). The CLI fetch loop consumes it.
+- **`tests/test_confirm_cli_windows.py` (+2):** (a) single window → trails to now
+  (`[("trailing 120d", None)]`); (b) three windows → labels + `end_ms` are disjoint
+  and back-to-back (each older window's end == the previous window's start). Pure /
+  offline.
+
+**Why this, not a fifth signal.** Three of four pruned theses were cross-sectional
+price/funding ranks; the fourth their regime-gated variant. Before spending an
+iteration on a signal the same validation would prune, the higher-leverage move was
+to finish institutionalizing the bar that did the pruning — making it `hlbot confirm
+--windows 2+` instead of a bespoke script. The Iteration-19 lead would have been
+caught immediately by `confirm --windows 2` (two windows, sign flip, NOT DURABLE).
+The bar is now permanent, legible, and one command; the next signal is tested
+adversarially from the first run.
+
+**Evidence (gate).** `uv run pytest -q` → **130 passed** (+2); `ruff check src tests
+scripts` → clean. Committed increment is the CLI wiring + pure helper + 2 tests
+(pure, offline). No strategy/sizing/live-mode change; nothing here touches capital.
+
+**What's next (loop).** The durability bar is now a single command. Priorities:
+(1) a **structurally different** signal class not yet tested (event/liquidation
+microstructure, or basis/term-structure) — and run it through `confirm --windows 2+`
+from the start, not a single trailing window. (2) Consider whether 120d windows are
+too short/regime-dominated for *any* cross-sectional rank to be stable — longer
+horizons or fundamentally different structure may be required. (3) Retire femr from
+the live roster (B-femr-regime) — still dormant + funding-driven, and carry is pruned.
+Keep pruning until one signal clears the multi-window bar.

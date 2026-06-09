@@ -81,6 +81,15 @@ Keep it ruthlessly prioritized: the top item should always be the highest-levera
   3 unit tests (survives-every-window → durable; sign-flip → not durable + flagged;
   single-window → never durable, the trailing-only trap). This is now the standard bar every
   future candidate must clear. Numbers in PROGRESS.md Iteration 21.
+- [x] **B-mw-cli — Wire the durability bar into `hlbot confirm` (one command).** DONE
+  (Iteration 22). `confirm --windows N` (N>=2) now runs `confirm_across_windows` over N
+  disjoint, back-to-back `days`-long windows (trailing + N-1 older, fetched via the
+  `end_ms` plumbing) and prints a single DURABLE / NOT DURABLE verdict; `--windows 1`
+  (default) keeps the legacy single-window PASS/FAIL. Extracted a pure `_window_specs`
+  helper (newest-first, disjoint, back-to-back) and unit-tested it (+2). The out-of-time
+  bar that hand-pruned the Iteration-19/20 momentum lead is now a single adversarial
+  command — every future candidate runs `confirm --windows 2+` before any paper/live talk.
+  Numbers in PROGRESS.md Iteration 22.
 - [ ] **B-femr-regime — femr is dormant on majors; retire or repurpose.** femr's
   130%-APR entry never trips on liquid coins (B1). B1-alt now shows funding *carry*
   has no edge even where funding is high, so widening femr (also funding-driven) to

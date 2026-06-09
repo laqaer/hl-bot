@@ -796,6 +796,21 @@ def backtest(
     console.print("[dim]taker→maker gap ≈ the spread/fee tax this strategy is paying.[/dim]")
 
 
+def _window_specs(windows: int, days: int, now_ms: int) -> list[tuple[str, int | None]]:
+    """Disjoint, back-to-back ``days``-long window specs for out-of-time durability.
+
+    Returns ``[(label, end_ms), ...]`` newest-first: window 0 is the trailing
+    window (``end_ms=None`` → now), window i ends ``i*days`` days before now so the
+    windows abut without overlapping. Pure so the CLI's window math is unit-tested.
+    """
+    specs: list[tuple[str, int | None]] = []
+    for i in range(windows):
+        end_ms = None if i == 0 else now_ms - i * days * 86_400_000
+        label = f"trailing {days}d" if i == 0 else f"{days}d ending {i * days}d ago"
+        specs.append((label, end_ms))
+    return specs
+
+
 @app.command()
 def confirm(
     agent: str = "twap_mr_regime_v1",
@@ -806,13 +821,22 @@ def confirm(
     min_edge_bps: float = 3.0,
     min_sharpe: float = 1.0,
     cache: bool = True,
+    windows: int = 1,
 ):
     """Confirm a strategy through the G0 gate: walk-forward + cost stress.
 
     Prints an explicit PASS/FAIL. A strategy must clear this on real history
     before it is eligible for paper→live promotion (see docs/GO_LIVE.md).
+
+    ``--windows N`` (N>=2) raises the bar to the **out-of-time durability** test:
+    it runs the confirmation on N disjoint, back-to-back ``days``-long windows
+    (trailing + N-1 older ones) and emits a single DURABLE / NOT DURABLE verdict.
+    A trailing-only PASS that reverses sign on an earlier window is a
+    window-specific artifact, not an edge (see Iteration 20/21) — this catches it.
     """
-    from ..backtest.confirm import confirm_strategy
+    import time as _time
+
+    from ..backtest.confirm import confirm_across_windows, confirm_strategy
     from ..backtest.data import cached_or_fetch, load_frames
 
     _, s = _conn()
@@ -832,10 +856,34 @@ def confirm(
         raise typer.Exit(1)
     per_year = {"1m": 525_600, "5m": 105_120, "15m": 35_040,
                 "1h": 8_760, "4h": 2_190, "1d": 365}.get(interval, 8_760)
+
+    def _load(end_ms: int | None) -> list:
+        if cache:
+            return cached_or_fetch(coin_list, interval=interval, days=days,
+                                   base_url=s.hl_api_url, end_ms=end_ms)
+        return load_frames(coin_list, interval=interval, days=days,
+                           base_url=s.hl_api_url, end_ms=end_ms)
+
+    if windows >= 2:
+        specs = _window_specs(windows, days, int(_time.time() * 1000))
+        win_frames: list[tuple[str, list]] = []
+        try:
+            for label, end_ms in specs:
+                win_frames.append((label, _load(end_ms)))
+        except Exception as e:  # noqa: BLE001
+            console.print(f"[red]failed to load history: {e}[/red]")
+            raise typer.Exit(2) from e
+        mw = confirm_across_windows(
+            factories[agent], win_frames, prefer=prefer,
+            min_edge_bps=min_edge_bps, min_sharpe=min_sharpe, periods_per_year=per_year,
+        )
+        console.print(mw.summary())
+        if not mw.durable:
+            raise typer.Exit(1)
+        return
+
     try:
-        frames = (cached_or_fetch(coin_list, interval=interval, days=days, base_url=s.hl_api_url)
-                  if cache else
-                  load_frames(coin_list, interval=interval, days=days, base_url=s.hl_api_url))
+        frames = _load(None)
     except Exception as e:  # noqa: BLE001
         console.print(f"[red]failed to load history: {e}[/red]")
         raise typer.Exit(2) from e
