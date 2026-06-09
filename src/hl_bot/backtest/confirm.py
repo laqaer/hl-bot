@@ -155,6 +155,116 @@ def confirm_strategy(
     )
 
 
+# ---------------------------------------------------------------------------
+# Multi-window robustness — the out-of-time bar, as reusable machinery.
+#
+# Iteration 20 taught the hard lesson the expensive way: a strategy can clear the
+# walk-forward + cost-stress G0 gate on the *trailing* 120d and still reverse sign
+# on the immediately-preceding 120d (regime-gated momentum: +8.4bps → −7.8bps
+# maker). Trailing-window G0 is therefore *necessary but not sufficient*. A real
+# edge survives a fresh, disjoint time window; a window-specific artifact does not.
+# ``confirm_across_windows`` makes that test a single call so every future
+# candidate must clear it, not just the one window that happened to look good.
+# ---------------------------------------------------------------------------
+
+
+def preferred_full_sample(cr: ConfirmationResult) -> ScenarioResult:
+    """The full-sample cost-ladder rung matching the verdict's execution basis
+    (maker, or taker-1x for taker). This is the number whose *sign* must be
+    stable across windows — a sign flip is the artifact signature."""
+    target = "maker" if cr.prefer == "maker" else "taker-1x"
+    return next(s for s in cr.cost_ladder if s.name == target)
+
+
+@dataclass
+class WindowResult:
+    label: str
+    confirmation: ConfirmationResult
+    full_sample_edge_bps: float | None
+
+
+@dataclass
+class MultiWindowResult:
+    agent: str
+    durable: bool
+    prefer: str
+    windows: list[WindowResult] = field(default_factory=list)
+    reasons: list[str] = field(default_factory=list)
+
+    def summary(self) -> str:
+        verdict = "✅ DURABLE" if self.durable else "❌ NOT DURABLE"
+        lines = [f"{verdict}  {self.agent}  ({len(self.windows)} windows, prefer={self.prefer})"]
+        for w in self.windows:
+            cr = w.confirmation
+            mark = "✅" if cr.confirmed else "❌"
+            edge = _fmt(w.full_sample_edge_bps)
+            lines.append(
+                f"  {mark} {w.label:22s} full {edge:>10s}  "
+                f"in {_fmt(cr.in_sample.edge_bps)}  oos {_fmt(cr.out_of_sample.edge_bps)}"
+            )
+        for r in self.reasons:
+            lines.append(f"  - {r}")
+        return "\n".join(lines)
+
+
+def confirm_across_windows(
+    factory: AgentFactory,
+    windows: list[tuple[str, list[Frame]]],
+    *,
+    prefer: str = "taker",
+    **confirm_kwargs: object,
+) -> MultiWindowResult:
+    """Run the G0 confirmation on each of several disjoint historical ``windows``
+    and return a single durability verdict.
+
+    ``windows`` is ``[(label, frames), ...]`` — each ``frames`` a distinct,
+    ideally non-overlapping time window. The strategy is **durable** only if:
+
+    1. there are at least two windows (one window is the trap Iteration 20 fell
+       into — a trailing-only PASS), AND
+    2. *every* window is individually ``confirmed`` (walk-forward + sharpe), AND
+    3. the preferred-execution full-sample edge is positive in *every* window —
+       i.e. it never flips sign. A sign flip across windows is the textbook
+       artifact signature and is called out explicitly in the reasons.
+    """
+    results = [
+        WindowResult(
+            label=label,
+            confirmation=(cr := confirm_strategy(factory, frames, prefer=prefer, **confirm_kwargs)),  # type: ignore[arg-type]
+            full_sample_edge_bps=preferred_full_sample(cr).edge_bps if cr.cost_ladder else None,
+        )
+        for label, frames in windows
+    ]
+    agent_name = results[0].confirmation.agent if results else "?"
+    reasons: list[str] = []
+
+    if len(results) < 2:
+        reasons.append(f"only {len(results)} window(s); need >=2 disjoint windows to claim durability")
+        return MultiWindowResult(agent=agent_name, durable=False, prefer=prefer,
+                                 windows=results, reasons=reasons)
+
+    not_confirmed = [w.label for w in results if not w.confirmation.confirmed]
+    if not_confirmed:
+        reasons.append(f"not confirmed in: {', '.join(not_confirmed)}")
+
+    edges = [w.full_sample_edge_bps for w in results]
+    pos = [e for e in edges if e is not None and e > 0]
+    neg = [e for e in edges if e is not None and e <= 0]
+    if pos and neg:
+        reasons.append(
+            f"full-sample edge FLIPS SIGN across windows (+{max(pos):.1f} … {min(neg):+.1f}bps) "
+            "— window-specific artifact, not a durable edge"
+        )
+    all_positive = bool(edges) and all(e is not None and e > 0 for e in edges)
+
+    durable = not not_confirmed and all_positive
+    if durable and not reasons:
+        reasons.append(f"confirmed with positive {prefer} edge in all {len(results)} disjoint windows")
+
+    return MultiWindowResult(agent=agent_name, durable=durable, prefer=prefer,
+                             windows=results, reasons=reasons)
+
+
 def _fmt(v: float | None) -> str:
     return "—" if v is None else f"{v:+.1f}bps"
 

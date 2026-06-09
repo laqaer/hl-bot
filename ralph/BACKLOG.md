@@ -71,6 +71,16 @@ Keep it ruthlessly prioritized: the top item should always be the highest-levera
   the agent survive a genuinely different time period. (3) plateau map is **moot** — no
   point mapping a plateau of a window-specific artifact. **The momentum lead is pruned.**
   Numbers in PROGRESS.md Iteration 20. No live change.
+- [x] **B-mw — Multi-window robustness harness (the out-of-time bar as code).** DONE
+  (Iteration 21). Iteration 20 proved trailing-window G0 is *necessary but not sufficient*
+  (regime-momentum +8.4→−7.8bps maker on the prior 120d). `confirm_across_windows`
+  (in `backtest/confirm.py`) runs `confirm_strategy` on N disjoint windows and returns a
+  single **DURABLE/NOT-DURABLE** verdict: durable iff ≥2 windows, *every* window confirmed,
+  and the preferred-execution full-sample edge never flips sign (a sign flip is the artifact
+  signature, called out explicitly). `MultiWindowResult` + `preferred_full_sample` helper;
+  3 unit tests (survives-every-window → durable; sign-flip → not durable + flagged;
+  single-window → never durable, the trailing-only trap). This is now the standard bar every
+  future candidate must clear. Numbers in PROGRESS.md Iteration 21.
 - [ ] **B-femr-regime — femr is dormant on majors; retire or repurpose.** femr's
   130%-APR entry never trips on liquid coins (B1). B1-alt now shows funding *carry*
   has no edge even where funding is high, so widening femr (also funding-driven) to

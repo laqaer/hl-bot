@@ -1003,3 +1003,56 @@ more signals, consider whether the 120d windows are simply too short/regime-domi
 fundamentally-different structure is required. (3) Retire femr from the live roster
 (B-femr-regime) — still dormant + funding-driven, and carry is pruned. Keep pruning until
 one signal clears the out-of-time bar.
+
+
+---
+
+## Iteration 21 — 2026-06-08 — B-mw: the out-of-time bar becomes reusable machinery (`confirm_across_windows`)
+
+**Context.** Iteration 20 pruned the fourth thesis and ended with a sharp lesson: a
+strategy can clear the walk-forward + cost-stress G0 gate on the *trailing* 120d and
+still **reverse sign** on the immediately-preceding 120d (regime-gated momentum: maker
+full **+8.4bps → −7.8bps**). Trailing-window G0 is therefore *necessary but not
+sufficient*. That validation was done by hand (refetch an older window, re-run `confirm`,
+eyeball the sign). This iteration turns that ad-hoc test into reusable machinery so every
+future candidate must clear it — and so a future "G0 PASS" can never again mean "passed on
+the one window that happened to look good."
+
+**Code change (the committed increment, with tests).**
+- **`backtest/confirm.py` — `confirm_across_windows(factory, windows, *, prefer, **kw)`.**
+  Runs `confirm_strategy` on each of N disjoint historical windows
+  (`[(label, frames), ...]`) and returns a single `MultiWindowResult` with a
+  **DURABLE / NOT DURABLE** verdict. Durable iff **(1)** there are ≥2 windows (one window
+  is exactly the Iteration-20 trap), **(2)** *every* window is individually `confirmed`
+  (walk-forward + sharpe), and **(3)** the preferred-execution full-sample edge is positive
+  in *every* window — i.e. it never flips sign. A sign flip across windows is the textbook
+  artifact signature and is called out explicitly in `reasons`
+  (`"full-sample edge FLIPS SIGN across windows (… ) — window-specific artifact"`).
+- **`preferred_full_sample(cr)` helper** — extracts the cost-ladder rung matching the
+  verdict's execution basis (maker, or taker-1x for taker): that is the number whose *sign*
+  must be stable. `MultiWindowResult.summary()` prints a per-window ✅/❌ table
+  (full / in / oos edge) so the failure mode is legible at a glance.
+- **`tests/test_confirm_windows.py` (+3):** (a) an edge that survives two disjoint choppy
+  windows → **durable**; (b) mean-reversion that confirms on a choppy window but loses on a
+  trend window → **not durable**, with the FLIPS-SIGN reason naming the offending window;
+  (c) a single window → **never durable** (the trailing-only trap). All pure/offline.
+
+**Why this and not a fifth signal.** Three of the four pruned theses were cross-sectional
+price/funding ranks; the fourth was their regime-gated variant. Before spending another
+iteration building a signal that the same hand-run validation would prune, the higher-
+leverage move is to *institutionalize* the bar that did the pruning. `confirm_across_windows`
+is the gate that would have caught Iteration-19's lead immediately (two windows, sign flip,
+NOT DURABLE) instead of after a hand-built out-of-time refetch. It raises the standard
+permanently and makes the next signal's evaluation a single, adversarial call.
+
+**Evidence (gate).** `uv run pytest -q` → **128 passed** (+3); `ruff check src tests
+scripts` → clean. Committed increment is the harness + helper + 3 tests (pure, offline). No
+strategy/sizing/live-mode change; nothing here touches capital.
+
+**What's next (loop).** The durability harness is now the standard bar. Priorities unchanged
+from Iteration 20 but now better-equipped: (1) a **structurally different** signal class not
+yet tested (event/liquidation microstructure, or basis/term-structure) — and run it through
+`confirm_across_windows`, not just a single window. (2) Wire `confirm_across_windows` into the
+`hlbot confirm` CLI (fetch trailing + one or more `--end-offset-days` windows and emit the
+durability verdict) so the bar is one command, not a script. (3) Retire femr from the live
+roster (B-femr-regime). Keep pruning until one signal clears the *multi-window* bar.
