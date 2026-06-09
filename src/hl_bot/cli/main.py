@@ -631,8 +631,11 @@ def femr_tick(live: bool = False, execution: str = "taker"):
                     console.print(f"[dim]SKIP {d.agent} {d.coin}: maker quote already resting[/dim]")
                     continue
                 bt = (view.book_top or {}).get(d.coin)
+                # Passive fallback when no fresh L2 book: step ~5bps inside from the
+                # (possibly stale) mid so a post-only order rests instead of crossing.
+                passive = (d.px or 0.0) * (0.9995 if is_buy else 1.0005)
                 limit_px = maker_limit_price(
-                    bt[0] if bt else None, bt[1] if bt else None, is_buy, d.px or 0.0)
+                    bt[0] if bt else None, bt[1] if bt else None, is_buy, passive)
                 res = place_limit_order(exchange, d.coin, is_buy, d.sz, limit_px,
                                         post_only=True, cloid=d.cloid)
                 if res.status == "resting":
