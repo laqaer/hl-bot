@@ -71,8 +71,13 @@ Keep it ruthlessly prioritized: the top item should always be the highest-levera
   REST fallback. Next: userFills WS for instant maker-fill detection. (Iteration 5.)
 - [ ] **B-book — Book-aware maker pricing.** Post at touch/microprice using L2
   depth (needs B10) instead of mid; raises maker fill rate.
-- [ ] **B11 — Retire or feed liq_cascade.** Source real liquidation data (WS
-  trades liquidation flag) or disable the agent until it can be fed. (REVIEW C6.)
+- [x] **B11 — Retire or feed liq_cascade.** Done: removed the dead
+  `{"type":"liquidations"}` REST call (a non-existent HL endpoint, C6 root cause)
+  from `_enrich_view`; liquidations now come solely from the WS feed (B10), with
+  `liquidations` defaulting to `[]` so the agent safely holds when unfed. Added a
+  tick warning when liq_cascade is in the roster but `HLBOT_WS_SNAPSHOT` is unset
+  (effectively disabled), plus `tests/test_liq_cascade.py` proving fed→enters /
+  unfed→holds / thin-coin & stale-event filters. (Iteration 11.)
 - [ ] **B12 — Consolidate execution paths.** `runtime.run_tick` vs `femr_tick`
   duplicate logic; unify so the safe wrapper is what live uses. (REVIEW M3.)
 - [ ] **B13 — Move hardcoded trader address to config.** (REVIEW M6.)

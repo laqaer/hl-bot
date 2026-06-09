@@ -209,7 +209,14 @@ def tick(coins: str = "BTC,ETH,SOL,HYPE,ZEC"):
 
 
 def _enrich_view(view, api_url: str, vol: dict[str, float]) -> None:
-    """Augment a MarketView with 1h candles (top-vol coins), spot mids, liquidations."""
+    """Augment a MarketView with 1h candles (top-vol coins) and spot mids.
+
+    Liquidations are NOT sourced here: Hyperliquid exposes no public
+    ``liquidations`` info endpoint (the old REST call to one always returned
+    nothing — REVIEW C6). The real feed is the WS ``trades`` stream's
+    liquidation flag, overlaid from the WS snapshot by the caller. Without that
+    snapshot, ``view.extra['liquidations']`` stays empty and liq_cascade holds.
+    """
     import httpx as _httpx
 
     # ---- top-20-by-volume universe ----
@@ -219,7 +226,6 @@ def _enrich_view(view, api_url: str, vol: dict[str, float]) -> None:
     candles_1h: dict[str, dict] = {}
     closes_by_coin: dict[str, list[float]] = {}
     spot_mids: dict[str, float] = {}
-    liquidations: list[dict] = []
 
     with _httpx.Client(timeout=15) as cli:
         # 60 × 1m candles -> vwap & sigma per top coin
@@ -309,31 +315,12 @@ def _enrich_view(view, api_url: str, vol: dict[str, float]) -> None:
         except Exception:  # noqa: BLE001
             pass
 
-        # recent liquidations (best-effort; endpoint may not exist publicly)
-        try:
-            ev = cli.post(api_url + "/info", json={"type": "liquidations"}).json()
-            if isinstance(ev, list):
-                for e in ev:
-                    try:
-                        coin = e.get("coin")
-                        sz = float(e.get("sz") or 0)
-                        px = float(e.get("px") or 0)
-                        if coin and sz > 0 and px > 0:
-                            liquidations.append({
-                                "coin": coin,
-                                "side": e.get("side"),
-                                "notional_usd": sz * px,
-                                "ts_ms": int(e.get("time") or 0),
-                            })
-                    except (TypeError, ValueError):
-                        continue
-        except Exception:  # noqa: BLE001
-            pass
-
     view.extra["candles_1h"] = candles_1h
     view.extra["closes"] = closes_by_coin
     view.extra["spot_mids"] = spot_mids
-    view.extra["liquidations"] = liquidations
+    # Liquidations come only from the WS feed (overlaid by the caller). Default
+    # empty so liq_cascade safely holds when no WS snapshot is present.
+    view.extra["liquidations"] = []
 
 
 @app.command()
@@ -495,6 +482,16 @@ def femr_tick(live: bool = False, execution: str = "taker"):
                 view.extra["liquidations"] = liqs
             console.print(f"[dim]ws snapshot overlaid: {len(snap.mids)} mids, "
                           f"{len(liqs)} liqs[/dim]")
+
+    # liq_cascade can only be fed by the WS liquidations stream. If it is in the
+    # roster but no WS snapshot is configured, it will never see an event and is
+    # effectively disabled — say so rather than silently holding forever.
+    if not ws_path and any(a.name == "liq_cascade_v1" for a in agents):
+        console.print(
+            "[yellow]liq_cascade_v1 active but HLBOT_WS_SNAPSHOT is unset[/yellow]: "
+            "no liquidation feed → agent will hold every tick. Run `hlbot ws` and "
+            "set HLBOT_WS_SNAPSHOT to feed it."
+        )
 
     # Build position list from HL truth
     all_positions = []

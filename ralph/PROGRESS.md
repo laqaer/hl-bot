@@ -386,3 +386,41 @@ This is measurement-only — no strategy, risk, or live change.
 **What's next (loop).** B11 (feed/retire liq_cascade via WS liq data), B12
 (consolidate the two execution paths so the safe wrapper is what live uses), B4-RUN
 (confirm carry on real history — still network-blocked at api.hyperliquid.xyz).
+
+---
+
+## Iteration 11 — 2026-06-08 — retire the dead liquidations endpoint (B11)
+
+**Context.** P0 is done or network-blocked. Top unblocked item was **B11**
+(REVIEW C6): liq_cascade was "dead" because `_enrich_view` posted
+`{"type":"liquidations"}` to `/info` — not a real Hyperliquid info endpoint, so it
+always returned nothing. B10 (Iteration 5) already added the *correct* source (the
+WS `trades` liquidation flag), but the misleading dead REST call still sat in the
+live path, making it look like REST fed the agent when it never could.
+
+**Changed (1 commit).**
+- **B11 — feed liq_cascade only from WS; remove the fake endpoint.**
+  `cli/main.py::_enrich_view` no longer makes the `{"type":"liquidations"}` REST
+  call; `view.extra["liquidations"]` defaults to `[]`. The WS snapshot overlay
+  (gated on `HLBOT_WS_SNAPSHOT`, 30s freshness) is now the *sole* source — so when
+  no WS feed is present the agent simply holds (honestly disabled, never blind to
+  garbage). Added a tick-time warning when `liq_cascade_v1` is in the roster but
+  `HLBOT_WS_SNAPSHOT` is unset, so an operator isn't left wondering why it never
+  trades. Docstring updated to state the no-public-endpoint fact.
+- **tests/test_liq_cascade.py** (new, 4 cases) — the agent's `decide()` had no
+  direct coverage. Pins the fed-or-inert contract: WS-shaped >$100k short-liq on a
+  high-volume coin → enter LONG (same side as cascade); empty feed → `hold`;
+  thin-coin below the volume floor → no entry; stale event outside the 5m window →
+  no entry.
+
+**Evidence.** `uv run pytest -q` → **104 passed** (+4). `ruff check src tests
+scripts` → clean. CLI import smoke-tested OK.
+
+**Why it matters.** Removes the last "looks-wired-but-dead" path flagged in the
+review (C6). liq_cascade is now either genuinely fed (WS) or transparently
+disabled — no false signal, no silent inertia. No strategy/risk/live change.
+
+**What's next (loop).** B12 (consolidate `runtime.run_tick` vs `femr_tick` so the
+safe wrapper is what live uses — REVIEW M3), B7 (standardize remaining goal configs
+on per-agent metrics now that per-agent Sharpe exists — C5), B4-RUN (confirm carry
+on real history — still network-blocked at api.hyperliquid.xyz).
