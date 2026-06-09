@@ -2113,3 +2113,81 @@ net of adverse selection, which is not a directional bet and so may sidestep the
 fill/adverse-selection model and run it through `confirm --windows 2 --prefer maker` from the first run. The
 one remaining session angle (finer time-of-day resolution, B-session-tod) is parked low — the smooth hour-hill
 (slice 4) and the 2× baseline OOS failure (slice 2) make it unlikely to fix durability.
+
+## Iteration 36 — 2026-06-08 — B-exec slice 1: maker-spread capture model (the NINTH thesis, first *execution* edge not *direction* edge) — naive symmetric quote is net-NEGATIVE, sign-stable across both windows AND 1h/5m cadence (adverse selection > captured spread)
+
+**Context.** Eight direction/relative theses are pruned or reduced to an over-conditioned point, all sharing
+one failure mode: a price/funding/clock-derived *directional* signal that proves regime-sensitive under the
+walk-forward bar. REVIEW C1 says the structural money is in **execution, not direction** (the taker tax is
+~73% of the historical bleed; B1). B1 measured that *maker execution of a directional signal* doesn't create
+edge, but it never tested capturing the **spread/rebate itself** as the edge — a passive two-sided maker that
+earns the realized half-spread + rebate net of adverse selection (fill-when-wrong). That is **not a
+directional bet**, so it may sidestep the regime-sensitivity that killed the eight directional theses. This
+iteration specifies the model and runs it to a first verdict.
+
+**Why a dedicated model, not the engine path.** The replay engine fills every `place`/`flatten`
+deterministically at the bar mid (maker mode = mid, zero slippage). That can represent a *directional* maker
+bet but **cannot represent spread capture or adverse selection**: it never fills *at* a resting limit and
+never conditions the fill on price trading into the quote. So slice 1 is a pure, no-lookahead intrabar fill
+simulator over real OHLC candles.
+
+**What changed (code).** New `src/hl_bot/backtest/maker_spread.py` (pure, unit-tested): rests a passive
+two-sided quote each bar — bid at `m0*(1−hs)`, ask at `m0*(1+hs)`, anchored to the *prior* bar's mid `m0`
+(no lookahead). Bid fills iff this bar's low ≤ bid; ask fills iff this bar's high ≥ ask. A filled lot is
+marked to this bar's close `mi`, so each fill decomposes exactly into **captured half-spread** (`m0`−fill ≈ hs)
+**minus adverse drift** (the mid moved past the fill) **minus maker fee + rebate** — adverse selection emerges
+from the realized price path, not an assumption. `simulate_maker_spread` (single coin) / `simulate_universe`
+(pool fills equal-notional) / `bars_from_candles` (raw HL candle adapter) + `MakerSpreadResult` with the
+decomposition. 10 unit tests pin the fill rule, the spread/adverse/fee identity, rebate, and the
+spread↔fill-rate tradeoff.
+
+**Evidence — real HL history, majors (BTC,ETH,SOL,HYPE,AVAX,LINK), maker_fee=1.0bp, no rebate. `net` =
+per-fill net-of-cost edge (bps):**
+
+```
+1h, two disjoint 120d windows (trailing + 120d-older):
+  half_spread  trailing net        older net          (gross − adverse − fee)
+    2bps        -3.14   (fr 93.5%)   -3.26  (fr 93.8%)   2.00 − ~4.2 − 1.0
+    5bps        -3.05   (fr 88.6%)   -3.31  (fr 89.0%)   5.00 − ~7.2 − 1.0
+   10bps        -2.71   (fr 80.6%)   -3.01  (fr 81.4%)  10.00 − ~11.9 − 1.0
+   20bps        -2.59   (fr 65.1%)   -2.75  (fr 67.2%)  20.00 − ~21.7 − 1.0
+  -> NET-NEGATIVE at every half-spread, BOTH windows, SIGN-STABLE. Adverse selection
+     runs ~1.5–2bps ABOVE the captured spread at every width; widening the quote raises
+     gross but adverse rises in lockstep (you only fill when price trades into you), so
+     net stays ~−2.6 to −3.3bps/fill. Fees finish it.
+
+5m, trailing 20d (history cap), same basket:
+    2bps  -3.41 (fr 78.5%) | 5bps -3.46 (fr 64.6%) | 10bps -3.48 (fr 46.7%)
+  -> finer cadence does NOT rescue it: adverse still ~2.4–2.5bps above gross. Marking a
+     fill to the *same bar's close* still attributes the intrabar continuation as adverse.
+```
+
+**Honest read.** The naive **symmetric** two-sided maker quote, marked bar-to-close, has **no net-of-cost
+execution edge** on liquid majors: realized adverse selection (the directional drift *conditional on a fill*
+— a bid fills precisely on down-bars whose close is below the prior mid by more than the half-spread) exceeds
+the quoted half-spread at every width and at both 1h and 5m cadence, and the result is sign-stable across two
+disjoint 120d windows (not the artifact sign-flip). This is the cleanest sign-stable result of any thesis —
+because it isn't a directional bet, there is no regime to flip — but it's sign-stably *negative*. **One
+structural sub-signal survives in the model and is the only live rescue angle:** bars where **both** sides
+fill (`n_both`) are adverse-free round-trips (you end flat, earning ~2×spread − 2×fee); the bleed is entirely
+from **single-sided fills that carry inventory into the adverse move.** A maker that only round-trips (or
+skews/cancels to avoid one-sided inventory) is the untested variant.
+
+**Net.** B-exec slice 1 delivers the model + a robust first verdict: passive symmetric spread capture on
+bar-marked majors is net-negative and sign-stable. Not yet a full prune of the execution thesis — two
+unrun angles remain: (a) **round-trip-only / inventory-skew** quoting (isolate the adverse-free `n_both`
+fills, the only positive structure the model found), and (b) **tick/touch-level marking** (1h/5m close-marking
+is a pessimistic adverse proxy; a real maker often recaptures the spread within seconds — the bar mark
+over-attributes drift as adverse). Both are model refinements, not new directional theses. Maker-only,
+nothing touches capital, no live change.
+
+**Evidence (gate).** `uv run pytest -q` → **206 passed** (+10 maker-spread); `ruff check src tests scripts`
+→ clean. The edge numbers are measurement (live candle fetch, no `data/` writes committed). No strategy in
+the live roster changed; no live mode enabled.
+
+**What's next (loop).** Push B-exec one slice further before any verdict, since it found real positive
+structure (`n_both` round-trips) the eight directional theses never had: (1) add a **round-trip / inventory-skew**
+mode to the model (only book the adverse-free both-sides fills, or cancel the resting side once inventory is
+held) and run it through the two-window bar — the natural test of whether the execution edge lives in
+disciplined round-tripping; (2) if that also fails, the symmetric+skew execution thesis prunes cleanly as the
+ninth. File the round-trip slice as **B-exec-roundtrip**.

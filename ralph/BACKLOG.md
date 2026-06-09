@@ -7,19 +7,34 @@ Keep it ruthlessly prioritized: the top item should always be the highest-levera
 
 ## P0 — find an edge (the whole point)
 
-- [ ] **B-exec — Execution / maker-rebate capture (the NINTH structurally-different thesis; an *execution*
-  edge, not a *direction* edge).** Eight direction/relative theses are now pruned or reduced to an
+- [ ] **B-exec-roundtrip — (NINTH thesis, slice 2) round-trip / inventory-skew maker quoting.** Slice 1
+  (Iteration 36) built the maker-spread model and found the naive **symmetric** two-sided quote is
+  **net-negative & sign-stable** on majors at every half-spread and at both 1h/5m cadence (adverse selection
+  runs ~1.5–2bps above the captured half-spread — a bid fills precisely on down-bars). The ONE positive
+  structure the model found: bars where **both** sides fill (`n_both`) are adverse-free round-trips
+  (~2×spread − 2×fee, end flat); the entire bleed is from **single-sided fills carrying inventory into the
+  adverse move.** Slice 2: add a round-trip/inventory-skew mode to `maker_spread.py` (only book the
+  adverse-free both-sides fills, or cancel the resting side once inventory is held / skew quotes against
+  inventory) and run it on the two-window majors bar. If that also fails, the execution-spread thesis prunes
+  as the ninth. (A second refinement, **tick/touch-level marking** — 1h/5m close-marking over-attributes
+  intrabar drift as adverse — is parked below this.) Maker-only, no live change. Numbers in PROGRESS Iter 36.
+- [x] **B-exec — Execution / maker-rebate capture (the NINTH structurally-different thesis; an *execution*
+  edge, not a *direction* edge). Slice 1 DONE (Iteration 36): model built + naive symmetric quote is
+  net-NEGATIVE & sign-stable.** Eight direction/relative theses are pruned or reduced to an
   over-conditioned point, all sharing one failure: a price/funding/clock-derived *directional* signal that is
   regime-sensitive under walk-forward. REVIEW C1 says the structural money is in **execution, not direction**
   (the taker tax is ~73% of the bleed; B1 measured maker alone doesn't *create* direction edge, but it never
   tested capturing the *spread/rebate itself* as the edge). Thesis: a passive maker that quotes both sides
-  (or rests at/inside the touch) earns the realized half-spread + any maker rebate, conditioned on queue
-  position and adverse-selection (fill-when-wrong) cost — net-of-cost edge = captured spread − adverse
-  selection, which is **not a directional bet** and so may sidestep the regime-sensitivity that killed the
-  eight directional theses. Slice 1: specify a `maker_spread_v1` agent + a backtest-able fill/adverse-selection
-  model (the engine already has a maker cost path; needs a realized-spread + fill-probability proxy), run
-  through `confirm --windows 2 --prefer maker` from the first run. This is the REVIEW-C1 direction the search
-  has not yet tried as a *strategy*. Maker-only, no live change.
+  earns the realized half-spread + any maker rebate net of adverse-selection (fill-when-wrong) cost — **not a
+  directional bet**, so it may sidestep the regime-sensitivity that killed the eight directional theses.
+  **Slice 1 result (real HL majors, maker_fee=1bp, no rebate):** new pure `backtest/maker_spread.py`
+  (no-lookahead intrabar fill sim over real OHLC, decomposes each fill into captured-spread − adverse-drift −
+  fee + rebate; 10 unit tests). The naive **symmetric** two-sided quote is **net-negative at every
+  half-spread (2/5/10/20bps), BOTH disjoint 120d windows, SIGN-STABLE** (−2.6 to −3.3bps/fill; adverse runs
+  ~1.5–2bps above gross) AND at 5m cadence (−3.4bps). Cleanest sign-stable result of any thesis (no direction
+  = no regime to flip) but sign-stably *negative*. Not a full prune yet — the round-trip/inventory-skew
+  variant (B-exec-roundtrip) is unrun and is the only positive structure the model found. Maker-only, no live
+  change. Numbers in PROGRESS.md Iteration 36.
 - [ ] **B-session-tod — (low priority) one untested session-timing angle: time-of-day-resolved entry.** The
   pruned B-session traded a single contiguous US-session block. The unrun variant is whether a *finer*
   time-of-day decomposition (e.g. only the US cash open hour, or excluding the lunch lull) sharpens the
