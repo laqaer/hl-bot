@@ -948,3 +948,57 @@ kill the rotation churn (154 trades over 90d is a lot of cross/fee for a "hold t
 collect" thesis), (b) beta-neutralise the cross-section (dollar-neutral ≠ market-
 neutral when the short legs are higher-beta alts), (c) a lower cadence where funding
 accrual outweighs per-bar price noise. Then resume B12 consolidation.
+
+---
+
+## Iteration 23 — 2026-06-08 — B1c: cut-the-churn lever pruned (hold_while_eligible WORSE)
+
+**Context.** Network reachable (HL `meta` → 200) and the corrected-funding caches
+are present (10- and 20-coin 90d 1h), so B1c — the edge hunt on xfund_carry, still
+the closest-to-break-even candidate — was the top unblocked P0. Iter 22 left three
+un-pruned levers; took the most clearly-motivated one: **(a) cut the rotation
+churn.** The Iter-22 20-coin run did 154 trades over 90d, a lot of cross/fee for a
+"hold to collect" thesis, and the churn's source is the `want is None` →
+"DROPPED from carry set" exit: a leg still carrying strong funding gets closed
+merely because it fell out of the top-K *rank* this hour, then often re-enters next.
+
+**Changed (1 commit).**
+- **`agents/xfund_carry.py`** — new config `hold_while_eligible: bool = False`
+  (default off → behavior/CI unchanged). When on, a held leg is kept as long as its
+  funding stays eligible (`|rate| ≥ exit_funding_per_hr`) and on the correct side,
+  decoupling exits from rank rotation. Refactored the exit ladder to check the
+  funding *sign* directly (new `_funding_side`) so a flip is caught even for a leg
+  outside the current top-K (a correctness improvement that also makes the held-leg
+  flip-exit work); rank-rotation exit is now gated behind `not hold_while_eligible`.
+- **`tests/test_funding_carry.py`** — 2 new: a rank-rotated-but-still-eligible held
+  leg is flattened in default mode and KEPT (and not re-entered) under
+  `hold_while_eligible`; and even in hold mode a held leg still exits on
+  funding-flip and funding-normalize.
+
+**Evidence (tests/lint).** 140 → **142 tests pass**; `ruff check src tests scripts`
+clean. Caches stay gitignored.
+
+**B1c result (xfund_carry_v1, 90d 1h, 10-coin ADA,AVAX,BTC,DOGE,ETH,HYPE,LINK,SOL,
+TRX,ZEC; reproducible via `--config`).**
+- *Baseline* (rank-rotation exits): maker **−4.3bps** / −0.66 net, 62 trades, 48%
+  win, Sharpe −0.45. (Matches Iter 20/22.)
+- *`hold_while_eligible=true`*: maker **−17.6bps** / −1.57 net, **36 trades** (churn
+  cut as designed), 44% win, Sharpe −0.82 — clearly **WORSE**.
+
+**Why it matters (the finding).** Lever (a) is **pruned**: cutting the churn does
+NOT help — it hurts. The hypothesis "154 trades is wasteful turnover" is falsified.
+The rotation churn isn't waste: it concentrates the book into the *highest*-funding
+names each hour. Holding a rank-rotated leg means collecting a lower-funding carry
+(e.g. the +0.0005/hr coin instead of rotating to +0.0010/hr) while *still* eating
+that volatile alt's price variance over a longer hold — strictly less carry per
+unit of price risk. The fee saved (26 fewer trades) is dwarfed by the carry given
+up. The single best config in the book remains the loosest baseline at **−4.3bps
+maker — still negative.** No edge; nothing promoted; all paper/gated. The config
+lever is kept (default off, tested) so this dead end isn't re-explored.
+
+**What's next (loop).** The remaining un-pruned B1c levers: (b) beta-neutralise the
+cross-section (dollar-neutral ≠ market-neutral when the short legs are higher-beta
+alts — likely the real reason price variance buries the carry; needs rolling-beta
+sizing, available in backtest via the `closes` series), or (c) a lower cadence
+(4h/1d) where funding accrual outweighs per-bar price noise. Then resume B12
+consolidation.

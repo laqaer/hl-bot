@@ -35,6 +35,11 @@ class XFundCarryConfig:
     max_notional_per_trade: float = 25.0
     max_total_notional: float = 100.0
     max_concurrent_positions: int = 6
+    # When True, a held leg is NOT closed just because it rotated out of the
+    # top-K rank — it is kept as long as its funding stays eligible (|rate| >=
+    # exit threshold) and on the correct side. This decouples exits from rank
+    # rotation to cut the cross/fee churn that buries a hold-to-collect carry.
+    hold_while_eligible: bool = False
 
 
 class XFundCarryAgent(Agent):
@@ -54,8 +59,14 @@ class XFundCarryAgent(Agent):
             max_notional_per_trade=float(c.get("max_notional_per_trade", 25.0)),
             max_total_notional=float(c.get("max_total_notional", 100.0)),
             max_concurrent_positions=int(c.get("max_concurrent_positions", 6)),
+            hold_while_eligible=bool(c.get("hold_while_eligible", False)),
         )
         self.conn = conn
+
+    def _funding_side(self, f: float) -> str:
+        """Side a carry leg should hold for funding ``f``: short (+f) collects,
+        long (−f) collects."""
+        return "A" if f > 0 else "B"
 
     def _open_positions(self) -> dict[str, dict]:
         if self.conn is None:
@@ -103,10 +114,10 @@ class XFundCarryAgent(Agent):
             reason = None
             if f is not None and abs(f) < self.cfg.exit_funding_per_hr:
                 reason = f"FUNDING-NORMALIZED ({f*100:+.4f}%/hr)"
-            elif want is None:
-                reason = "DROPPED from carry set (rank rotated / funding eased)"
-            elif want != pos["side"]:
+            elif f is not None and self._funding_side(f) != pos["side"]:
                 reason = "FUNDING FLIPPED — wrong side now"
+            elif want is None and not self.cfg.hold_while_eligible:
+                reason = "DROPPED from carry set (rank rotated / funding eased)"
             if reason:
                 out.append(Decision(
                     agent=self.name, action="flatten", coin=coin, sz=pos["sz"], px=mid,

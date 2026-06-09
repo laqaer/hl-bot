@@ -62,10 +62,17 @@ Keep it ruthlessly prioritized: the top item should always be the highest-levera
   artifact, not robust. Root cause: high-|funding| alts are volatile *because*
   funding is extreme, so price variance buries the carry whether you concentrate
   OR diversify. `top_k>2` inert (eligible legs/side cap out). **Best config in book
-  is still the loosest baseline at −4.3bps maker — negative.** Remaining to try:
-  longer max-hold / no-rotation-churn (cut the 154-trade turnover), funding-decile
-  *neutralised-by-beta* cross-section, or a different (lower) cadence so funding
-  accrual outweighs per-bar price noise. Evidence-gated; nothing promoted.
+  is still the loosest baseline at −4.3bps maker — negative.** **Third hypothesis
+  pruned (Iter 23):** *cut the rotation churn* via `hold_while_eligible` (hold a leg
+  while its funding stays eligible+correct-side instead of exiting on rank rotation)
+  cut trades 62→36 as designed but made it WORSE (−4.3 → −17.6bps maker / −1.57
+  net). Root cause: the churn wasn't waste — it concentrates the book into the
+  *highest*-funding names; holding rank-rotated lower-funding legs collects less
+  carry while still eating price variance over a longer hold. The config lever is
+  kept (default off, tested) so the dead end isn't re-explored. Remaining to try:
+  funding-decile *neutralised-by-beta* cross-section (dollar-neutral ≠ market-neutral
+  when shorts are higher-beta alts), or a different (lower) cadence so funding accrual
+  outweighs per-bar price noise. Evidence-gated; nothing promoted.
 
 ## P1 — honest measurement (so the supervisor can trust itself)
 
