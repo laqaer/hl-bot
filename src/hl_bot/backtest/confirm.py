@@ -285,6 +285,124 @@ def confirm_across_windows(
                              windows=results, reasons=reasons, sign_stable=sign_stable)
 
 
+# ---------------------------------------------------------------------------
+# Plateau sweep — is a PASS a robust plateau or an overfit knife-edge?
+#
+# A candidate that clears the durability bar at exactly one parameter value
+# (lookback=48 passes, 36 and 72 fail) is almost certainly curve-fit to that
+# value — the optimizer found the one lucky setting. A *real* edge sits on a
+# plateau: a contiguous run of neighbouring parameter values that all pass. This
+# codifies the "is the PASS a plateau or a knife-edge?" question (B-pairs slice 2)
+# the same way ``confirm_across_windows`` codified the out-of-time bar, so every
+# future candidate's parameter choice is judged by one repeatable rule, not eye.
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class SweepPoint:
+    value: object                  # the swept parameter value
+    passing: bool                  # confirmed (1 window) / durable (>=2 windows)
+    edge_bps: float | None         # preferred-execution full-sample edge
+
+    def row(self) -> str:
+        mark = "✅" if self.passing else "❌"
+        return f"  {mark} {str(self.value):>12s}  full {_fmt(self.edge_bps)}"
+
+
+@dataclass
+class SweepResult:
+    param: str
+    points: list[SweepPoint] = field(default_factory=list)
+    plateau: bool = False
+    plateau_values: list[object] = field(default_factory=list)
+    reasons: list[str] = field(default_factory=list)
+
+    def summary(self) -> str:
+        verdict = "✅ PLATEAU" if self.plateau else "❌ NO PLATEAU (knife-edge)"
+        lines = [f"{verdict}  sweep {self.param} ({len(self.points)} values)"]
+        lines += [p.row() for p in self.points]
+        for r in self.reasons:
+            lines.append(f"  - {r}")
+        return "\n".join(lines)
+
+
+def _longest_true_run(flags: list[bool]) -> tuple[int, int]:
+    """``(start, length)`` of the longest contiguous run of ``True`` in ``flags``
+    (``(0, 0)`` if none). Pure helper for plateau detection."""
+    best_start = best_len = 0
+    i, n = 0, len(flags)
+    while i < n:
+        if flags[i]:
+            j = i
+            while j < n and flags[j]:
+                j += 1
+            if j - i > best_len:
+                best_start, best_len = i, j - i
+            i = j
+        else:
+            i += 1
+    return best_start, best_len
+
+
+def classify_plateau(
+    points: list[SweepPoint], *, min_plateau: int = 2
+) -> tuple[bool, list[object]]:
+    """Decide whether the passing region of a parameter sweep is a robust plateau.
+
+    A *plateau* is a contiguous run of ``>= min_plateau`` adjacent passing values
+    (the neighbours pass too, so the choice isn't a knife-edge). A single passing
+    value flanked by failures is overfit. ``points`` must already be ordered along
+    the swept axis. Returns ``(is_plateau, plateau_values)`` where the values are
+    the longest contiguous passing run (empty when there is no plateau)."""
+    flags = [p.passing for p in points]
+    start, length = _longest_true_run(flags)
+    if length >= min_plateau:
+        return True, [points[k].value for k in range(start, start + length)]
+    return False, []
+
+
+def sweep_param(
+    param: str,
+    values: list[object],
+    evaluate: Callable[[object], tuple[bool, float | None]],
+    *,
+    min_plateau: int = 2,
+) -> SweepResult:
+    """Sweep one ``param`` across ``values`` and classify plateau vs knife-edge.
+
+    ``evaluate(value) -> (passing, full_sample_edge_bps)`` is supplied by the
+    caller — the CLI wires it to ``confirm_strategy`` / ``confirm_across_windows``
+    with the value substituted into the agent config — keeping this driver pure and
+    unit-testable without the network or any agent."""
+    points: list[SweepPoint] = []
+    for v in values:
+        passing, edge = evaluate(v)
+        points.append(SweepPoint(value=v, passing=passing, edge_bps=edge))
+
+    plateau, plateau_values = classify_plateau(points, min_plateau=min_plateau)
+    reasons: list[str] = []
+    n_pass = sum(1 for p in points if p.passing)
+    if plateau:
+        reasons.append(
+            f"{len(plateau_values)} adjacent values pass ({_vals(plateau_values)}) "
+            "— robust plateau, not a single-point optimum"
+        )
+    elif n_pass == 0:
+        reasons.append("no value passes — nothing to call a plateau")
+    else:
+        passing_vals = [p.value for p in points if p.passing]
+        reasons.append(
+            f"{n_pass} value(s) pass ({_vals(passing_vals)}) but none form a run of "
+            f">={min_plateau} adjacent — knife-edge, likely overfit"
+        )
+    return SweepResult(param=param, points=points, plateau=plateau,
+                       plateau_values=plateau_values, reasons=reasons)
+
+
+def _vals(values: list[object]) -> str:
+    return ", ".join(str(v) for v in values)
+
+
 def _fmt(v: float | None) -> str:
     return "—" if v is None else f"{v:+.1f}bps"
 

@@ -1668,3 +1668,72 @@ pruned B-horizon); (5) **intraday cadence (15m/5m)** where short-horizon spread 
 the maker edge per round-trip should be larger relative to the move (REVIEW C7). If it holds the
 canonical bar across a sweep + held-out pairs, it becomes the first paper-deploy candidate behind the
 existing 5×/1× risk machinery (human-gated).
+
+---
+
+## Iteration 30 — 2026-06-08 — B-pairs slice 2: plateau-sweep harness (PASS = robust plateau, not a knife-edge), as code — and run on the pairs lead
+
+**Context.** Iteration 29 found the first signal ever to clear the canonical 120d×2-window durability
+bar: `pairs_reversion_v1` at lb=48 / entry_z=2.0. The standing "what's next" was slice (2): **is that
+PASS a robust plateau or a knife-edge?** A durability PASS at exactly one parameter value is almost
+always curve-fit to that value. Rather than eyeball a one-off sweep, codify the question the same way
+the out-of-time bar was codified into `confirm_across_windows` (B-mw): one repeatable rule every future
+candidate runs.
+
+**Code increment (committed, with tests).** New plateau-sweep machinery in `backtest/confirm.py`:
+- `classify_plateau(points, min_plateau=2)` — pure: a robust optimum is a **contiguous run of
+  ≥min_plateau adjacent passing values**; a single passing value flanked by failures is a knife-edge.
+  Returns `(is_plateau, longest_run_values)`. Helper `_longest_true_run`.
+- `sweep_param(param, values, evaluate, …)` — driver that calls a caller-supplied
+  `evaluate(value)->(passing, full_edge_bps)` across a value grid and renders a PLATEAU / NO-PLATEAU
+  verdict with reasons. Pure (no network/agent) so it's unit-tested directly.
+- `SweepPoint` / `SweepResult` dataclasses with `summary()`.
+- CLI: `hlbot confirm --sweep 'lookback_bars=24,36,48,72'` (respects `--windows`): loads history **once**
+  and reuses it across all values, runs `confirm_strategy` (1 window) or `confirm_across_windows` (≥2,
+  passing=durable), prints the plateau verdict, exits 1 if no plateau. Refactored the `confirm` factory
+  build into a `_factory_for(config)` closure so a swept value substitutes cleanly into the agent config.
+  New pure `_parse_sweep('param=v1,v2,…') -> (param, [values])` (≥2 values required, same int→float→bool→str
+  typing as `--params`).
+- Tests (+13): `tests/test_confirm_sweep.py` (contiguous run = plateau; isolated pass = knife-edge; two
+  non-adjacent passes ≠ plateau; no pass; min_plateau=3; longest-run selection; summary render) and
+  `tests/test_parse_sweep.py` (typed int/float values, whitespace, missing `=`, empty param, single-value
+  rejected).
+
+**Evidence — slice 2 run on the pairs lead (real HL history, network; 6 coins BTC,ETH,SOL,AVAX,LINK,AAVE,
+1h, 120d, `--windows 2`, `--prefer maker`; "passing"=DURABLE; edge = trailing-window full-sample maker):**
+
+*lookback_bars (coarse 24/36/48/72/96):* **NO PLATEAU** — only lb=48 durable (full +5.3); 36 +3.7 (not
+durable), 24 +1.5, 72/96 `—` (trade-starved: longer lookback smooths the spread → too few |z|≥2 events).
+
+*lookback_bars (fine 40/44/48/52/56/60):* **✅ PLATEAU** — lb ∈ {48, 52, 56} all DURABLE (+5.3 / +5.6 /
++4.0); 40 +0.8, 44 +1.9 (below the plateau's lower edge, not durable); 60 `—` (trade-starved). So the
+lb PASS is a **narrow but real plateau (~48–56, width ~16 bars)**, bounded below by weakening edge and
+above by trade-starvation — the coarse grid stepped over it because 72/96 starve and 24/36 sit below it.
+
+*entry_z (1.5/1.75/2.0/2.25/2.5):* **NO PLATEAU (knife-edge)** — only entry_z=2.0 DURABLE (+5.3). The
+full-sample maker edge is **positive and sign-stable across the whole range** (1.5 +2.5 → 1.75 +4.1 →
+**2.0 +5.3** → 2.25 +2.8 → 2.5 +1.6, a clean peak at 2.0), so off-peak values are regime-sensitive, not
+the artifact sign-flip — but the *durability* PASS hinges on entry_z=2.0 specifically.
+
+**Honest read.** Slice 2 partially de-risks and partially fragilizes the Iter-29 lead. The lookback
+choice sits on a genuine (if narrow) plateau — good, not a single-point fit. But the entry_z choice is a
+**knife-edge under the strict 2-window bar**: the durability PASS depends on entry_z=2.0. The edge curve
+in entry_z is smooth and peaked (not noisy), which argues the 2.0 optimum is structural rather than luck,
+but it does mean the canonical-bar PASS is **less robust than a single number suggested** — it needs both
+lb∈[48,56] AND entry_z≈2.0. Still a lead worth pushing (it remains the only candidate to clear the bar at
+all, and now on a lookback plateau), but the entry_z knife-edge is the thing the next slices must watch.
+**Maker-only, nothing touches capital, no live change.**
+
+**Evidence (gate).** `uv run pytest -q` → **175 passed** (+13); `ruff check src tests scripts` → clean.
+All sweep numbers are measurement (no `data/` writes from the durability runs were committed). No strategy
+in the live roster changed; no live mode enabled.
+
+**What's next (loop).** The plateau harness is now reusable for every future candidate. Remaining B-pairs
+slices, re-prioritized by what slice 2 surfaced: (3) **held-out pair set** (does the 2-window PASS survive
+disjoint liquid pairs not in the default basket? — the leave-pairs-out analogue of leave-one-coin-out; the
+most important next test now that we know the param region is narrow); (4) **longer per-window `--days`**
+to test whether the 180d trailing-OOS-tail weakness is a boundary artifact; (5) **intraday cadence
+(15m/5m)** where short-horizon spread reversal is strongest and more entry events should *widen* the lb
+plateau and relieve the trade-starvation ceiling. If held-out pairs hold the bar on the lb plateau at
+entry_z≈2.0, the lead graduates toward a paper-deploy candidate behind the existing 5×/1× risk machinery
+(human-gated).

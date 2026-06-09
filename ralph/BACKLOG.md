@@ -22,10 +22,19 @@ Keep it ruthlessly prioritized: the top item should always be the highest-levera
   `--windows 3` fails on a no-trade oldest 120d slice; at 180d / narrower baskets the trailing OOS tail
   weakens to the "regime-sensitive, sign-stable lead" failure mode (the harness NOTE, not the artifact).
   **A genuine lead to push, not a prune; maker-only, nothing touches capital.** Numbers in PROGRESS.md
-  Iteration 29. Next slices: (2) lookback/entry_z/exit_z plateau sweep at 1h; (3) widen to more disjoint
-  liquid pairs (does the canonical-bar PASS hold on a held-out pair set?); (4) longer per-window `--days`
-  to test whether the within-window OOS-tail weakness is a boundary artifact (the test that pruned
-  B-horizon); (5) intraday cadence (15m/5m) where short-horizon reversal is strongest (REVIEW C7).
+  Iteration 29. **Slice 2 DONE (Iteration 30): plateau-sweep harness + run on the lead.** Built reusable
+  `sweep_param`/`classify_plateau` (+ `confirm --sweep`, 13 tests): a PASS is robust only if a *contiguous
+  run* of ≥2 adjacent param values passes, else knife-edge. Run on the lead (120d×2 windows, maker, DURABLE
+  = passing): **lookback_bars is a narrow PLATEAU** (lb∈{48,52,56} all durable +5.3/+5.6/+4.0; <48 weakens,
+  ≥60 trade-starves) — good, not a single-point fit; but **entry_z is a KNIFE-EDGE** (only 2.0 durable,
+  though the full maker edge is smooth/sign-stable and cleanly peaked at 2.0: 1.5→+2.5 … 2.0→+5.3 …
+  2.5→+1.6). Net: the canonical-bar PASS needs lb∈[48,56] AND entry_z≈2.0 — a lead, but less robust than
+  one number suggested. Numbers in PROGRESS.md Iteration 30. Remaining slices (re-prioritized):
+  (3) **held-out pair set** — does the 2-window PASS survive disjoint liquid pairs (leave-pairs-out)? *now
+  the most important test given the narrow param region*; (4) longer per-window `--days` to test whether the
+  within-window OOS-tail weakness is a boundary artifact (the test that pruned B-horizon); (5) intraday
+  cadence (15m/5m) where short-horizon reversal is strongest — should widen the lb plateau / relieve the
+  trade-starvation ceiling (REVIEW C7).
 - [x] **B1 — Quantify the taker tax on every agent.** DONE (Iteration 16, network
   open). 120d/1h over BTC,ETH,SOL,HYPE,AVAX,LINK: taker tax ≈ **5.7 bps round-trip**,
   ~**73% of the TWAP bleed** (twap_mr −7.7→−2.0 bps taker→maker; regime −8.0→−2.3).

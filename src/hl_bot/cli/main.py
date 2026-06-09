@@ -867,6 +867,22 @@ def _coerce_param(raw: str) -> object:
     return raw
 
 
+def _parse_sweep(sweep: str) -> tuple[str, list[object]]:
+    """Parse a ``'lookback_bars=24,36,48,72'`` sweep string into
+    ``(param_name, [values])``. One parameter, many values (typed via the same
+    int→float→bool→str inference as ``--params``). Pure so it's unit-tested without
+    the network. Used by ``confirm --sweep`` to check a PASS is a robust plateau,
+    not a single-point knife-edge."""
+    param, sep, raw = sweep.partition("=")
+    param = param.strip()
+    if not sep or not param:
+        raise ValueError(f"bad --sweep {sweep!r}; expected param=v1,v2,...")
+    values = [_coerce_param(v.strip()) for v in raw.split(",") if v.strip()]
+    if len(values) < 2:
+        raise ValueError(f"bad --sweep {sweep!r}; need >=2 comma-separated values")
+    return param, values
+
+
 def _window_specs(windows: int, days: int, now_ms: int) -> list[tuple[str, int | None]]:
     """Disjoint, back-to-back ``days``-long window specs for out-of-time durability.
 
@@ -894,6 +910,7 @@ def confirm(
     cache: bool = True,
     windows: int = 1,
     params: str = "",
+    sweep: str = "",
 ):
     """Confirm a strategy through the G0 gate: walk-forward + cost stress.
 
@@ -909,11 +926,16 @@ def confirm(
     ``--params 'lookback_bars=7,enter_return=0.05'`` overrides the candidate's
     config so a parameter sweep (e.g. a horizon-appropriate lookback) needs no code
     edit.
+
+    ``--sweep 'lookback_bars=24,36,48,72'`` runs the confirm (respecting
+    ``--windows``) at each value and emits a single PLATEAU / NO-PLATEAU verdict:
+    a robust edge passes on a *contiguous run* of neighbouring values, not at one
+    knife-edge point. History is loaded once and reused across all values.
     """
     import time as _time
 
     from ..backtest.baskets import resolve_basket
-    from ..backtest.confirm import confirm_across_windows, confirm_strategy
+    from ..backtest.confirm import confirm_across_windows, confirm_strategy, sweep_param
     from ..backtest.data import cached_or_fetch, load_frames
 
     _, s = _conn()
@@ -923,21 +945,28 @@ def confirm(
     except ValueError as e:
         console.print(f"[red]bad --params: {e}[/red]")
         raise typer.Exit(1) from e
-    factories = {
-        "twap_mr_v1": lambda conn: TwapMrAgent(config=cfg, conn=conn),
-        "twap_mr_regime_v1": lambda conn: TwapMrRegimeAgent(config=cfg, conn=conn),
-        "femr_v1": lambda conn: FemrAgent(config=cfg, conn=conn),
-        "funding_carry_v1": lambda conn: FundingCarryAgent(config=cfg, conn=conn),
-        "xfund_carry_v1": lambda conn: XFundCarryAgent(config=cfg, conn=conn),
-        "xsect_momentum_v1": lambda conn: XSectMomentumAgent(config=cfg, conn=conn),
-        "ts_momentum_v1": lambda conn: TsMomentumAgent(config=cfg, conn=conn),
-        "pairs_reversion_v1": lambda conn: PairsReversionAgent(config=cfg, conn=conn),
-        "liq_cascade_v1": lambda conn: LiqCascadeAgent(config=cfg, conn=conn),
-        "basis_v1": lambda conn: BasisAgent(config=cfg, conn=conn),
+
+    constructors = {
+        "twap_mr_v1": TwapMrAgent,
+        "twap_mr_regime_v1": TwapMrRegimeAgent,
+        "femr_v1": FemrAgent,
+        "funding_carry_v1": FundingCarryAgent,
+        "xfund_carry_v1": XFundCarryAgent,
+        "xsect_momentum_v1": XSectMomentumAgent,
+        "ts_momentum_v1": TsMomentumAgent,
+        "pairs_reversion_v1": PairsReversionAgent,
+        "liq_cascade_v1": LiqCascadeAgent,
+        "basis_v1": BasisAgent,
     }
-    if agent not in factories:
-        console.print(f"[red]unknown agent {agent}; choose from {list(factories)}[/red]")
+    if agent not in constructors:
+        console.print(f"[red]unknown agent {agent}; choose from {list(constructors)}[/red]")
         raise typer.Exit(1)
+
+    def _factory_for(config: dict):
+        ctor = constructors[agent]
+        return lambda conn: ctor(config=config, conn=conn)
+
+    factory = _factory_for(cfg)
     per_year = {"1m": 525_600, "5m": 105_120, "15m": 35_040,
                 "1h": 8_760, "4h": 2_190, "1d": 365}.get(interval, 8_760)
 
@@ -947,6 +976,49 @@ def confirm(
                                    base_url=s.hl_api_url, end_ms=end_ms)
         return load_frames(coin_list, interval=interval, days=days,
                            base_url=s.hl_api_url, end_ms=end_ms)
+
+    if sweep:
+        try:
+            sweep_param_name, sweep_values = _parse_sweep(sweep)
+        except ValueError as e:
+            console.print(f"[red]bad --sweep: {e}[/red]")
+            raise typer.Exit(1) from e
+        # Load history once; the swept values only change the agent config.
+        try:
+            if windows >= 2:
+                specs = _window_specs(windows, days, int(_time.time() * 1000))
+                loaded_windows = [(label, _load(end_ms)) for label, end_ms in specs]
+            else:
+                loaded_frames = _load(None)
+        except Exception as e:  # noqa: BLE001
+            console.print(f"[red]failed to load history: {e}[/red]")
+            raise typer.Exit(2) from e
+
+        def _evaluate(value: object) -> tuple[bool, float | None]:
+            from ..backtest.confirm import preferred_full_sample
+            merged = {**cfg, sweep_param_name: value}
+            fac = _factory_for(merged)
+            if windows >= 2:
+                mw = confirm_across_windows(
+                    fac, loaded_windows, prefer=prefer,
+                    min_edge_bps=min_edge_bps, min_sharpe=min_sharpe,
+                    periods_per_year=per_year,
+                )
+                edge = mw.windows[0].full_sample_edge_bps if mw.windows else None
+                return mw.durable, edge
+            cr = confirm_strategy(
+                fac, loaded_frames, prefer=prefer,
+                min_edge_bps=min_edge_bps, min_sharpe=min_sharpe,
+                periods_per_year=per_year,
+            )
+            edge = preferred_full_sample(cr).edge_bps if cr.cost_ladder else None
+            return cr.confirmed, edge
+
+        sr = sweep_param(sweep_param_name, sweep_values, _evaluate)
+        console.print(sr.summary())
+        if not sr.plateau:
+            raise typer.Exit(1)
+        return
 
     if windows >= 2:
         specs = _window_specs(windows, days, int(_time.time() * 1000))
@@ -958,7 +1030,7 @@ def confirm(
             console.print(f"[red]failed to load history: {e}[/red]")
             raise typer.Exit(2) from e
         mw = confirm_across_windows(
-            factories[agent], win_frames, prefer=prefer,
+            factory, win_frames, prefer=prefer,
             min_edge_bps=min_edge_bps, min_sharpe=min_sharpe, periods_per_year=per_year,
         )
         console.print(mw.summary())
@@ -972,7 +1044,7 @@ def confirm(
         console.print(f"[red]failed to load history: {e}[/red]")
         raise typer.Exit(2) from e
     res = confirm_strategy(
-        factories[agent], frames, prefer=prefer,
+        factory, frames, prefer=prefer,
         min_edge_bps=min_edge_bps, min_sharpe=min_sharpe, periods_per_year=per_year,
     )
     console.print(res.summary())
