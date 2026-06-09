@@ -3168,3 +3168,59 @@ archive (B-fine-record slice 3), which needs calendar time + a deployed host's `
 `hlbot record-coverage` can report READY. Absent that, the loop is at the honest boundary: the machinery and the
 capital-formation specs (track record, allocator packet, vault eval, moonshot sleeve) are all complete, and the
 binding constraint is *time accumulating recorded data*, not code.
+
+## Iteration 54 — 2026-06-09 — B-skew: cross-sectional return-skewness / lottery-demand (the 13th thesis) — PRUNED
+
+**Context (orientation).** Iters 48–53 declared the edge search "exhausted" on HL historical candles: all twelve
+structurally-different theses pruned, the only route to *new* edge evidence (B-fine-record slice 3) blocked on
+calendar time + a deployed host's `recorded_candles.jsonl` (still no local archive — confirmed `data/` holds only
+the sqlite + backtest cache). The remaining open backlog was non-edge (stale B14a, whose deploy chassis already
+ships). But "exhausted" is a claim worth re-testing: I audited what the cached frames actually carry (`Frame`:
+mids, funding, day_ntl_vlm, candles_1h, **closes**, open_interest, spot_mids, liquidations) and what each of the
+twelve theses keyed off. **Open interest** is a Frame field but `build_frames` never populates it (HL's candle
+API has no per-bar OI), so an OI thesis is unbacktestable — the same wall as fine-cadence. But the twelve theses
+covered only the **first moment** (return: TWAP-MR, x-sect/ts/majors momentum), **second moment** (variance:
+low-vol), and orthogonal axes (funding, pairs, basis, clock, microstructure, liquidity/illiq). The **third
+moment — return skewness — was never tested**, and it is computable from `closes` alone (no plumbing). So the
+search was *not* exhausted; one a-priori factor remained.
+
+**What I built (pure, tested).** `agents/xsect_skew.py` (`XSectSkewAgent`), the lottery-demand / MAX thesis
+(Bali, Cakici & Whitelaw 2011 — investors over-pay for positively-skewed lottery payoffs, so high-skew names are
+over-priced and subsequently under-perform; crypto perps are an even stronger lottery habitat). Mirrors the
+low-vol/illiq cross-sectional template: dollar-neutral **SHORT highest-skew / LONG lowest-skew**, eligibility-
+gated by `min_daily_volume_usd`, exits on rank-rotation/leg-flip, maker-oriented. Two `signal` forms so the
+driver is attributable (the illiq decomposition precedent): `max` = mean of the top-`n_max` bar log-returns (the
+canonical MAX statistic), `skew` = sample third-standardized-moment skewness. `invert` flips to the
+lottery-chase. Registered in both CLI registries; +10 unit tests (leg direction for MAX and skew, invert,
+2*top_k gate, volume filter, short-series hold, MAX = manual mean-of-top-n, skew sign/symmetry, degenerate
+zero-dispersion → None, bad-signal `ValueError`).
+
+**Evidence (gate / the prune).** `confirm --agent xsect_skew_v1 --windows 2 --prefer maker --cache --interval 1h
+--days 120` on the two pinned alt baskets (the universes that produced illiq's lead), both signal forms + invert:
+
+| config | basket | trailing 120d | prior 120d | verdict |
+|---|---|---|---|---|
+| MAX (lb48,n_max5) | alts_highfunding | full −3.2 (in +4.3 / oos −23.6) | full +8.9 (in +15.5 / oos −4.3) | ❌ SIGN-FLIP |
+| MAX (lb48,n_max5) | alts_heldout | full −21.6 (in −7.3 / oos −69.9) | full +5.1 (in +3.5 / oos +8.8) | ❌ SIGN-FLIP |
+| skew (lb48) | alts_highfunding | full −6.6 | full +11.0 | ❌ SIGN-FLIP |
+| MAX invert (lottery-chase) | alts_highfunding | full +1.4 | full −11.5 | ❌ SIGN-FLIP |
+
+Every configuration **NOT DURABLE** — the full-sample edge reverses sign across the two disjoint windows, the
+exact window-specific-artifact signature that killed every momentum lead. The distributional-shape rank is no
+more regime-persistent than the return rank. **B-skew is PRUNED.** Folded into `reports/edge_search.py` as thesis
+#13 (header "twelve→thirteen", iterations "16–48→16–54", cross-sectional class 2→3) with its numbers and
+sign-flip prune reason; +1 edge-search test, class-breakdown test updated. `uv run pytest -q` → **314 passed**
+(+11). `uv run ruff check src tests scripts` → clean. Maker-only paper; no roster/live-mode/capital change.
+
+**Why this matters.** It corrects the standing "search exhausted" claim to its true, narrower form: the search is
+exhausted *of structurally-distinct, backtestable-from-historical-candles theses* — now genuinely so, with the
+third moment closed. Thirteen orthogonal a-priori factors (mean, variance, skewness, funding, relative-value,
+cross-market, clock, microstructure, liquidity) all share one fate at the 1h/120d×2 durability bar: a real signal
+whose deployable sign is window-specific. That hardens the negative-result artifact an allocator reads.
+
+**What's next (loop).** The historical-candle search is now exhausted on the first three return moments + every
+orthogonal axis; the fourth moment (kurtosis) and OI-based theses are either un-backtestable (no OI history) or
+not a-priori distinct enough to clear the over-fitting bar that killed thirteen priors. Genuinely new edge
+evidence still requires the forward-recorded fine-cadence archive (B-fine-record slice 3) — calendar time + a
+deployed host's `recorded_candles.jsonl` before `hlbot record-coverage` reports READY. The only other open item
+is the stale P2 B14a (deploy chassis already ships in `deploy/`).

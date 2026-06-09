@@ -1,6 +1,6 @@
 """Edge-search summary — the negative-result finding as a publishable artifact.
 
-The backtest search (Iterations 16–48) tested twelve structurally different alpha
+The backtest search (Iterations 16–54) tested thirteen structurally different alpha
 theses against real Hyperliquid history through one adversarial durability bar
 (two disjoint ~120d windows, walk-forward, maker-cost net). Every one was pruned:
 net-negative after costs, or non-durable (regime-/window-/param-specific). That
@@ -206,6 +206,23 @@ THESES: tuple[Thesis, ...] = (
         "not a liquidity premium; and the decisive 3rd-window test (only possible at 4h — 1h history caps "
         "at ~208d) SIGN-FLIPS at the calendar-matched lookback (+41.1 / −10.6 / +139.5), so even the "
         "2-window PASS does not survive a cadence change.",
+    ),
+    Thesis(
+        num=13,
+        key="B-skew",
+        name="Cross-sectional return skewness / lottery-demand (the MAX effect, Bali-Cakici-Whitelaw 2011)",
+        klass="cross-sectional",
+        iterations="54",
+        universe="high-funding alts + held-out alts",
+        bar="1h, two 120d windows, maker",
+        headline="the third moment, orthogonal to return-mean (momentum), variance (low-vol) and "
+        "liquidity (illiq): SHORT high-skew / LONG low-skew. Both forms tested — MAX (mean of "
+        "top-n bar returns) and sample skewness.",
+        prune_reason="NOT DURABLE: full-sample edge SIGN-FLIPS across the two disjoint windows on "
+        "BOTH baskets and BOTH signal forms (MAX hi-fund +8.9/−3.2, held-out +5.1/−21.6; skew "
+        "hi-fund +11.0/−6.6) AND inverted (lottery-chase +1.4/−11.5) — the same window-specific "
+        "artifact signature that killed every momentum lead. The distributional-shape rank was no "
+        "more persistent across regimes than the return rank.",
     ),
 )
 

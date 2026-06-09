@@ -40,6 +40,22 @@ Keep it ruthlessly prioritized: the top item should always be the highest-levera
   coins), listing the per-coin blockers. Wired `hlbot record-coverage --archive --interval --window-days
   --windows --min-coverage --min-coins` (offline, no network; mirrors `record-trades`). +7 unit tests. So a
   future iteration runs one offline command to decide if slice 3 is unblocked yet. Numbers in PROGRESS Iter 49.
+- [x] **B-skew — Cross-sectional return skewness / lottery-demand (the THIRTEENTH structurally-different
+  thesis; the FIRST to key off the THIRD MOMENT, orthogonal to return-mean/variance/liquidity). PRUNED as a
+  deployable edge (Iteration 54).** Every prior thesis keyed off the first/second moment of returns (TWAP-MR,
+  momentum = mean; low-vol = variance) or an orthogonal axis (funding, pairs, basis, clock, microstructure,
+  liquidity); none off return **skewness**. The lottery-demand / MAX anomaly (Bali-Cakici-Whitelaw 2011) is a
+  robust a-priori TradFi factor — investors over-pay for positively-skewed lottery payoffs, so high-skew names
+  are over-priced and under-perform — and crypto perps are an even stronger lottery habitat. New pure
+  `agents/xsect_skew.py` (`XSectSkewAgent`): dollar-neutral SHORT highest-skew / LONG lowest-skew; two `signal`
+  forms (`max` = mean of top-`n_max` bar returns; `skew` = sample third-standardized-moment) so the driver is
+  attributable, `invert` flips to the lottery-chase. Uses only `closes` the cached frames already carry (no
+  plumbing). Registered in confirm/backtest, +10 unit tests. **Result (real HL cache, 1h, maker, 120d×2 disjoint
+  windows):** ❌ NOT DURABLE — the full-sample edge **SIGN-FLIPS** across the two windows on BOTH baskets and BOTH
+  signal forms (MAX hi-fund +8.9/−3.2, held-out +5.1/−21.6; skew hi-fund +11.0/−6.6) AND inverted (+1.4/−11.5).
+  Same window-specific-artifact signature that killed every momentum lead: the distributional-shape rank is no
+  more regime-persistent than the return rank. Folded into the edge-search artifact as thesis #13 (cross-
+  sectional, pruned on sign-flip); +1 test. Maker-only, no live change. Numbers in PROGRESS Iter 54.
 - [x] **B-illiq — Cross-sectional illiquidity / Amihud premium (the TWELFTH structurally-different thesis;
   the FIRST to key off VOLUME / liquidity, orthogonal to all eleven priors). A GENUINE LEAD (Iteration 45):
   the strongest cross-basket result of any thesis — DURABLE on high-funding alts AND sign-stable-positive on

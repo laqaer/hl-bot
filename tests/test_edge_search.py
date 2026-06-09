@@ -24,7 +24,8 @@ def test_backlog_keys_are_unique():
 
 def test_class_breakdown_matches_narrative():
     # Iter 38: eight directional + one execution + one cross-market; Iter 44/48
-    # added the two cross-sectional factor ranks (low-vol BAB, illiquidity/Amihud).
+    # added two cross-sectional factor ranks (low-vol BAB, illiquidity/Amihud);
+    # Iter 54 added the third (return skewness / lottery-demand MAX).
     by_class: dict[str, int] = {}
     for t in THESES:
         by_class[t.klass] = by_class.get(t.klass, 0) + 1
@@ -32,7 +33,7 @@ def test_class_breakdown_matches_narrative():
         "directional": 8,
         "execution": 1,
         "cross-market": 1,
-        "cross-sectional": 2,
+        "cross-sectional": 3,
     }
 
 
@@ -43,6 +44,15 @@ def test_illiq_is_the_twelfth_thesis_and_pruned_on_the_third_window():
     assert illiq.num == 12
     assert illiq.klass == "cross-sectional"
     assert "SIGN-FLIP" in illiq.prune_reason.upper()
+
+
+def test_skew_is_the_thirteenth_thesis_and_pruned_on_sign_flip():
+    # Iter 54 (B-skew): the third moment (lottery-demand / MAX), orthogonal to the
+    # return mean / variance / liquidity ranks, sign-flips across disjoint windows.
+    skew = next(t for t in THESES if t.key == "B-skew")
+    assert skew.num == 13
+    assert skew.klass == "cross-sectional"
+    assert "SIGN-FLIP" in skew.prune_reason.upper()
 
 
 def test_session_thesis_records_the_finer_time_of_day_prune():

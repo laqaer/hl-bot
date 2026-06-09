@@ -29,6 +29,7 @@ from ..agents.xfund_carry import XFundCarryAgent
 from ..agents.xsect_illiq import XSectIlliqAgent
 from ..agents.xsect_lowvol import XSectLowVolAgent
 from ..agents.xsect_momentum import XSectMomentumAgent
+from ..agents.xsect_skew import XSectSkewAgent
 from ..config import CONFIG_DIR, Settings
 from ..db.schema import init_db
 from ..ingest.hyperliquid import ingest_fills, ingest_funding, snapshot_equity
@@ -781,6 +782,7 @@ def backtest(
         "xsect_momentum_v1": lambda conn: XSectMomentumAgent(config=cfg, conn=conn),
         "xsect_lowvol_v1": lambda conn: XSectLowVolAgent(config=cfg, conn=conn),
         "xsect_illiq_v1": lambda conn: XSectIlliqAgent(config=cfg, conn=conn),
+        "xsect_skew_v1": lambda conn: XSectSkewAgent(config=cfg, conn=conn),
         "ts_momentum_v1": lambda conn: TsMomentumAgent(config=cfg, conn=conn),
         "session_timing_v1": lambda conn: SessionTimingAgent(config=cfg, conn=conn),
         "pairs_reversion_v1": lambda conn: PairsReversionAgent(config=cfg, conn=conn),
@@ -981,6 +983,7 @@ def confirm(
         "xsect_momentum_v1": XSectMomentumAgent,
         "xsect_lowvol_v1": XSectLowVolAgent,
         "xsect_illiq_v1": XSectIlliqAgent,
+        "xsect_skew_v1": XSectSkewAgent,
         "ts_momentum_v1": TsMomentumAgent,
         "session_timing_v1": SessionTimingAgent,
         "pairs_reversion_v1": PairsReversionAgent,
