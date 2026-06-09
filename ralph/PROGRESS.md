@@ -1507,3 +1507,58 @@ live-view fix as its own tested slice (refactor the 1h-candle build into a pure,
 mockable function — it touches network code). Secondary: a longer-history (>90d, more
 regime cycles) confirm to check G0 stability across more than one chop→trend
 transition.
+
+---
+
+## Iteration 31 — 2026-06-08 — B1d-trend-deploy Slice 1: live `closes` now carries real 1h bars (was 60×1m) via a pure, sim-shared loader — unblocks paper deployment of the G0-confirmed trend signal.
+
+**Context.** Iter 30 cleared G0 with `trend_breakout_v1` (20-coin breadth, CONFIRMED
+under maker+taker, cost-robust to taker-3×) but flagged an honest deployment blocker:
+the live `cli/main.py::_enrich_view` fills `view.extra['closes']` with **60×1-MINUTE**
+candles (the VWAP/sigma feed), while the backtested trend signal reads `closes` as
+**1-HOUR bars** (`entry_lookback=24` = 24 *hours*). Adding `TrendBreakoutAgent` to the
+roster as-is would silently deploy a *24-minute* breakout — a different strategy than
+the one that passed G0, forbidden by "evidence before capital." This is B1d-trend-deploy
+Slice 1: make the live view emit the SAME 1h close series the backtest scored on.
+
+**Changed (1 commit).**
+- **`backtest/data.py`** — new `build_closes_1h(post_fn, coins, *, closes_window=240,
+  now_ms=None)`: a **pure, transport-injected** loader returning a per-coin trailing
+  1-HOUR close series (oldest-first, last = latest bar). It walks the candleSnapshot
+  page cap via the existing `paginate_by_time` and parses with the same `_closes_vols`
+  the backtest frames use — so **live and sim see an identical series** (default 240
+  bars = the backtest `closes_window`). `post_fn(payload)->json` makes one `/info` POST,
+  so it is fully unit-testable offline with a fake. (`Callable` imported from
+  `collections.abc`.)
+- **`cli/main.py::_enrich_view`** — removed the line that stuffed the **1m** closes into
+  `closes_by_coin`; now populates `view.extra['closes']` from `build_closes_1h` using a
+  resilient `_post` closure over the existing httpx client (per-call try/except → `[]`,
+  matching the surrounding defensive style; whole call wrapped so a fetch failure
+  degrades to empty closes rather than killing the view). The 60×1m loop still drives
+  `candles_1h` VWAP/sigma (TWAP feed) unchanged.
+- **`tests/test_backtest.py`** (+1) — `test_build_closes_1h_emits_hourly_series_matching_backtest`:
+  fake `post_fn` over 300 synthetic hourly candles/coin with the page cap monkeypatched
+  to 50 to force pagination; asserts the request interval is **1h** (not 1m), the series
+  is window-capped to `closes_window` (120), `[-1]` is the latest close, `[0]` is the
+  oldest in-window bar (300−120), and the result is ascending+deduped across pages.
+  (156 → **157 tests pass**.)
+
+**Evidence (tests/lint).** 157 pass; `ruff check src tests scripts` clean.
+
+**Why it matters.** This removes the one hard blocker between a G0-confirmed signal and
+its paper track record without touching the strategy: the live agent will now consume
+the *same* 1h bars the backtester confirmed on. It is also a latent-correctness fix for
+the **other** `closes` consumers — `twap_mr_regime` (regime fade, on the paper roster)
+and `xfund_carry` both read `view.extra['closes']` and were silently being fed 1m bars
+live while backtested on 1h; they now match their backtest contract too. No agent was
+added to the roster and live stays human-gated — Slice 2 (roster wiring + a live-vs-sim
+signal equivalence check on the 20-coin universe) is the next slice. Per "evidence
+before capital," the parity loop (does the live `decide()` reproduce the backtest's
+breakout entries on the same frames?) must pass before the G1 paper clock can be
+trusted.
+
+**What's next (loop).** B1d-trend-deploy Slice 2: add `TrendBreakoutAgent` to the paper
+roster over the ~20 liquid coins (config done Iter 30), and add a parity check that the
+live signal on a captured view matches the backtest signal on the equivalent frame.
+Then the G1 paper clock starts (>=30d, edge>=+5bps, >=150 trades). Secondary unchanged:
+a longer-history (>90d) confirm for G0 stability across more regime cycles.

@@ -13,6 +13,7 @@ from __future__ import annotations
 import gzip
 import json
 import time
+from collections.abc import Callable
 from dataclasses import asdict
 from pathlib import Path
 from typing import Any
@@ -165,6 +166,49 @@ def _closes_vols(candles: list[dict[str, Any]]) -> tuple[list[float], list[float
             vols.append(v)
             ts.append(t)
     return closes, vols, ts
+
+
+def build_closes_1h(
+    post_fn: Callable[[dict[str, Any]], Any],
+    coins: list[str],
+    *,
+    closes_window: int = 240,
+    now_ms: int | None = None,
+) -> dict[str, list[float]]:
+    """Per-coin trailing 1-HOUR close series (oldest-first; last = latest bar).
+
+    The live counterpart of the ``closes`` that :func:`build_frames` exposes to
+    agents in the backtest. ``trend_breakout`` consumes
+    ``view.extra['closes'][coin]`` as 1-HOUR bars (``entry_lookback=24`` = 24
+    hours), so the live view MUST feed it real 1h closes — not the 60×1-minute
+    VWAP candles it used to, which would silently deploy a 24-*minute* breakout
+    (a different strategy than the one that cleared G0).
+
+    Pure of transport: ``post_fn(payload) -> json`` makes one ``/info`` POST, so
+    tests inject a fake. Walks the ``candleSnapshot`` page cap via
+    :func:`paginate_by_time` (same guard the backtester uses) so a long window is
+    never silently truncated, and parses with the same ``_closes_vols`` the
+    backtest frames use — so live and sim see an identical close series.
+    """
+    end_ms = int(time.time() * 1000) if now_ms is None else now_ms
+    start_ms = end_ms - closes_window * INTERVAL_MS["1h"]
+    out: dict[str, list[float]] = {}
+    for coin in coins:
+        def _page(s: int, e: int, _coin: str = coin) -> list[dict[str, Any]]:
+            res = post_fn({
+                "type": "candleSnapshot",
+                "req": {"coin": _coin, "interval": "1h",
+                        "startTime": s, "endTime": e},
+            })
+            return res if isinstance(res, list) else []
+
+        candles = paginate_by_time(
+            _page, start_ms, end_ms, page_limit=CANDLE_PAGE_LIMIT, time_key="t",
+        )
+        closes, _vols, _ts = _closes_vols(candles)
+        if closes:
+            out[coin] = closes[-closes_window:]
+    return out
 
 
 def rolling_vwap_sigma(

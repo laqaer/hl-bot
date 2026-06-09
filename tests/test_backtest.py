@@ -213,6 +213,47 @@ def test_fetch_candles_paginates_past_the_row_cap(monkeypatch):
     assert len(starts) >= 3, "needed multiple pages to clear the cap"
 
 
+def test_build_closes_1h_emits_hourly_series_matching_backtest(monkeypatch):
+    """Live `closes` must be real 1h bars (last = latest), not the 60×1m VWAP feed.
+
+    Wiring trend_breakout to paper requires the live view to feed the SAME 1h
+    close series the backtest scored on (B1d-trend-deploy). This proves the pure,
+    transport-injected loader: per-coin 1h closes, window-capped, page-cap walked,
+    and the start time derived from `closes_window` hours back from `now_ms`.
+    """
+    from hl_bot.backtest import data
+    from hl_bot.backtest.data import build_closes_1h
+
+    now_ms = 300 * HOUR  # latest candle is at 299*HOUR; window starts 120h back
+    cap = 50  # simulate the candleSnapshot per-call row cap to exercise pagination
+    monkeypatch.setattr(data, "CANDLE_PAGE_LIMIT", cap)
+    # 300 hourly candles per coin, oldest-first, prices unique per coin/bar.
+    rows = {
+        "BTC": [{"t": i * HOUR, "c": 100.0 + i, "v": 1.0} for i in range(300)],
+        "ETH": [{"t": i * HOUR, "c": 50.0 + i, "v": 1.0} for i in range(300)],
+    }
+    seen_intervals: set[str] = set()
+
+    def post_fn(payload):
+        req = payload["req"]
+        seen_intervals.add(req["interval"])
+        coin = req["coin"]
+        start, end = req["startTime"], req["endTime"]
+        window = [r for r in rows.get(coin, []) if start <= r["t"] <= end]
+        return window[:cap]
+
+    out = build_closes_1h(post_fn, ["BTC", "ETH"], closes_window=120, now_ms=now_ms)
+
+    assert seen_intervals == {"1h"}, "must request 1-HOUR candles, not 1m"
+    # window starts closes_window hours back, so only the last 120 bars are in range
+    assert len(out["BTC"]) == 120, "series capped at closes_window"
+    assert out["BTC"][-1] == 100.0 + 299, "last element is the latest close"
+    assert out["BTC"][0] == 100.0 + 180, "oldest in-window bar (300-120)"
+    assert out["ETH"][-1] == 50.0 + 299
+    # ascending + deduped despite the page cap forcing multiple fetches
+    assert out["BTC"] == sorted(out["BTC"])
+
+
 def test_frame_cache_roundtrip(tmp_path):
     from hl_bot.backtest.data import load_cached_frames, save_frames
     frames = _mean_reversion_path()

@@ -17,18 +17,21 @@ Keep it ruthlessly prioritized: the top item should always be the highest-levera
   ex-top still +$87.77 — not a single-name artifact. (Iteration 30, numbers in
   PROGRESS.) The 4-major and 10-coin universes do NOT clear it (in-sample +1.1 /
   −5.2bps) — the edge REQUIRES the wide universe.
-- [ ] **B1d-trend-deploy — Wire trend_breakout to PAPER on the 20-coin universe.**
+- [~] **B1d-trend-deploy — Wire trend_breakout to PAPER on the 20-coin universe.**
   G0→paper is the next gate. **BLOCKER (honest):** live `cli/main.py::_enrich_view`
   fills `view.extra['closes']` with **60×1-MINUTE** candles (the VWAP feed), but the
   backtested trend signal consumes **1-HOUR bars** (`entry_lookback=24` = 24 *hours*).
   Wiring the agent as-is would deploy a *different* (24-minute) strategy than the one
-  that passed G0 — forbidden by "evidence before capital." **Slice 1:** refactor the
-  1h-candle build in `_enrich_view` into a pure, mockable function that emits a 1h
-  close series (>=entry_lookback+1, ideally 240 = backtest `closes_window`); unit-test
-  it offline. **Slice 2:** add `TrendBreakoutAgent` (with `configs/trend_breakout_v1.yaml`,
-  done Iter 30) to the paper roster over ~20 liquid coins; verify it produces the same
-  signal as the backtest. Live stays human-gated. Then the G1 paper clock starts
-  (>=30d, edge>=+5bps, >=150 trades).
+  that passed G0 — forbidden by "evidence before capital." **Slice 1 — DONE (Iter 31):**
+  added `backtest/data.py::build_closes_1h` — a pure, transport-injected loader that
+  emits a real 1h close series (default 240 bars = backtest `closes_window`), reusing
+  the backtester's own `paginate_by_time`+`_closes_vols` so live == sim; unit-tested
+  offline. `_enrich_view` now populates `view.extra['closes']` from it (was 1m). This
+  also aligns the *other* closes consumers (twap_mr_regime, xfund_carry) with their
+  backtest contract. **Slice 2 (remaining):** add `TrendBreakoutAgent` (with
+  `configs/trend_breakout_v1.yaml`, done Iter 30) to the paper roster over ~20 liquid
+  coins; verify it produces the same signal as the backtest. Live stays human-gated.
+  Then the G1 paper clock starts (>=30d, edge>=+5bps, >=150 trades).
 
 - [x] **B1 — Quantify the taker tax on every agent.** Done (Iteration 20, network
   reachable on this host). 90d 1h, BTC/ETH/SOL/HYPE: twap_mr_v1 taker −10.0bps →

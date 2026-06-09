@@ -278,9 +278,24 @@ def _enrich_view(view, api_url: str, vol: dict[str, float]) -> None:
                 var = sum((p - mean) ** 2 for p in pxs) / len(pxs)
                 sigma = var ** 0.5
                 candles_1h[coin] = {"vwap": vwap, "sigma": sigma, "n": len(pxs)}
-                closes_by_coin[coin] = pxs
             except Exception:  # noqa: BLE001
                 continue
+
+        # Trailing 1-HOUR close series (the trend_breakout signal consumes
+        # `closes` as 1h bars; the 60×1m feed above only drives the VWAP/sigma).
+        # Built via the backtester's own loader so live == sim (B1d-trend-deploy).
+        from ..backtest.data import build_closes_1h
+
+        def _post(payload: dict, _cli: _httpx.Client = cli) -> object:
+            try:
+                return _cli.post(api_url + "/info", json=payload).json()
+            except Exception:  # noqa: BLE001
+                return []
+
+        try:
+            closes_by_coin = build_closes_1h(_post, top_coins, closes_window=240)
+        except Exception:  # noqa: BLE001
+            closes_by_coin = {}
 
         # Spot mids for BTC/ETH/SOL. HL spot pairs use wrapped tokens
         # (UBTC/USDC=@142, UETH/USDC=@151, USOL/USDC=@156) and the midPx is
