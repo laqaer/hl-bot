@@ -38,6 +38,31 @@ Keep it ruthlessly prioritized: the top item should always be the highest-levera
   same mirror on alts. A regime inversion mid-window, which walk-forward correctly
   rejects. Maker full-sample ≈ flat (+0.8/−0.7bps); taker-2x firmly negative. Numbers
   in PROGRESS.md Iteration 18.
+- [~] **B-mom-regime — Regime-gate cross-sectional momentum (FIRST G0-CLASS LEAD).**
+  DONE-slice (Iteration 19). Added a causal, default-off `regime_gate` to
+  `xsect_momentum_v1`: only run the dollar-neutral book when the equal-weighted
+  universe trailing return over `regime_lookback` bars ≥ `regime_min_return` (a-priori
+  momentum-crash avoidance — momentum reverses after market bottoms). On **high-funding
+  alts** this **flips momentum from un-tradeable to a G0 PASS** in base config
+  (regime_lookback=12, thr=0): in-sample +4.4bps/sh+1.63, **oos +16.0bps/sh+3.38**,
+  full-sample maker **+8.4bps** over 1742 trades, taker-2x ≈ break-even (+0.9). The
+  ungated agent sign-flipped (in −2.6 / oos +10.0) and failed — the gate is what makes
+  it tradeable forward. Robustness: **PASS at every walk-forward split** (oos_frac
+  0.2–0.5, both windows +, oos sharpe +2→+4.3) and **leave-one-coin-out** keeps maker
+  edge +5.6→+10.4bps in all 10 folds (no single-coin dependence). Caveats keeping this
+  a *candidate not a deploy*: (a) **alts-only** — majors momentum in-sample stays
+  negative at every setting; (b) **maker-only** — taker-2x hovers ±2bps; (c) **marginal
+  at the gate** — in-sample ~+3bps, so the binary PASS toggles under leave-one-out;
+  (d) **regime_lookback-sensitive** — only ~12–18 pass, 24+ fail in-sample. Numbers in
+  PROGRESS.md Iteration 19.
+- [ ] **B-mom-regime-validate — Harden the alts-momentum lead (the path to a trustworthy G0).**
+  Before any paper→live consideration, the Iteration-19 lead needs out-of-sample
+  validation it hasn't had: (1) **out-of-time** — refetch a *different* 120d window
+  (network is up) and re-confirm; a real edge survives a fresh window. (2) **held-out
+  basket** — pick a disjoint high-funding alt set and confirm the regime-gated agent
+  there (not the basket it was found on). (3) map the parameter **plateau** (is there a
+  stable region of lookback_bars × regime_lookback × thr, or just one cell?). Only on
+  passing all three is this an edge; until then it's a promising candidate. No live change.
 - [ ] **B-femr-regime — femr is dormant on majors; retire or repurpose.** femr's
   130%-APR entry never trips on liquid coins (B1). B1-alt now shows funding *carry*
   has no edge even where funding is high, so widening femr (also funding-driven) to

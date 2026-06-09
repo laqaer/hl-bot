@@ -71,6 +71,39 @@ def test_short_series_holds():
     assert all(d.action == "hold" for d in agent.decide(_view(closes)))
 
 
+def test_regime_gate_stands_aside_in_a_market_drawdown():
+    # Whole universe is falling: aggregate market trailing return < 0, so the
+    # regime gate disables the book even though there are dispersed momentum legs.
+    closes = {
+        "WIN": _ramp(100.0, -0.05),   # falling, but least-bad -> would be the long
+        "LOSE": _ramp(100.0, -0.20),  # falling hardest -> would be the short
+    }
+    gated = XSectMomentumAgent(
+        config={"lookback_bars": 24, "top_k": 1, "regime_gate": True, "regime_lookback": 24},
+        conn=init_db(":memory:"),
+    )
+    assert all(d.action == "hold" for d in gated.decide(_view(closes)))
+    # ungated: the same book trades (sanity that the gate is what suppresses it).
+    ungated = XSectMomentumAgent(
+        config={"lookback_bars": 24, "top_k": 1}, conn=init_db(":memory:"),
+    )
+    assert any(d.action == "place" for d in ungated.decide(_view(closes)))
+
+
+def test_regime_gate_allows_book_when_market_trends_up():
+    # Market is broadly up (mean +8%) -> regime on -> dispersion is traded normally,
+    # incl. a short on the one weak name.
+    closes = {"WIN": _ramp(100.0, 0.20), "LOSE": _ramp(100.0, -0.04)}
+    agent = XSectMomentumAgent(
+        config={"lookback_bars": 24, "top_k": 1, "enter_return": 0.01,
+                "regime_gate": True, "regime_lookback": 24},
+        conn=init_db(":memory:"),
+    )
+    decs = {d.coin: d for d in agent.decide(_view(closes)) if d.action == "place"}
+    assert decs["WIN"].side == "B"
+    assert decs["LOSE"].side == "A"
+
+
 def test_two_sided_and_neutral_over_a_continuing_trend():
     # WIN keeps rising, LOSE keeps falling: a maker book long WIN / short LOSE
     # collects the continuation. MID drifts inside the band and is never traded.

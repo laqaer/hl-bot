@@ -836,3 +836,86 @@ aggregate-trend condition. (2) **B-femr-regime**: retire femr from the live rost
 agent. (3) A genuinely different *structure* (e.g. event/liquidation microstructure)
 rather than another cross-sectional rank. The honest score so far: the chassis is
 strong, but no G0 PASS yet — keep pruning until one signal clears walk-forward.
+
+
+---
+
+## Iteration 19 — 2026-06-08 — B-mom-regime: a regime gate turns alts cross-sectional momentum into the FIRST G0-class lead
+
+**Context.** Iterations 16-18 pruned three theses after costs (TWAP-MR, funding carry,
+and plain cross-sectional momentum). Iteration 18's key finding was *specific*:
+momentum is real but **sign-unstable** — it lost in-sample (older 70%) and won OOS
+(recent 30%), a regime inversion walk-forward correctly rejects. PROGRESS's own
+top "what's next" was the matching hypothesis: if momentum's sign is regime-dependent,
+a **timing filter** (trade only in a favorable market regime, flat otherwise) might
+stabilize it. This iteration built that filter and ran the honest G0.
+
+**Code change (the committed increment, with tests).**
+- **`agents/xsect_momentum.py` — causal, default-off `regime_gate`.** Three new config
+  knobs (`regime_gate`, `regime_lookback=48`, `regime_min_return=0.0`). When on, the
+  agent computes the **equal-weighted mean trailing return of the eligible universe**
+  over `regime_lookback` bars (a causal broad-market-trend proxy, from the same
+  per-frame `closes`, no look-ahead). If that aggregate is below `regime_min_return`
+  (a market drawdown), it **flattens the book and stands aside**; otherwise it trades
+  normally. The rationale is a-priori, not fit-to-window: the documented "momentum
+  crash" — momentum reverses hardest *after* market bottoms, when the losers you are
+  short rebound most — so disabling the book in a bear regime is standard crash
+  avoidance. Default-off preserves all prior behavior/tests.
+- **`tests/test_xsect_momentum.py` (+2):** the gate stands aside in a market-wide
+  drawdown (while the ungated book trades the same dispersion), and re-enables the
+  book when the market trends up.
+
+**Experiment — confirm on real history (measurement; caches gitignored).** Reused the
+two 120d/1h caches (majors: BTC/ETH/SOL/HYPE/AVAX/LINK; high-funding alts:
+INJ/PURR/TRUMP/AERO/NIL/APT/SPX/PYTH/EIGEN/S). `confirm_strategy(prefer="maker")`,
+walk-forward + cost ladder, momentum & reversion, gated vs ungated, across
+regime_lookback and threshold sweeps.
+
+**Evidence — the gate turns alts momentum tradeable (FIRST G0 PASS).** Base config
+(momentum, regime_lookback=12, thr=0) on the alts universe:
+| variant | in-sample | oos | maker full | taker-2x | verdict |
+|---|---|---|---|---|---|
+| momentum **ungated** | −2.6 / −1.09 | +10.0 / +2.25 | +1.6 (2536tr) | −5.9 | sign-flip, FAIL |
+| momentum **regime_gate lb=12** | **+4.4 / +1.63** | **+16.0 / +3.38** | **+8.4 (1742tr)** | +0.9 | **PASS** |
+The gate removes the in-sample/OOS sign-flip: **both windows are now positive**, OOS
+sharpe +3.38, full-sample maker +8.4bps, and even taker-2x is break-even (+0.9). The
+gate does real work — it cuts trades 2536→1742 by standing aside in bad regimes and
+**raises per-trade maker edge +1.6→+8.4bps**.
+
+**Robustness battery (this is why it's a lead, not noise).**
+- **Walk-forward split:** PASS at oos_fraction 0.2/0.3/0.4/0.5 — in +5.5/+4.4/+6.9/+9.5,
+  oos +19.2/+16.0/+10.2/+7.7, both windows positive throughout, oos sharpe +2.0→+4.3.
+  Not a split artifact.
+- **Leave-one-coin-out:** dropping *any* of the 10 alts keeps full-sample maker edge
+  **+5.6→+10.4bps** and OOS **+7.8→+20.5bps** in all 10 folds. **No single coin carries
+  it** — the edge is basket-wide.
+
+**Honest caveats (keeps this a candidate, not a deploy).**
+1. **Alts-only.** Majors momentum in-sample stays negative at every lookback/threshold
+   (the regime gate cannot rescue it) — the alts simply have more cross-sectional
+   dispersion/momentum to harvest.
+2. **Maker-only.** taker-2x hovers ±2bps; the edge lives entirely in maker execution
+   (consistent with the whole-project thesis, REVIEW C1). Live maker fill quality matters.
+3. **Marginal at the gate.** In-sample edge sits right at the +3bps bar, so the *binary*
+   PASS toggles under leave-one-out even though direction/magnitude are stable.
+4. **regime_lookback-sensitive.** Only ~12-18-bar regime windows pass; 24+ fail
+   in-sample (though all keep OOS strongly positive and maker full-sample positive).
+
+**Conclusion (the first credible engine candidate).** After three pruned theses, the
+**regime-gated cross-sectional momentum on high-funding alts is the first signal to
+clear G0 in its base config and survive both walk-forward-split and leave-one-coin-out
+robustness.** It is not yet a deployable edge — it is alts-only, maker-only, and
+marginal at the in-sample gate — but it is the first thing worth *hardening* rather than
+pruning. The honest next step is out-of-sample validation it has not had (a fresh time
+window + a held-out basket + a parameter-plateau map), filed as **B-mom-regime-validate**.
+No strategy/sizing/live-mode change; the committed code is the pure, default-off gate + tests.
+
+**Evidence (gate).** `uv run pytest -q` → **123 passed** (+2); `ruff check src tests
+scripts` → clean. Committed increment is the regime gate + 2 tests (pure, offline); all
+confirm numbers are measurement (caches gitignored).
+
+**What's next (loop).** Highest priority is now **B-mom-regime-validate** — turn this
+lead into a trustworthy (or pruned) G0 by re-confirming on a fresh 120d window and a
+disjoint alt basket, and mapping the parameter plateau. If it survives, it is the first
+strategy to take through G1→G3 via the existing 5x/1x risk machinery. If it does not
+survive a fresh window, it joins the pruned pile — either way the search advances.

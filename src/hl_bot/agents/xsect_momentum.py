@@ -40,6 +40,13 @@ class XSectMomentumConfig:
     max_total_notional: float = 100.0
     max_concurrent_positions: int = 6
     reversion: bool = False                     # True: long losers / short winners
+    # --- regime gate (default off): only run the book when the aggregate market
+    # isn't in a drawdown. Momentum "crashes" after market bottoms (losers, which
+    # we're short, rebound hardest), so disabling the book in a bear regime is the
+    # standard, a-priori crash-avoidance timing filter — not a per-window fit.
+    regime_gate: bool = False
+    regime_lookback: int = 48                   # bars for the aggregate-market trend
+    regime_min_return: float = 0.0              # market trailing return must be ≥ this to trade
 
 
 class XSectMomentumAgent(Agent):
@@ -61,6 +68,9 @@ class XSectMomentumAgent(Agent):
             max_total_notional=float(c.get("max_total_notional", 100.0)),
             max_concurrent_positions=int(c.get("max_concurrent_positions", 6)),
             reversion=bool(c.get("reversion", False)),
+            regime_gate=bool(c.get("regime_gate", False)),
+            regime_lookback=int(c.get("regime_lookback", 48)),
+            regime_min_return=float(c.get("regime_min_return", 0.0)),
         )
         self.conn = conn
 
@@ -84,17 +94,34 @@ class XSectMomentumAgent(Agent):
                 open_by_coin.pop(coin, None)
         return open_by_coin
 
-    def _momentum(self, closes: list[float]) -> float | None:
-        """Trailing return over ``lookback_bars`` (signed). None if too short."""
-        lb = self.cfg.lookback_bars
+    @staticmethod
+    def _trailing_return(closes: list[float], lb: int) -> float | None:
+        """Raw (unsigned-by-reversion) trailing return over ``lb`` bars."""
         if not closes or len(closes) < lb + 1:
             return None
         past = closes[-(lb + 1)]
-        last = closes[-1]
         if past <= 0:
             return None
-        ret = (last - past) / past
+        return (closes[-1] - past) / past
+
+    def _momentum(self, closes: list[float]) -> float | None:
+        """Trailing return over ``lookback_bars`` (signed). None if too short."""
+        ret = self._trailing_return(closes, self.cfg.lookback_bars)
+        if ret is None:
+            return None
         return -ret if self.cfg.reversion else ret
+
+    def _market_regime(self, closes: dict[str, list[float]], eligible: set[str]) -> float | None:
+        """Equal-weighted mean trailing return of the eligible universe over
+        ``regime_lookback`` bars — a causal proxy for the broad-market trend.
+        None if no eligible coin has enough history."""
+        rets = [
+            r for c in eligible
+            if (r := self._trailing_return(closes.get(c, []), self.cfg.regime_lookback)) is not None
+        ]
+        if not rets:
+            return None
+        return sum(rets) / len(rets)
 
     def decide(self, view: MarketView) -> list[Decision]:
         out: list[Decision] = []
@@ -112,9 +139,18 @@ class XSectMomentumAgent(Agent):
             if m is not None:
                 signal[coin] = m
 
-        ranked = sorted(signal.items(), key=lambda kv: kv[1])
-        longs = [c for c, m in reversed(ranked) if m >= self.cfg.enter_return][: self.cfg.top_k]
-        shorts = [c for c, m in ranked if m <= -self.cfg.enter_return][: self.cfg.top_k]
+        # ---- regime gate: in a market drawdown, flatten and stand aside ----
+        regime = self._market_regime(closes, set(signal.keys())) if self.cfg.regime_gate else None
+        regime_on = (not self.cfg.regime_gate) or (
+            regime is not None and regime >= self.cfg.regime_min_return
+        )
+
+        if regime_on:
+            ranked = sorted(signal.items(), key=lambda kv: kv[1])
+            longs = [c for c, m in reversed(ranked) if m >= self.cfg.enter_return][: self.cfg.top_k]
+            shorts = [c for c, m in ranked if m <= -self.cfg.enter_return][: self.cfg.top_k]
+        else:
+            longs, shorts = [], []
         desired: dict[str, str] = {c: "B" for c in longs}
         desired.update({c: "A" for c in shorts})
 
@@ -126,7 +162,9 @@ class XSectMomentumAgent(Agent):
                 continue
             want = desired.get(coin)
             reason = None
-            if m is not None and abs(m) < self.cfg.exit_return:
+            if not regime_on:
+                reason = f"REGIME OFF — market {self.cfg.regime_lookback}b return {(regime or 0)*100:+.2f}%"
+            elif m is not None and abs(m) < self.cfg.exit_return:
                 reason = f"MOMENTUM-DECAYED ({m*100:+.2f}%)"
             elif want is None:
                 reason = "DROPPED from momentum set (rank rotated / decayed)"
@@ -179,10 +217,16 @@ class XSectMomentumAgent(Agent):
             room_notional -= notional
 
         if not out:
+            reasoning = (
+                f"REGIME OFF — market {self.cfg.regime_lookback}b return "
+                f"{(regime or 0)*100:+.2f}% < {self.cfg.regime_min_return*100:+.2f}%; stand aside"
+                if not regime_on else
+                f"no momentum: {len(longs)} long / {len(shorts)} short legs "
+                f"beyond {self.cfg.enter_return*100:.2f}% over {self.cfg.lookback_bars}b"
+            )
             out.append(Decision(
-                agent=self.name, action="hold",
-                reasoning=(f"no momentum: {len(longs)} long / {len(shorts)} short legs "
-                           f"beyond {self.cfg.enter_return*100:.2f}% over {self.cfg.lookback_bars}b"),
-                market_snapshot={"n_longs": len(longs), "n_shorts": len(shorts)},
+                agent=self.name, action="hold", reasoning=reasoning,
+                market_snapshot={"n_longs": len(longs), "n_shorts": len(shorts),
+                                 "regime": regime, "regime_on": regime_on},
             ))
         return out
