@@ -34,6 +34,7 @@ class MarketState:
     day_ntl_vlm: dict[str, float] = field(default_factory=dict)
     book_top: dict[str, tuple[float, float]] = field(default_factory=dict)  # coin -> (bid, ask)
     trades: deque = field(default_factory=lambda: deque(maxlen=2000))
+    user_fills: deque = field(default_factory=lambda: deque(maxlen=2000))
     updated_ms: int = 0
 
     # -- message ingest (pure) -------------------------------------------
@@ -66,6 +67,14 @@ class MarketState:
                 _set_float(self.funding, coin, ctx.get("funding"))
                 _set_float(self.open_interest, coin, ctx.get("openInterest"))
                 _set_float(self.day_ntl_vlm, coin, ctx.get("dayNtlVlm"))
+        elif channel == "userFills" and isinstance(data, dict):
+            # {"isSnapshot": bool, "user": "0x..", "fills": [<raw HL fill>, ...]}.
+            # We keep the raw fill dicts verbatim so they upsert through the same
+            # path as REST userFills (``upsert_fill``); cloid → instant maker-fill
+            # attribution without waiting for the next REST ingest.
+            for f in data.get("fills") or []:
+                if isinstance(f, dict) and f.get("hash") is not None and f.get("tid") is not None:
+                    self.user_fills.append(f)
         elif channel == "trades" and isinstance(data, list):
             for t in data:
                 try:
@@ -89,6 +98,15 @@ class MarketState:
         cutoff = int(time.time() * 1000) - window_s * 1000
         return [t for t in self.trades if t.get("liquidation") and t["ts_ms"] >= cutoff]
 
+    def recent_user_fills(self, window_s: int = 1800) -> list[dict]:
+        """Our own fills in the last ``window_s`` (for instant maker-fill detect).
+
+        Raw HL fill dicts, newest-eligible kept; ``window_s`` defaults to the
+        maker max-rest horizon so a quote that fills late is still caught.
+        """
+        cutoff = int(time.time() * 1000) - window_s * 1000
+        return [f for f in self.user_fills if int(f.get("time", 0) or 0) >= cutoff]
+
     def to_snapshot(self) -> dict[str, Any]:
         return {
             "updated_ms": self.updated_ms,
@@ -98,6 +116,7 @@ class MarketState:
             "day_ntl_vlm": self.day_ntl_vlm,
             "book_top": {k: list(v) for k, v in self.book_top.items()},
             "recent_liquidations": self.recent_liquidations(),
+            "user_fills": self.recent_user_fills(),
         }
 
     def to_market_view(self) -> MarketView:
@@ -165,6 +184,7 @@ def load_fresh_snapshot(path: str | Path, *, max_age_s: float = 30.0) -> MarketV
         extra={
             "day_ntl_vlm": {k: float(v) for k, v in snap.get("day_ntl_vlm", {}).items()},
             "liquidations": snap.get("recent_liquidations", []),
+            "user_fills": snap.get("user_fills", []),
         },
     )
 
@@ -181,17 +201,24 @@ def run_ws(
     base_url: str = "https://api.hyperliquid.xyz",
     write_interval_s: float = 1.0,
     duration_s: float | None = None,
+    user_address: str | None = None,
 ) -> None:  # pragma: no cover - requires a live socket
     """Subscribe to HL WS for ``coins`` and persist a snapshot every interval.
 
     Uses the hyperliquid SDK's Info subscriptions. Runs until ``duration_s``
-    (None = forever). Intended to be supervised by ``hlbot-ws`` / systemd.
+    (None = forever). Intended to be supervised by ``hlbot-ws`` / systemd. When
+    ``user_address`` is set, also subscribes to our own ``userFills`` so the tick
+    can detect maker fills instantly instead of waiting for the next REST ingest.
     """
     from hyperliquid.info import Info
 
     state = MarketState()
     info = Info(base_url, skip_ws=False)
     info.subscribe({"type": "allMids"}, lambda m: state.apply_message(m))
+    if user_address:
+        info.subscribe(
+            {"type": "userFills", "user": user_address}, lambda m: state.apply_message(m)
+        )
     for coin in coins:
         info.subscribe({"type": "l2Book", "coin": coin}, lambda m: state.apply_message(m))
         info.subscribe({"type": "trades", "coin": coin}, lambda m: state.apply_message(m))

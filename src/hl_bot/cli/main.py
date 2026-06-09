@@ -561,8 +561,14 @@ def femr_tick(live: bool = False, execution: str = "taker"):
             working_orders,
         )
         from ..exec.orders import cancel_order
-        from ..ingest.hyperliquid import ingest_fills
+        from ..ingest.hyperliquid import ingest_fills, ingest_ws_user_fills
         ingest_fills(conn, s.hl_address, s.hl_api_url)  # so cloid fills are visible
+        # Also fold in any fills the WS snapshot already captured this tick — a
+        # maker quote that filled seconds ago is then reconciled NOW, not next
+        # REST poll (deduped by (hash,tid)). No-op when the WS feed isn't running.
+        n_ws = ingest_ws_user_fills(conn, view.extra.get("user_fills", []))
+        if n_ws:
+            console.print(f"[dim]ws userFills: +{n_ws} new[/dim]")
         for a in agents:
             working = working_orders(conn, a.name)
             got = reconcile_maker_fills(conn, a.name, working)

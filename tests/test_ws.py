@@ -46,6 +46,38 @@ def test_trades_and_liquidation_filter():
     assert liqs[0]["notional_usd"] == 64000 * 0.5
 
 
+def test_user_fills_captured_and_windowed():
+    st = MarketState()
+    now = int(time.time() * 1000)
+    st.apply_message({"channel": "userFills", "data": {"isSnapshot": True, "fills": [
+        {"hash": "0xh1", "tid": 1, "time": now, "coin": "BTC", "side": "B",
+         "px": "64000", "sz": "0.01", "cloid": "0xabc1"},
+        {"hash": "0xh2", "tid": 2, "time": now - 3600 * 1000, "coin": "ETH", "side": "A",
+         "px": "3000", "sz": "1", "cloid": "0xabc2"},  # stale, outside default window
+        {"side": "B"},  # malformed (no hash/tid) -> dropped
+    ]}})
+    recent = st.recent_user_fills(window_s=1800)
+    assert [f["coin"] for f in recent] == ["BTC"]
+    # all valid fills retained on the deque regardless of window
+    assert len(st.user_fills) == 2
+
+
+def test_user_fills_snapshot_roundtrip(tmp_path):
+    st = MarketState()
+    now = int(time.time() * 1000)
+    st.apply_message({"channel": "userFills", "data": {"fills": [
+        {"hash": "0xh1", "tid": 7, "time": now, "coin": "BTC", "side": "B",
+         "px": "64000", "sz": "0.01", "cloid": "0xabc1"},
+    ]}})
+    p = tmp_path / "snap.json"
+    write_snapshot(st, p)
+    fresh = load_fresh_snapshot(p, max_age_s=60)
+    assert fresh is not None
+    fills = fresh.extra["user_fills"]
+    assert len(fills) == 1
+    assert fills[0]["hash"] == "0xh1" and fills[0]["cloid"] == "0xabc1"
+
+
 def test_to_market_view_and_unknown_channel_ignored():
     st = MarketState()
     st.apply_message({"channel": "allMids", "data": {"mids": {"SOL": "150"}}})

@@ -47,46 +47,64 @@ def _post(client: httpx.Client, base_url: str, payload: dict[str, Any]) -> Any:
     return r.json()
 
 
+def upsert_fill(conn: sqlite3.Connection, f: dict[str, Any]) -> int:
+    """Upsert one raw Hyperliquid userFills dict; return rows inserted (0/1).
+
+    The shape is identical whether the fill arrived over REST (``ingest_fills``)
+    or the WS ``userFills`` channel, so both paths share this attribution +
+    INSERT-OR-IGNORE so a fill seen twice (WS then REST) is deduped by (hash,tid).
+    """
+    cloid = f.get("cloid")
+    agent = agent_from_cloid(cloid, known_agents=KNOWN_AGENTS) if cloid else "manual"
+    try:
+        cur = conn.execute(
+            """
+            INSERT OR IGNORE INTO fills(
+                hash, tid, time_ms, coin, side, px, sz,
+                start_position, dir, closed_pnl, fee, fee_token,
+                builder_fee, cloid, agent, raw_json
+            ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+            """,
+            (
+                f["hash"],
+                int(f["tid"]),
+                int(f["time"]),
+                f["coin"],
+                f["side"],
+                float(f["px"]),
+                float(f["sz"]),
+                float(f.get("startPosition", 0) or 0),
+                f.get("dir"),
+                float(f.get("closedPnl", 0) or 0),
+                float(f.get("fee", 0) or 0),
+                f.get("feeToken"),
+                float(f.get("builderFee", 0) or 0),
+                cloid,
+                agent,
+                json.dumps(f, separators=(",", ":")),
+            ),
+        )
+        return cur.rowcount
+    except sqlite3.IntegrityError as e:
+        log.warning("fill insert failed hash=%s tid=%s: %s", f.get("hash"), f.get("tid"), e)
+        return 0
+
+
+def ingest_ws_user_fills(conn: sqlite3.Connection, fills: list[dict[str, Any]]) -> int:
+    """Upsert raw userFills captured over the WS snapshot. Returns rows inserted.
+
+    Same dedup contract as ``ingest_fills`` (INSERT OR IGNORE on (hash,tid)), so a
+    fill the WS already wrote is a no-op when REST later returns it. Lets the maker
+    reconcile path see a fill in the same tick instead of next REST poll (C7).
+    """
+    return sum(upsert_fill(conn, f) for f in (fills or []) if isinstance(f, dict))
+
+
 def ingest_fills(conn: sqlite3.Connection, address: str, base_url: str) -> int:
     """Pull recent userFills and upsert. Returns rows inserted."""
     with httpx.Client() as client:
         fills = _post(client, base_url, {"type": "userFills", "user": address}) or []
-    n = 0
-    cur = conn.cursor()
-    for f in fills:
-        cloid = f.get("cloid")
-        agent = agent_from_cloid(cloid, known_agents=KNOWN_AGENTS) if cloid else "manual"
-        try:
-            cur.execute(
-                """
-                INSERT OR IGNORE INTO fills(
-                    hash, tid, time_ms, coin, side, px, sz,
-                    start_position, dir, closed_pnl, fee, fee_token,
-                    builder_fee, cloid, agent, raw_json
-                ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
-                """,
-                (
-                    f["hash"],
-                    int(f["tid"]),
-                    int(f["time"]),
-                    f["coin"],
-                    f["side"],
-                    float(f["px"]),
-                    float(f["sz"]),
-                    float(f.get("startPosition", 0) or 0),
-                    f.get("dir"),
-                    float(f.get("closedPnl", 0) or 0),
-                    float(f.get("fee", 0) or 0),
-                    f.get("feeToken"),
-                    float(f.get("builderFee", 0) or 0),
-                    cloid,
-                    agent,
-                    json.dumps(f, separators=(",", ":")),
-                ),
-            )
-            n += cur.rowcount
-        except sqlite3.IntegrityError as e:
-            log.warning("fill insert failed hash=%s tid=%s: %s", f.get("hash"), f.get("tid"), e)
+    n = sum(upsert_fill(conn, f) for f in fills)
     log.info("ingested %d new fills (of %d returned)", n, len(fills))
     return n
 

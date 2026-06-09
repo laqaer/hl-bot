@@ -67,7 +67,14 @@ Keep it ruthlessly prioritized: the top item should always be the highest-levera
 - [x] **B10 — WebSocket market view.** Done: `ingest/ws.py` MarketState +
   `hlbot ws` service writes a snapshot; live tick overlays it (HLBOT_WS_SNAPSHOT)
   for sub-second mids, L2 book_top, and a real liquidations feed (fixes C6), with
-  REST fallback. Next: userFills WS for instant maker-fill detection. (Iteration 5.)
+  REST fallback. (Iteration 5.)
+- [x] **B10b — userFills WS for instant maker-fill detection.** Done: WS
+  `userFills` channel captured into `MarketState.user_fills` + persisted in the
+  snapshot; `ingest_ws_user_fills` upserts them via a shared `upsert_fill`
+  (deduped by (hash,tid) against REST), and `femr_tick --execution maker` folds
+  them in before `reconcile_maker_fills` so a quote that filled seconds ago is
+  reconciled THIS tick, not next REST poll (fixes the C7 cadence gap for makers).
+  `run_ws(user_address=)` subscribes. Unit-tested offline. (Iteration 19.)
 - [x] **B-book — Book-aware maker pricing.** Done: `maker_limit_price` joins the
   near touch (best bid/ask) from the WS L2 book; live maker entries price off
   `view.book_top` (fallback mid, never cross). Tested. (Iteration 8.)

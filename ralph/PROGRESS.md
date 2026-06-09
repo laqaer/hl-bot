@@ -740,3 +740,52 @@ clearinghouse fetch → risk-cap → view enrich — into a reusable harness so
 `run_tick` == live path end-to-end), userFills WS for instant maker-fill
 detection, B4-RUN (confirm carry on real history — network-gated), B16 (HL vault
 eval for AUM).
+
+---
+
+## Iteration 19 — 2026-06-08 — userFills WS for instant maker-fill detection (C1/C7)
+
+**Context.** Stepped off the B12 refactor treadmill (iters 13–18 were all P2
+structure slices) back onto the P0 leverage axis: **kill the taker tax via maker
+execution**. The maker lifecycle (B2b) was built but its fill detection only read
+the `fills` table, which is populated by REST `ingest_fills`. On a 5-min cron that
+means a post-only quote can fill and sit *unreconciled for a full tick* — the
+position isn't marked owned and stops/TPs aren't keyed to the real fill — exactly
+the C7 "signal horizon ≫ action cadence" failure, but for our own fills. The fix
+is the long-deferred "userFills WS" task: capture our fills continuously over the
+socket so the tick reconciles them immediately. B1/B4-RUN stay network-blocked
+(no HL history reachable; no cache present), so this was the highest-leverage
+*unblocked* item.
+
+**Changed (1 commit).**
+- **`ingest/hyperliquid.py`** — extracted `upsert_fill(conn, f) -> int` (single
+  raw-fill attribution + INSERT-OR-IGNORE) from `ingest_fills`, which now just
+  sums it. New `ingest_ws_user_fills(conn, fills)` upserts WS-captured fills
+  through the same path, so a fill seen over WS then REST dedups by (hash,tid).
+- **`ingest/ws.py`** — `MarketState` gained a `user_fills` deque; `apply_message`
+  handles the `userFills` channel (`data.fills`, raw dicts kept verbatim, drops
+  entries missing hash/tid); `recent_user_fills(window_s=1800)` + inclusion in
+  `to_snapshot()`; `load_fresh_snapshot` threads them into `extra["user_fills"]`;
+  `run_ws(user_address=)` subscribes to `{"type":"userFills","user":...}`.
+- **`agents/runtime.py`** — `overlay_ws_snapshot` now carries `user_fills` from the
+  snapshot onto the live view (additive, same as the liquidations feed).
+- **`cli/main.py` `femr_tick`** — in the maker prep, after REST `ingest_fills`,
+  `ingest_ws_user_fills(conn, view.extra["user_fills"])` runs before
+  `reconcile_maker_fills`, so WS fills are reconciled in the same tick.
+
+**Evidence.** 133 → **136 tests pass** (3 new: WS userFills captured + windowed +
+malformed dropped; snapshot round-trip preserves cloid; end-to-end — a WS fill
+upserted via `ingest_ws_user_fills` flips a resting maker order to owned via
+`reconcile_maker_fills` with the REAL fill px, and a re-seen fill dedups to 0);
+`ruff check src tests scripts` clean; `from hl_bot.cli.main import app, femr_tick`
+imports OK.
+
+**Why it matters.** Maker execution is the #1 structural fix for the bleed (REVIEW
+C1), but it's only viable if fills are detected promptly — otherwise a filled quote
+is an unmanaged position until the next cron. This closes that loop on the free WS
+feed, deduped against REST so nothing double-counts. Plumbing/safety toward a
+positive *live* maker edge; not itself an edge claim (still gated, still paper).
+
+**What's next (loop).** Finish B12 (fold the remaining femr_tick preamble into a
+reusable harness so `run_tick` == live path end-to-end), B4-RUN (confirm carry on
+real history — network-gated), B16 (HL vault eval for AUM).

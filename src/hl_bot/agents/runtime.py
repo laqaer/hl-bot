@@ -99,6 +99,9 @@ def overlay_ws_snapshot(view: MarketView, snap: MarketView | None) -> WsOverlay:
     liqs = snap.extra.get("liquidations") or []
     view.extra["liquidations"] = liqs
     view.extra["liquidations_feed"] = True
+    # Carry our own WS-captured fills through so the maker reconcile path can
+    # detect a just-filled quote this tick (deduped against REST by (hash,tid)).
+    view.extra["user_fills"] = snap.extra.get("user_fills") or []
     return WsOverlay(applied=True, n_mids=len(snap.mids), n_liqs=len(liqs))
 
 
