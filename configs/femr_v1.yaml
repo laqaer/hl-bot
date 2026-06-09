@@ -18,6 +18,11 @@ guardrails:
      action: pause,  reason: "24h realized loss > $10"}
   - {metric: edge_bps, window: 7d,  op: ">=", threshold: -15,
      action: alert, reason: "7d realized edge < -15 bps after costs"}
+  # Dollar peak-to-trough give-back over 7d (max_drawdown_usd is ≤ 0, no capital
+  # base needed, so it's computable per agent). FEMR runs at $20/trade, so a $25
+  # week-long give-back is a real demote signal.
+  - {metric: max_drawdown_usd, window: 7d, op: ">=", threshold: -25,
+     action: demote, reason: "7d give-back exceeds $25"}
   - {metric: edge_bps, window: 24h, op: ">=", threshold: -50,
      action: alert,  reason: "24h edge < -50 bps"}
 

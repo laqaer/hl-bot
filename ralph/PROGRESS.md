@@ -567,3 +567,48 @@ checked: **B-book** (book-aware maker pricing, done Iteration 8) and **B13**
 live-candidate configs now that the metric is computable (tightening-only); a
 dollar-calmar (net / |dollar DD|) if a ratio gate is wanted; B4-RUN / B1 (confirm
 carry on real history — still network-blocked at api.hyperliquid.xyz).
+
+---
+
+## Iteration 15 — 2026-06-08 — wire the dollar-drawdown demote guardrail (B7-dd-gate / C5)
+
+**Context.** P0 is done or network-blocked (api.hyperliquid.xyz 403 in sandbox).
+The top unblocked item was the explicit Iteration-14 "what's next": now that
+`Scorecard.max_drawdown_usd` is computable for every real agent (dollar
+peak-to-trough give-back, needs no capital base), put it to work as a
+**tightening-only** per-agent risk gate. Iteration 14 added the metric; nothing
+gated on it yet.
+
+**Changed (1 commit).**
+- **All six real-agent configs** (`funding_arb_v1`, `twap_mr_v1`,
+  `twap_mr_regime_v1`, `xfund_carry_v1`, `funding_carry_v1`, `femr_v1`) — added a
+  `{metric: max_drawdown_usd, window: 7d, op: ">=", threshold: -X, action: demote}`
+  guardrail, X scaled to each agent's 24h pause limit ($400/$75/$75/$75/$50/$25
+  respectively). `max_drawdown_usd` is ≤ 0, so `>= -X` passes while the week's
+  give-back stays within $X and **demotes** (live→live_small→paper) when it
+  exceeds it. Demote is tightening-only, consistent with the hard rule.
+- **`tests/test_supervisor_configs.py`** (+1) —
+  `test_dollar_drawdown_demote_fires_on_giveback`: an agent peaks at +$129 then
+  bleeds to +$40 net. 7d net AND edge stay positive (edge_bps demote silent) and
+  the 24h window is flat (no pause), yet the $89 give-back trips the $75 demote.
+  Asserts the demote fired *from the give-back guardrail* (not edge) and the agent
+  dropped live_small→paper — proving the new gate's distinct value.
+
+**Why it matters.** edge_bps catches systematic bleed and net_pnl(24h) catches an
+acute daily loss, but neither catches an agent that runs up gains then bleeds them
+back while staying net-positive on the window — a classic "round-trip a paper
+profit into a real loss" failure. The dollar-DD gate is the missing risk control
+for exactly that, and it's the first live use of the metric added in Iteration 14.
+
+**Evidence.** `uv run pytest -q` → **114 passed** (+1). `ruff check src tests
+scripts` → clean. Governance/measurement only — no strategy, sizing, or live-mode
+change; the new gate only ever *reduces* exposure.
+
+**The C5-regression guard still holds.** `ACCOUNT_ONLY_METRICS = {max_drawdown,
+calmar}` is an exact-set intersection, so `max_drawdown_usd` (a distinct string,
+and genuinely per-agent computable) does not trip
+`test_no_config_gates_a_real_agent_on_account_only_metrics`.
+
+**What's next (loop).** A dollar-calmar (net / |dollar DD|) ratio gate if wanted;
+B4-RUN / B1 (confirm carry on real history — still network-blocked at
+api.hyperliquid.xyz); B14a deploy automation.

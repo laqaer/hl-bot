@@ -61,6 +61,11 @@ Keep it ruthlessly prioritized: the top item should always be the highest-levera
   for: a *fractional* DD needs a capital base, but a *dollar* DD does not, so it's
   computable for every real agent and gateable by the supervisor. track_record
   reuses it (single source of truth). (REVIEW C5.)
+  **B7-dd-gate done (Iteration 15):** wired a tightening-only
+  `max_drawdown_usd` 7d *demote* guardrail into all six real-agent configs
+  (thresholds scaled to each agent's 24h pause limit). Catches a run-up-then-bleed
+  give-back that the edge_bps/net_pnl gates miss; tested it fires while edge/net
+  stay positive.
 - [x] **B8 — Record actual fill price.** Done: `femr_tick` now logs the confirmed
   `res.avg_px`/`res.filled_sz` on fill so stops/TPs key off the real entry. (M1.)
 - [x] **B9 — fills→positions replay.** Done: `db/positions.py`

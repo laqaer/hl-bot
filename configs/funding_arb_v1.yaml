@@ -20,6 +20,11 @@ guardrails:
      action: pause,  reason: "24h loss limit -$200"}
   - {metric: edge_bps, window: 7d,  op: ">=", threshold: -10,
      action: demote, reason: "7d realized edge < -10 bps after costs"}
+  # Dollar peak-to-trough give-back over 7d (max_drawdown_usd is ≤ 0 and needs no
+  # capital base, so it IS computable for a real agent — unlike fractional
+  # max_drawdown). Catches a run-up-then-bleed even when net/edge stay positive.
+  - {metric: max_drawdown_usd, window: 7d, op: ">=", threshold: -400,
+     action: demote, reason: "7d give-back exceeds $400"}
   - {metric: edge_bps, window: 7d,  op: ">=", threshold: -5,
      action: alert,  reason: "edge_bps < -5 after costs"}
 

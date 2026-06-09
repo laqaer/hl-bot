@@ -101,6 +101,45 @@ def test_funding_arb_demote_fires_on_negative_edge(conn):
     assert state["mode"] == "paper"
 
 
+def test_dollar_drawdown_demote_fires_on_giveback(conn):
+    """The new max_drawdown_usd(7d) demote catches a run-up-then-bleed that the
+    edge_bps/net_pnl gates miss.
+
+    The agent peaks at +$129 then bleeds back to +$40 net: 7d net AND edge stay
+    positive (so the edge_bps demote stays silent) and the 24h window is flat (no
+    pause), yet the $89 peak-to-trough give-back exceeds the $75 demote threshold.
+    Only the dollar-drawdown guardrail can demote it — its whole reason to exist.
+    """
+    now = int(time.time() * 1000)
+    conn.execute(
+        "INSERT INTO agent_state(agent, mode, enabled) "
+        "VALUES('twap_mr_regime_v1', 'live_small', 1)"
+    )
+    six_days = now - 6 * 86_400_000
+    thirty_h = now - 30 * 3_600_000  # outside the 24h window, inside 7d
+    # Run-up: +$129 net (10 fills, +13 pnl - 0.1 fee each).
+    for i in range(10):
+        _insert_fill(conn, "twap_mr_regime_v1", "SOL", six_days - (i + 1) * 1000,
+                     pnl=13.0, fee=0.1)
+    # Bleed-back: -$88.8 net (8 fills, -11 pnl - 0.1 fee each) -> cum +$40.2.
+    for i in range(8):
+        _insert_fill(conn, "twap_mr_regime_v1", "SOL", thirty_h - (i + 1) * 1000,
+                     pnl=-11.0, fee=0.1)
+
+    goals = load_goals(CONFIG_DIR / "twap_mr_regime_v1.yaml")
+    actions = run_once(conn, goals)
+
+    acts = actions.get("twap_mr_regime_v1", [])
+    # The demote fired, and it came from the give-back guardrail (not edge_bps).
+    assert any("DEMOTE" in a and "give-back" in a for a in acts)
+    assert not any("edge" in a for a in acts)  # edge gate stayed within limits
+
+    state = conn.execute(
+        "SELECT mode FROM agent_state WHERE agent='twap_mr_regime_v1'"
+    ).fetchone()
+    assert state["mode"] == "paper"
+
+
 def test_twap_and_femr_configs_load():
     twap = load_goals(CONFIG_DIR / "twap_mr_v1.yaml")
     femr = load_goals(CONFIG_DIR / "femr_v1.yaml")
