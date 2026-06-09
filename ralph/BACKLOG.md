@@ -145,12 +145,28 @@ Keep it ruthlessly prioritized: the top item should always be the highest-levera
   high trailing ER means the trend is already *mature*, so the breakout entry is
   *late* and mean-reverts; the profitable breakouts fire at trend *birth* when the
   trailing window is still choppy. **Trailing-ER regime gating is pruned.** Lever
-  kept (default off, tested) so the dead end isn't re-explored. **Next hypothesis
-  to test: (b) lookback/stop params** (is the 24/12-bar Donchian too fast, eating
-  whipsaws in the older grind?) — but be wary of param-fitting the gate. The
-  honest read may be that this signal is real but regime-dependent and the right
-  framing is a slower (≥1d) trend horizon, not a 1h one.
-  **Remaining other B1d candidate: (i) spot-vs-perp basis at funding deciles.**
+  kept (default off, tested) so the dead end isn't re-explored. **Hypothesis (b) —
+  lookback/stop params (is 24/12 too fast for the older grind?) — TESTED & PRUNED
+  (Iter 29), but first uncovered+fixed a measurement bug.** *Prerequisite bug:* the
+  backtest data layer silently capped `Frame.closes` at `vwap_window` (60 bars), so
+  any `entry_lookback > ~60` produced **0 trades** (window never fills) — looked like
+  "no signal" but was "no data" (same silent-truncation class as the fundingHistory
+  500-row cap). Fixed: `closes_window` decoupled from `vwap_window` (default 4×=240,
+  overridable), tested, cache rebuilt. *Result:* with slow lookbacks now testable,
+  the full-sample edge actually IMPROVES and stays cost-robust — best is **72/36
+  (3d entry/1.5d exit): maker +22.2bps/+1.41sh, taker +16.7bps, robust to taker-3×
+  (+12.7bps)** vs 24/12 baseline +11.0/+5.5 (48/24 dips to +6.1; 96+ go negative).
+  BUT slower lookbacks make G0 time-stability **WORSE not better**: 72/36 confirm is
+  in-sample(older) maker **−15.4bps** (vs baseline +1.1) / OOS(recent) **+100.1bps** —
+  the choppy older half chops up a *slower* trend-follower even harder. The edge is
+  fundamentally regime-dependent (needs a trending macro regime); no 1h lookback over
+  this 90d window makes both halves positive. **Hypothesis (b) pruned.** The honest
+  read stands: this is a real, cost-robust trend edge that is regime-concentrated —
+  G0's "both halves ≥+3bps" effectively demands profit in chop, which a pure
+  trend-follower structurally can't deliver. **Remaining other B1d candidate: (i)
+  spot-vs-perp basis at funding deciles.** Possible reframe: a regime-aware
+  *allocation* (run trend only in trending macro regimes) measured against a
+  buy-and-hold/cash benchmark rather than the symmetric two-half G0.
 
 ## P1 — honest measurement (so the supervisor can trust itself)
 

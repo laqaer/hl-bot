@@ -1338,3 +1338,86 @@ Donchian lookbacks too *fast* (whipsawed by the older grind)? Test a slower hori
 the honest read may be that this is a real but *slow* trend edge mis-framed at 1h,
 not a chop-filter problem. One hypothesis/slice, re-confirm, do NOT param-fit the gate.
 Other remaining B1d candidate: (i) spot-vs-perp basis at funding deciles.
+
+---
+
+## Iteration 29 — 2026-06-08 — B1d-trend(b): slower Donchian lookbacks — fixed a silent closes-truncation bug, then pruned the hypothesis (slower = bigger edge but LESS time-stable).
+
+**Context.** Network up (majors cache present). `trend_breakout_v1` is the first
+cost-robust positive signal (Iter 27: maker +11.2bps, robust to taker-3×) but NOT
+G0-confirmed — its edge is regime-concentrated in the recent (OOS) trending window;
+the older in-sample half is flat. Iter 28 pruned a trailing-ER regime gate. B1d-trend
+hypothesis (b): are the 24/12-bar Donchian lookbacks too *fast* (whipsawed by the
+older grind)? Test slower horizons. Params are already `--config`-overridable, so the
+sweep needs no code edit — except it surfaced a measurement bug that made the test
+impossible.
+
+**Prerequisite bug found + fixed: `Frame.closes` was silently capped at `vwap_window`.**
+Sweeping `entry_lookback` ≥72 returned **0 trades** at first — not "no breakouts" but
+"no data": `build_frames` set the agent-facing trailing close series to
+`closes[-vwap_window:]` (60 bars), tying the trend lookback window to the *VWAP
+smoothing window*. Any lookback > 60 saw an under-length window and the agent's
+`len(window) < entry_lookback` guard skipped every bar. This is the **same
+silent-truncation class** as the fundingHistory 500-row cap (B4-RUN) and the
+candleSnapshot page cap (B1b) — a cap in the data layer masquerading as "no signal".
+
+**Changed (1 commit).**
+- **`backtest/data.py`** — new `closes_window: int | None` param on `build_frames`
+  / `load_frames` / `cached_or_fetch`, **decoupled** from `vwap_window` (which still
+  drives only the TWAP VWAP/sigma). Default = 4×`vwap_window` (240 bars) so
+  multi-day Donchian lookbacks are testable; explicitly overridable. Renamed the
+  local `closes_window` dict → `closes_window_map` to free the name. Widening the
+  series is backward-compatible: the only consumer (`trend_breakout`) slices the
+  last N; TWAP agents read precomputed `candles_1h` vwap/sigma, not `closes`.
+- **`tests/test_backtest.py`** (+1) — `test_closes_window_decoupled_from_vwap_window`:
+  default closes len == 240 while `candles_1h.n` stays 60, and an explicit
+  `closes_window=120` is honored. (154 → **155 tests pass**.)
+- **Cache rebuilt** (`backtest-fetch --refresh`, network) so the majors cache carries
+  the full 240-bar trailing series instead of the truncated 60.
+
+**Evidence (tests/lint).** 155 pass; `ruff check src tests scripts` clean. Caches
+gitignored. Baseline reproduced post-rebuild: maker +11.0bps / taker +5.5bps / 552tr
+(was +11.2/+5.7 — trivial drift from the refreshed cache window).
+
+**Lookback sweep (BTC/ETH/SOL/HYPE 90d 1h, full sample, now that >60 is testable):**
+| entry/exit | maker edge | taker edge | trades | sharpe(mkr) |
+|---|---|---|---|---|
+| 24/12 (baseline) | +11.0bps | +5.5bps | 552 | +1.84 |
+| 48/24 | +6.1bps | +0.6bps | 302 | +0.57 |
+| **72/36** | **+22.2bps** | **+16.7bps** | 214 | **+1.41** |
+| 96/48 | −18.1bps | −23.6bps | 172 | −0.90 |
+| 120/60 | −15.1bps | −20.6bps | 148 | −0.63 |
+| 168/84 | −21.3bps | −26.8bps | 112 | −0.80 |
+
+**72/36 (3-day entry / 1.5-day exit) is the full-sample optimum and the bug was
+hiding it** (pre-fix it reported 0 trades). It is *more* cost-robust than baseline —
+`confirm` cost ladder: maker +22.2 / taker-1× +16.7 / taker-2× +14.7 / **taker-3×
++12.7bps**, robust-to-2× True.
+
+**But G0 still FAILs, and slower lookback makes time-stability WORSE not better:**
+`confirm --prefer maker --config '{"entry_lookback":72,"exit_lookback":36}'`:
+- in-sample(older 63d) maker **−15.4bps** / −1.06sh / 150tr  (baseline 24/12 was +1.1)
+- oos(recent 27d)     maker **+100.1bps** / +5.32sh / 70tr
+
+So a *slower* trend-follower gets chopped up *harder* in the older range-bound grind
+(in-sample −15.4 vs baseline +1.1) while riding the recent clean trend even bigger
+(OOS +100 vs +35.6). The full-sample number looks great only because the huge OOS
+swamps the worse in-sample. The regime-concentration is amplified, not cured.
+
+**Why it matters (the finding).** Two results. (1) A real **measurement bug fixed** —
+the backtest can now test trend horizons beyond 60 bars; every prior "slow lookback =
+0 trades" reading was an artifact. (2) **Hypothesis (b) pruned with evidence**: lookback
+choice does not buy time-stability. The signal is genuinely **regime-dependent** — it
+needs a trending macro regime and structurally loses in chop. G0's symmetric "both
+halves ≥+3bps" rule effectively demands a pure trend-follower be profitable in a
+range-bound half, which it cannot be by construction. Neither a faster nor slower 1h
+Donchian, nor a trailing-ER gate (Iter 28), resolves that. **Nothing promoted;
+trend_breakout_v1 stays backtest-only/off-roster.** Levers/params kept overridable
+(defaults unchanged) so the search space isn't re-explored.
+
+**What's next (loop).** B1d-trend's param/gate levers are exhausted at 1h. Two honest
+paths left: (1) reframe the evaluation — a *regime-aware allocation* (deploy trend
+only when a trend regime is detected, hold cash otherwise) judged vs a buy-and-hold /
+cash benchmark, rather than the symmetric two-half G0 that penalises correct
+sit-out-in-chop behaviour; (2) the remaining untried B1d candidate **(i) spot-vs-perp
+basis at funding deciles** — carry without the alt price-variance. Pick one next slice.

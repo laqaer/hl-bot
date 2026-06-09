@@ -112,6 +112,25 @@ def test_build_frames_from_candles():
     assert last.candles_1h["TST"]["sigma"] > 0
 
 
+def test_closes_window_decoupled_from_vwap_window():
+    """The trailing close series must NOT be capped at vwap_window.
+
+    Tying them together silently truncated Frame.closes to 60 bars, so a trend
+    agent with a lookback > 60 saw an under-length window and never traded. The
+    default closes_window is 4×vwap_window, and it is independently overridable.
+    """
+    candles = [{"t": i * HOUR, "c": 100 + i, "v": 1000} for i in range(300)]
+    # default: closes window is wider than the 60-bar vwap window
+    last = build_frames({"TST": candles}, vwap_window=60, warmup=60)[-1]
+    assert len(last.closes["TST"]) == 240          # 4 × vwap_window, not 60
+    assert last.candles_1h["TST"]["n"] == 60       # vwap still uses its own window
+    # explicit override is honored
+    last2 = build_frames(
+        {"TST": candles}, vwap_window=60, closes_window=120, warmup=60
+    )[-1]
+    assert len(last2.closes["TST"]) == 120
+
+
 def test_paginate_by_time_walks_past_the_page_cap():
     """A 500-row page cap must not truncate a long window (the funding bug)."""
     from hl_bot.backtest.data import paginate_by_time

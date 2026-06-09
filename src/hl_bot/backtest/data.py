@@ -201,6 +201,7 @@ def build_frames(
     *,
     funding_by_coin: dict[str, list[dict[str, Any]]] | None = None,
     vwap_window: int = 60,
+    closes_window: int | None = None,
     warmup: int = 60,
     bar_hours: float = 1.0,
 ) -> list[Frame]:
@@ -215,7 +216,17 @@ def build_frames(
     *per-bar* rate, so we scale by ``bar_hours`` (= bar interval / 1h). 1h bars
     are unchanged; 5m bars get 1/12 of the hourly rate per bar; 4h bars get 4×.
     Without this, carry PnL is over/understated on any non-1h interval.
+
+    ``closes_window`` is the length of the trailing close series exposed to agents
+    in ``Frame.closes`` (``view.extra['closes']``). It is *decoupled* from
+    ``vwap_window`` (which only smooths the TWAP VWAP/sigma): tying the two
+    together silently capped the series at 60 bars, so any trend agent with a
+    lookback > vwap_window saw an under-length window and never traded (the same
+    silent-truncation class as the fundingHistory 500-row cap). Defaults to 4×
+    ``vwap_window`` so slower (multi-day) Donchian lookbacks are testable.
     """
+    if closes_window is None:
+        closes_window = vwap_window * 4
     funding_by_coin = funding_by_coin or {}
     # index each coin's candles by open time
     by_ts: dict[str, dict[int, dict[str, Any]]] = {}
@@ -232,7 +243,7 @@ def build_frames(
         mids: dict[str, float] = {}
         vol: dict[str, float] = {}
         candles_1h: dict[str, dict] = {}
-        closes_window: dict[str, list[float]] = {}
+        closes_window_map: dict[str, list[float]] = {}
         funding: dict[str, float] = {}
         for coin, idx in by_ts.items():
             k = idx.get(ts)
@@ -253,13 +264,13 @@ def build_frames(
             vwap, sigma = rolling_vwap_sigma(closes[:cut], vols[:cut], vwap_window)
             if vwap is not None and sigma is not None:
                 candles_1h[coin] = {"vwap": vwap, "sigma": sigma, "n": min(cut, vwap_window)}
-            closes_window[coin] = closes[max(0, cut - vwap_window):cut]
+            closes_window_map[coin] = closes[max(0, cut - closes_window):cut]
             vol[coin] = sum(vols[max(0, cut - 1440):cut]) * mid  # ~rolling notional proxy
             funding[coin] = funding_rate_at(funding_by_coin.get(coin, []), ts) * bar_hours
         if mids:
             frames.append(Frame(
                 ts_ms=ts, mids=mids, funding=funding, bar_hours=bar_hours,
-                day_ntl_vlm=vol, candles_1h=candles_1h, closes=closes_window,
+                day_ntl_vlm=vol, candles_1h=candles_1h, closes=closes_window_map,
             ))
     return frames
 
@@ -272,6 +283,7 @@ def load_frames(
     with_funding: bool = True,
     base_url: str = "https://api.hyperliquid.xyz",
     vwap_window: int = 60,
+    closes_window: int | None = None,
 ) -> list[Frame]:
     """Fetch real history and build frames. Requires network access."""
     end_ms = int(time.time() * 1000)
@@ -285,7 +297,8 @@ def load_frames(
     bar_hours = INTERVAL_MS.get(interval, 3_600_000) / 3_600_000
     return build_frames(
         candles_by_coin, funding_by_coin=funding_by_coin,
-        vwap_window=vwap_window, warmup=min(vwap_window, 30), bar_hours=bar_hours,
+        vwap_window=vwap_window, closes_window=closes_window,
+        warmup=min(vwap_window, 30), bar_hours=bar_hours,
     )
 
 
@@ -327,12 +340,14 @@ def cached_or_fetch(
     cache_path: str | Path | None = None,
     refresh: bool = False,
     vwap_window: int = 60,
+    closes_window: int | None = None,
 ) -> list[Frame]:
     """Return frames from cache if present, else fetch (network) and cache them."""
     p = Path(cache_path) if cache_path else default_cache_path(coins, interval, days)
     if p.exists() and not refresh:
         return load_cached_frames(p)
     frames = load_frames(coins, interval=interval, days=days,
-                         base_url=base_url, vwap_window=vwap_window)
+                         base_url=base_url, vwap_window=vwap_window,
+                         closes_window=closes_window)
     save_frames(p, frames)
     return frames
