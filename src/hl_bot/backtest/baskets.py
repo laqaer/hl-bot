@@ -34,14 +34,81 @@ BASKETS: dict[str, list[str]] = {
                      "OP", "ENA", "JUP", "LDO", "AAVE"],
 }
 
+# Named *pair* baskets for ``pairs_reversion_v1`` — the relative-value universe is a
+# list of (rich-leg, cheap-leg) pairs, not a flat coin list, so it needs its own
+# resolver. Each value is a canonical ``'A/B|C/D'`` string (``|`` separates pairs,
+# ``/`` separates the two legs) matching the agent's ``--params pairs=`` syntax.
+# Pinned to names so the held-out-pairs durability result (B-pairs slice 3) cites
+# one auditable universe instead of a hand-typed string a typo can silently change.
+PAIR_BASKETS: dict[str, str] = {
+    # The agent's shipped default pairs (cross-cap / L1 / DeFi): the Iter-29 lead.
+    "pairs_default": "ETH/BTC|SOL/AVAX|LINK/AAVE",
+    # Disjoint liquid held-out pairs (B-pairs slice 3): no leg overlaps pairs_default
+    # — two L2 govs (ARB/OP), two Move L1s (APT/SUI), two memes (DOGE/WIF). The
+    # leave-pairs-out analogue of the leave-one-coin-out test.
+    "pairs_heldout": "ARB/OP|APT/SUI|DOGE/WIF",
+}
+
+
+def resolve_pairs(spec: str) -> str:
+    """Expand a pairs spec into a canonical ``'A/B|C/D'`` string.
+
+    ``|``-separated tokens are each either a pair-basket name (expanded via
+    ``PAIR_BASKETS``) or a bare ``'A/B'`` pair (legs upper-cased, passed through).
+    Pairs are deduped by first occurrence (order-preserving), so a basket name and
+    extra bare pairs mix cleanly — the pairs analogue of ``resolve_basket``. Bare
+    specs like ``'ETH/BTC|SOL/AVAX'`` round-trip unchanged (backward compatible).
+    """
+    out: list[str] = []
+    seen: set[str] = set()
+    for raw in spec.split("|"):
+        token = raw.strip()
+        if not token:
+            continue
+        expanded = PAIR_BASKETS.get(token.lower())
+        sub = expanded.split("|") if expanded else [token]
+        for raw_pair in sub:
+            pair = raw_pair.strip()
+            if "/" not in pair:
+                continue
+            a, _, b = pair.partition("/")
+            a, b = a.strip().upper(), b.strip().upper()
+            if not a or not b or a == b:
+                continue
+            key = f"{a}/{b}"
+            if key not in seen:
+                seen.add(key)
+                out.append(key)
+    return "|".join(out)
+
+
+def coins_in_pairs(spec: str) -> list[str]:
+    """Flat, deduped, order-preserving coin list for every leg in a pairs spec.
+
+    Lets ``--coins pairs_heldout`` fetch exactly the legs the pair basket trades,
+    so the candle universe and the pairs universe can never drift apart.
+    """
+    out: list[str] = []
+    seen: set[str] = set()
+    for pair in resolve_pairs(spec).split("|"):
+        if not pair:
+            continue
+        for coin in pair.split("/"):
+            if coin and coin not in seen:
+                seen.add(coin)
+                out.append(coin)
+    return out
+
 
 def resolve_basket(spec: str) -> list[str]:
     """Expand a ``--coins`` spec into a concrete, deduped coin list.
 
-    Each comma-separated token is either a preset name (expanded via ``BASKETS``)
-    or a bare coin symbol (uppercased and kept as-is). Order is preserved by first
-    occurrence and duplicates are dropped, so ``majors,DOGE,BTC`` yields the four
-    majors then DOGE (BTC already present). Empty/whitespace tokens are ignored.
+    Each comma-separated token is either a preset name (expanded via ``BASKETS``),
+    a pair-basket name (expanded to its flat legs via ``PAIR_BASKETS`` so
+    ``--coins pairs_heldout`` fetches exactly the pairs' legs), or a bare coin
+    symbol (uppercased and kept as-is). Order is preserved by first occurrence and
+    duplicates are dropped, so ``majors,DOGE,BTC`` yields the four majors then DOGE
+    (BTC already present). Empty/whitespace tokens are ignored.
     """
     out: list[str] = []
     seen: set[str] = set()
@@ -49,7 +116,11 @@ def resolve_basket(spec: str) -> list[str]:
         token = raw.strip()
         if not token:
             continue
-        expanded = BASKETS.get(token.lower(), [token.upper()])
+        low = token.lower()
+        if low in PAIR_BASKETS:
+            expanded = coins_in_pairs(PAIR_BASKETS[low])
+        else:
+            expanded = BASKETS.get(low, [token.upper()])
         for coin in expanded:
             if coin not in seen:
                 seen.add(coin)

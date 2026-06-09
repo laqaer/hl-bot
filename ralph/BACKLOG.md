@@ -29,12 +29,28 @@ Keep it ruthlessly prioritized: the top item should always be the highest-levera
   ≥60 trade-starves) — good, not a single-point fit; but **entry_z is a KNIFE-EDGE** (only 2.0 durable,
   though the full maker edge is smooth/sign-stable and cleanly peaked at 2.0: 1.5→+2.5 … 2.0→+5.3 …
   2.5→+1.6). Net: the canonical-bar PASS needs lb∈[48,56] AND entry_z≈2.0 — a lead, but less robust than
-  one number suggested. Numbers in PROGRESS.md Iteration 30. Remaining slices (re-prioritized):
-  (3) **held-out pair set** — does the 2-window PASS survive disjoint liquid pairs (leave-pairs-out)? *now
-  the most important test given the narrow param region*; (4) longer per-window `--days` to test whether the
-  within-window OOS-tail weakness is a boundary artifact (the test that pruned B-horizon); (5) intraday
-  cadence (15m/5m) where short-horizon reversal is strongest — should widen the lb plateau / relieve the
-  trade-starvation ceiling (REVIEW C7).
+  one number suggested. Numbers in PROGRESS.md Iteration 30. **Slice 3 DONE (Iteration 31): held-out pair
+  set — THE LEAD DOES NOT GENERALIZE.** Pinned the held-out universe as a named pair-basket (`PAIR_BASKETS`
+  + `resolve_pairs`/`coins_in_pairs` in baskets.py, wired into confirm/backtest, +8 tests) so the result
+  cites an auditable universe. Ran the canonical 120d×2-window maker durability bar (lb=48, entry_z=2.0,
+  the Iter-29 config) on **disjoint liquid pairs** (`pairs_heldout` = ARB/OP, APT/SUI, DOGE/WIF — two L2
+  govs, two Move L1s, two memes; no leg overlaps the default ETH/BTC|SOL/AVAX|LINK/AAVE): **❌ NOT DURABLE
+  and it FLIPS SIGN** (trailing full −4.7bps / older +5.8 — the artifact signature the bar was built to
+  catch). Dropping the weak meme leg and running the two *strongly-cointegrated* held-out pairs alone
+  (ARB/OP|APT/SUI) is **worse**: trailing full −6.9bps (in −6.6 / oos −6.8, cleanly negative), older +0.4,
+  still sign-flips. (Default basket re-reproduced this run: +5.3 / +8.2 DURABLE — the wiring is sound, the
+  lead is real *on its basket*.) **Conclusion: the Iter-29 edge is basket-specific, not a property of
+  pairs-reversion as a class.** It does not survive leave-pairs-out — the demonstrated edge lives in the
+  three default pairs (most plausibly ETH/BTC's strong cointegration), and a disjoint liquid set produces
+  the same cross-window sign-flip that hand-pruned the six earlier theses. This is a major fragilization:
+  the only candidate to ever clear the bar clears it **only on the basket it was specified with**. Not yet
+  a full prune (the default basket genuinely passes the bar and the plateau), but the strategy-class
+  generalization claim is **dead**. Numbers in PROGRESS.md Iteration 31. Remaining slices (re-prioritized):
+  (4) **leave-one-pair-out within the default basket** — is the whole +5.3 just ETH/BTC? (run ETH/BTC,
+  SOL/AVAX, LINK/AAVE each alone + the 3 leave-one-out triples; if it collapses to one pair the lead is a
+  single-relationship bet, not a strategy) — *now the decisive test*; (5) longer per-window `--days`
+  (boundary-artifact check, pruned B-horizon); (6) intraday cadence (15m/5m). The held-out failure makes
+  (4) the gating question before any paper-deploy talk: a one-pair edge is not a deployable book.
 - [x] **B1 — Quantify the taker tax on every agent.** DONE (Iteration 16, network
   open). 120d/1h over BTC,ETH,SOL,HYPE,AVAX,LINK: taker tax ≈ **5.7 bps round-trip**,
   ~**73% of the TWAP bleed** (twap_mr −7.7→−2.0 bps taker→maker; regime −8.0→−2.3).

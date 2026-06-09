@@ -765,6 +765,9 @@ def backtest(
     except ValueError as e:
         console.print(f"[red]bad --params: {e}[/red]")
         raise typer.Exit(1) from e
+    if isinstance(cfg.get("pairs"), str):
+        from ..backtest.baskets import resolve_pairs
+        cfg["pairs"] = resolve_pairs(cfg["pairs"])
 
     factories = {
         "twap_mr_v1": lambda conn: TwapMrAgent(config=cfg, conn=conn),
@@ -945,6 +948,9 @@ def confirm(
     except ValueError as e:
         console.print(f"[red]bad --params: {e}[/red]")
         raise typer.Exit(1) from e
+    if isinstance(cfg.get("pairs"), str):
+        from ..backtest.baskets import resolve_pairs
+        cfg["pairs"] = resolve_pairs(cfg["pairs"])
 
     constructors = {
         "twap_mr_v1": TwapMrAgent,

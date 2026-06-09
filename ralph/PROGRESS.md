@@ -1737,3 +1737,74 @@ to test whether the 180d trailing-OOS-tail weakness is a boundary artifact; (5) 
 plateau and relieve the trade-starvation ceiling. If held-out pairs hold the bar on the lb plateau at
 entry_z≈2.0, the lead graduates toward a paper-deploy candidate behind the existing 5×/1× risk machinery
 (human-gated).
+
+---
+
+## Iteration 31 — 2026-06-08 — B-pairs slice 3: held-out pair set — THE LEAD DOES NOT GENERALIZE (basket-specific, sign-flips on disjoint liquid pairs)
+
+**Context.** Iterations 29–30 established `pairs_reversion_v1` as the first and only signal to clear the
+canonical 120d×2-window durability bar (DURABLE at lb=48 / entry_z=2.0, on a narrow but real lookback
+plateau). The standing "what's next", made *most important* by the narrow param region slice 2 surfaced,
+was slice (3): **does the 2-window PASS survive disjoint liquid pairs not in the default basket?** — the
+leave-pairs-out analogue of the leave-one-coin-out test that has pruned earlier leads. If the edge is a
+property of *pairs-reversion as a strategy class* it should survive a fresh, economically-sensible pair
+set; if it's specific to the three pairs it was specified with, a disjoint set will fail.
+
+**Code increment (committed, with tests).** The held-out pairs were otherwise a hand-typed
+`--params 'pairs=ARB/OP|...'` string — exactly the typo/provenance risk B-baskets (Iter 27) fixed for the
+coin universe, but pairs had no resolver. Added the pairs analogue in `backtest/baskets.py`:
+- `PAIR_BASKETS` — named pair universes pinned to canonical `'A/B|C/D'` strings: `pairs_default`
+  (ETH/BTC|SOL/AVAX|LINK/AAVE, the Iter-29 lead) and `pairs_heldout` (ARB/OP|APT/SUI|DOGE/WIF — two L2
+  govs, two Move L1s, two memes; **no leg overlaps** pairs_default).
+- `resolve_pairs(spec)` — expands basket names / passes bare `A/B` pairs through, upper-cases legs,
+  dedupes by first occurrence, skips malformed/self pairs (the pairs analogue of `resolve_basket`; bare
+  specs round-trip unchanged → backward compatible).
+- `coins_in_pairs(spec)` — flat, order-preserving leg list, and `resolve_basket` now expands a pair-basket
+  name to exactly those legs so `--coins pairs_heldout` can never drift from the pairs it trades.
+- Wired into `confirm`/`backtest`: a string `pairs` param is run through `resolve_pairs` before the agent
+  builds, so `--params 'pairs=pairs_heldout'` works. +8 unit tests (`tests/test_baskets.py`): basket
+  expansion, bare round-trip, mix+dedupe, malformed/self skip, held-out⊥default disjointness, flat-leg
+  order, `--coins` pair-basket expansion, canonical-value self-resolution.
+
+**Evidence — slice 3 run (real HL history, network; 1h, 120d, `--windows 2`, `--prefer maker`, lb=48,
+entry_z=2.0 — the exact Iter-29 config; full = trailing-window full-sample maker edge):**
+
+*Default basket (sanity re-reproduce, `pairs_default`):* **✅ DURABLE** — trailing full **+5.3bps**
+(in +6.0 / oos +3.3), older full +8.2 (in +7.1 / oos +10.7). Matches Iter-29 (+5.3 / +8.0); the new
+wiring is sound and the lead is real *on its basket*.
+
+*Held-out basket (`pairs_heldout` = ARB/OP|APT/SUI|DOGE/WIF):* **❌ NOT DURABLE — and it FLIPS SIGN.**
+trailing full **−4.7bps** (in −3.2 / oos −8.3), older full +5.8 (in +2.7 / oos +14.9). The harness fires
+its artifact verdict: *"full-sample edge FLIPS SIGN across windows (+5.8 … −4.7bps) — window-specific
+artifact, not a durable edge."* This is the **same** failure signature that hand-pruned all six earlier
+theses.
+
+*Strong-pairs-only control (drop the weak meme leg → ARB/OP|APT/SUI):* **worse, still sign-flips.**
+trailing full **−6.9bps** (in −6.6 / oos −6.8 — *cleanly* negative across the whole window), older +0.4.
+So the held-out failure is **not** an artifact of one poorly-cointegrated meme pair (DOGE/WIF): the two
+strongly-related, liquid held-out pairs are net-negative on the trailing window by themselves.
+
+**Honest read — this is a major fragilization of the lead, not a confirmation.** Pairs-reversion's edge
+**does not generalize** to a disjoint liquid pair set; it is **basket-specific**. The +5.3bps DURABLE
+result lives in the three default pairs (most plausibly ETH/BTC, by far the strongest cointegration of the
+three), not in "pairs reversion" as a tradeable strategy class. A fresh, economically-sensible pair set
+produces the exact cross-window sign-flip the durability bar exists to reject. The lead is **not fully
+pruned** — the default basket genuinely clears the bar and the lookback plateau, and ETH/BTC is a
+legitimately strong relationship — but the *strategy-class generalization claim is dead*: the only
+candidate ever to clear the canonical bar clears it **only on the basket it was specified with**. That is
+the textbook signature of basket selection (hindsight pair choice), and it means this is not yet a
+deployable book. **Maker-only, nothing touches capital, no live change.**
+
+**Evidence (gate).** `uv run pytest -q` → **183 passed** (+8); `ruff check src tests scripts` → clean.
+All confirm numbers are measurement (`--no-cache`, no `data/` writes committed). No strategy in the live
+roster changed; no live mode enabled.
+
+**What's next (loop).** Slice 3 reorders the remaining work. The decisive question is now slice (4):
+**leave-one-pair-out *within* the default basket** — run ETH/BTC, SOL/AVAX, LINK/AAVE each *alone* and the
+three leave-one-out triples through the same bar. If the +5.3 collapses to ETH/BTC, the "lead" is a
+single-relationship bet (one cointegrated pair), not a strategy — informative, but not a deployable book
+on its own. If two+ pairs each carry independently, the basket-specificity is milder and the lead partly
+survives. Either way, **slice (4) gates any paper-deploy talk** — a one-pair edge cannot justify the 5×/1×
+machinery. Lower priority after that: (5) longer per-window `--days` (boundary-artifact check); (6)
+intraday cadence (15m/5m). The pairs thesis is now a *narrow, possibly single-pair* lead, no longer "the
+first durable signal" without the basket caveat.
