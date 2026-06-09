@@ -724,6 +724,7 @@ def backtest(
     compare: bool = True,
     starting_capital: float = 1000.0,
     cache: bool = True,
+    params: str = "",
 ):
     """Replay an agent over real Hyperliquid history with an explicit cost model.
 
@@ -732,23 +733,30 @@ def backtest(
     same code used live. With ``--compare`` (default) it runs taker AND maker so
     you can see how much of the edge the spread is eating — the central question
     for this book. Places no orders; purely offline analysis.
+
+    ``--params 'lookback_bars=7'`` overrides the agent's config for a sweep.
     """
     from ..backtest.data import cached_or_fetch, load_frames
     from ..backtest.engine import Backtester, CostModel
 
     _, s = _conn()
     coin_list = [c.strip() for c in coins.split(",") if c.strip()]
+    try:
+        cfg = _parse_agent_params(params)
+    except ValueError as e:
+        console.print(f"[red]bad --params: {e}[/red]")
+        raise typer.Exit(1) from e
 
     factories = {
-        "twap_mr_v1": lambda conn: TwapMrAgent(config={}, conn=conn),
-        "twap_mr_regime_v1": lambda conn: TwapMrRegimeAgent(config={}, conn=conn),
-        "femr_v1": lambda conn: FemrAgent(config={}, conn=conn),
-        "funding_carry_v1": lambda conn: FundingCarryAgent(config={}, conn=conn),
-        "xfund_carry_v1": lambda conn: XFundCarryAgent(config={}, conn=conn),
-        "xsect_momentum_v1": lambda conn: XSectMomentumAgent(config={}, conn=conn),
-        "ts_momentum_v1": lambda conn: TsMomentumAgent(config={}, conn=conn),
-        "liq_cascade_v1": lambda conn: LiqCascadeAgent(config={}, conn=conn),
-        "basis_v1": lambda conn: BasisAgent(config={}, conn=conn),
+        "twap_mr_v1": lambda conn: TwapMrAgent(config=cfg, conn=conn),
+        "twap_mr_regime_v1": lambda conn: TwapMrRegimeAgent(config=cfg, conn=conn),
+        "femr_v1": lambda conn: FemrAgent(config=cfg, conn=conn),
+        "funding_carry_v1": lambda conn: FundingCarryAgent(config=cfg, conn=conn),
+        "xfund_carry_v1": lambda conn: XFundCarryAgent(config=cfg, conn=conn),
+        "xsect_momentum_v1": lambda conn: XSectMomentumAgent(config=cfg, conn=conn),
+        "ts_momentum_v1": lambda conn: TsMomentumAgent(config=cfg, conn=conn),
+        "liq_cascade_v1": lambda conn: LiqCascadeAgent(config=cfg, conn=conn),
+        "basis_v1": lambda conn: BasisAgent(config=cfg, conn=conn),
     }
     if agent not in factories:
         console.print(f"[red]unknown agent {agent}; choose from {list(factories)}[/red]")
@@ -798,6 +806,47 @@ def backtest(
     console.print("[dim]taker→maker gap ≈ the spread/fee tax this strategy is paying.[/dim]")
 
 
+def _parse_agent_params(params: str) -> dict[str, object]:
+    """Parse a ``key=value,key=value`` CLI string into an agent-config override dict.
+
+    The ``confirm``/``backtest`` factories otherwise hardcode ``config={}``, so a
+    parameter sweep (e.g. the 1d ``lookback_bars`` sweep the majors-momentum lead
+    needs, B-horizon) meant editing code. This makes it a flag. Values are typed by
+    best-effort inference: ``int`` → ``float`` → ``bool`` (true/false) → ``str``, so
+    ``lookback_bars=7`` is an int, ``enter_return=0.05`` a float, ``reversion=true`` a
+    bool. Pure so the parsing is unit-tested without the network/agents.
+    """
+    out: dict[str, object] = {}
+    for pair in params.split(","):
+        pair = pair.strip()
+        if not pair:
+            continue
+        if "=" not in pair:
+            raise ValueError(f"bad param {pair!r}; expected key=value")
+        key, _, raw = pair.partition("=")
+        key, raw = key.strip(), raw.strip()
+        if not key:
+            raise ValueError(f"bad param {pair!r}; empty key")
+        out[key] = _coerce_param(raw)
+    return out
+
+
+def _coerce_param(raw: str) -> object:
+    """Infer int → float → bool → str for a single CLI param value."""
+    try:
+        return int(raw)
+    except ValueError:
+        pass
+    try:
+        return float(raw)
+    except ValueError:
+        pass
+    low = raw.lower()
+    if low in ("true", "false"):
+        return low == "true"
+    return raw
+
+
 def _window_specs(windows: int, days: int, now_ms: int) -> list[tuple[str, int | None]]:
     """Disjoint, back-to-back ``days``-long window specs for out-of-time durability.
 
@@ -824,6 +873,7 @@ def confirm(
     min_sharpe: float = 1.0,
     cache: bool = True,
     windows: int = 1,
+    params: str = "",
 ):
     """Confirm a strategy through the G0 gate: walk-forward + cost stress.
 
@@ -835,6 +885,10 @@ def confirm(
     (trailing + N-1 older ones) and emits a single DURABLE / NOT DURABLE verdict.
     A trailing-only PASS that reverses sign on an earlier window is a
     window-specific artifact, not an edge (see Iteration 20/21) — this catches it.
+
+    ``--params 'lookback_bars=7,enter_return=0.05'`` overrides the candidate's
+    config so a parameter sweep (e.g. a horizon-appropriate lookback) needs no code
+    edit.
     """
     import time as _time
 
@@ -843,16 +897,21 @@ def confirm(
 
     _, s = _conn()
     coin_list = [c.strip() for c in coins.split(",") if c.strip()]
+    try:
+        cfg = _parse_agent_params(params)
+    except ValueError as e:
+        console.print(f"[red]bad --params: {e}[/red]")
+        raise typer.Exit(1) from e
     factories = {
-        "twap_mr_v1": lambda conn: TwapMrAgent(config={}, conn=conn),
-        "twap_mr_regime_v1": lambda conn: TwapMrRegimeAgent(config={}, conn=conn),
-        "femr_v1": lambda conn: FemrAgent(config={}, conn=conn),
-        "funding_carry_v1": lambda conn: FundingCarryAgent(config={}, conn=conn),
-        "xfund_carry_v1": lambda conn: XFundCarryAgent(config={}, conn=conn),
-        "xsect_momentum_v1": lambda conn: XSectMomentumAgent(config={}, conn=conn),
-        "ts_momentum_v1": lambda conn: TsMomentumAgent(config={}, conn=conn),
-        "liq_cascade_v1": lambda conn: LiqCascadeAgent(config={}, conn=conn),
-        "basis_v1": lambda conn: BasisAgent(config={}, conn=conn),
+        "twap_mr_v1": lambda conn: TwapMrAgent(config=cfg, conn=conn),
+        "twap_mr_regime_v1": lambda conn: TwapMrRegimeAgent(config=cfg, conn=conn),
+        "femr_v1": lambda conn: FemrAgent(config=cfg, conn=conn),
+        "funding_carry_v1": lambda conn: FundingCarryAgent(config=cfg, conn=conn),
+        "xfund_carry_v1": lambda conn: XFundCarryAgent(config=cfg, conn=conn),
+        "xsect_momentum_v1": lambda conn: XSectMomentumAgent(config=cfg, conn=conn),
+        "ts_momentum_v1": lambda conn: TsMomentumAgent(config=cfg, conn=conn),
+        "liq_cascade_v1": lambda conn: LiqCascadeAgent(config=cfg, conn=conn),
+        "basis_v1": lambda conn: BasisAgent(config=cfg, conn=conn),
     }
     if agent not in factories:
         console.print(f"[red]unknown agent {agent}; choose from {list(factories)}[/red]")

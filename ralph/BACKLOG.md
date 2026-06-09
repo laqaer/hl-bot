@@ -103,24 +103,33 @@ Keep it ruthlessly prioritized: the top item should always be the highest-levera
   inversion), and the older 120d window **flips sign** (majors −4.6 / alts −10.6). Five
   structurally-different theses now pruned after the out-of-time bar. Numbers in
   PROGRESS.md Iteration 23.
-- [ ] **B-horizon — Push the majors 1d cross-sectional-momentum lead over G0.** NEW LEAD
-  (Iteration 24). At the **1d/240d** horizon (vs the 1h/120d of all five prunes),
-  `xsect_momentum_v1` on majors (BTC,ETH,SOL,HYPE,AVAX,LINK) is the **first** signal that
-  (a) does **not** sign-flip across two disjoint 240d windows (full +18.0 and +69.0bps) and
-  (b) is **taker-survivable** (trailing window maker +18.0 → taker-3x +8.5bps, robust-to-2x-slip).
-  Verdict is still **NOT DURABLE**, but blocked *only* by the trailing window's gate-marginal
-  in-sample half (−1.4bps < +3; its OOS +52.8/sh+2.12, older window in +110.9/oos +20.9). Next
-  slices, in order: (1) **1d lookback sweep** — the default `lookback_bars` is 1h-tuned; lift the
-  −1.4 in-sample over +3. (2) **`--windows 3`** at 1d (≈2yr majors history) to test the
-  no-sign-flip property over three windows. (3) **regime-gate at 1d**. (4) if a lookback confirms
-  both windows across the cost ladder → first G0-class candidate; widen the majors basket + stress
-  more windows before any paper talk. **Alts at 1d are pruned** (full −50.4/−122.0bps); majors-only.
-  Numbers in PROGRESS.md Iteration 24. No live change.
+- [ ] **B-horizon — Push the majors 1d cross-sectional-momentum lead over G0.** LEAD PERSISTS,
+  still NOT DURABLE (Iteration 25). Slice (1) **1d lookback sweep** DONE via the new `--params`
+  flag: the default `lookback_bars=24` is 1h-tuned; a **12–15-bar plateau** (≈2wk daily lookback)
+  CONFIRMS the **trailing** 240d window (lb=14: in +49.1/oos +42.7bps/sh+1.48–1.49) and is
+  **taker-survivable across the whole ladder** (maker +46.2 → taker-3x +36.7bps). It is NOT a
+  knife-edge: lb 12/13/14/15 all confirm trailing, 10→+0.4 and 16 just-misses on sharpe.
+  **Durability bar (`--windows 2`) still NOT DURABLE** — but for a *new, weaker* reason than the
+  five prunes: full-sample edge is **positive in BOTH disjoint windows** (lb14 +46.2 & +8.3; lb13
+  +47.0 & +16.0) → **no sign flip** (the artifact signature is absent). The block is the *older*
+  240d window's **walk-forward**: its OOS tail reverses (lb14 oos −94.2 while in +55.6) so that
+  window isn't individually confirmed. Next slices: (2) **regime-gate at 1d** (Iteration-19 gate) —
+  the older window's in-sample is strongly +; a causal regime filter may stand the book aside
+  during its OOS-tail reversal. (3) **`--windows 3`** + **widen the majors basket** to see if the
+  no-sign-flip property and the plateau hold on more history/coins. (4) longer per-window `--days`
+  so the OOS tail is a smaller fraction. **Alts at 1d stay pruned** (full −50.4/−122.0bps);
+  majors-only. Numbers in PROGRESS.md Iteration 25. No live change.
 - [ ] **B-femr-regime — femr is dormant on majors; retire or repurpose.** femr's
   130%-APR entry never trips on liquid coins (B1). B1-alt now shows funding *carry*
   has no edge even where funding is high, so widening femr (also funding-driven) to
   alts is unlikely to help — the honest move is to **retire it from the live roster**
   until there's a universe+variant with a demonstrated G0 PASS. No live change either way.
+- [x] **B-params — `--params` config override for `confirm`/`backtest`.** DONE (Iteration 25).
+  The factories hardcoded `config={}`, so every parameter sweep meant editing code. New
+  `--params 'lookback_bars=14,enter_return=0.05'` threads a typed override dict (pure
+  `_parse_agent_params`, int→float→bool→str inference, +6 unit tests) into the agent factory.
+  Unblocked the B-horizon lookback sweep that found the 12–15-bar daily plateau. Numbers in
+  PROGRESS.md Iteration 25.
 - [x] **B-fetch-retry — 429-resilient history fetch.** DONE (Iteration 24). `fetch_candles`
   + `_fetch_funding_page` route their POST through `_request_with_retry` (exponential backoff
   on 429/5xx, honors `Retry-After`, pure/testable). Longer/larger windows (1d/240d ≈ 12 funding

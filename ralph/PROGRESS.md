@@ -1272,3 +1272,98 @@ helped the recent window; re-test it at the daily horizon where the base signal 
 taker-survivable. (4) If a 1d lookback confirms both windows on majors across the cost ladder,
 that is the **first G0-class candidate** — then widen the majors basket and stress more windows
 before any paper talk. Alts at 1d are pruned; this is a majors-only thread.
+
+---
+
+## Iteration 25 — 2026-06-08 — B-horizon slice 1: the 1d lookback sweep finds a 12–15-bar plateau that CONFIRMS the trailing window and stops sign-flipping — but the durability bar still says NOT DURABLE (older window's walk-forward fails)
+
+**Context.** Iteration 24 found the first non-prune lead: majors `xsect_momentum_v1` at **1d/240d**
+is the only signal that (a) doesn't sign-flip across two disjoint windows and (b) survives the full
+taker cost ladder — blocked from G0 *only* by the trailing window's gate-marginal in-sample half
+(−1.4bps < +3 at the default `lookback_bars=24`). The default lookback is **1h-tuned**; at the daily
+horizon a 24-bar lookback is 24 *days*, almost certainly too long. Slice (1) of B-horizon was a 1d
+lookback sweep to lift that in-sample half. But the `confirm`/`backtest` factories **hardcoded
+`config={}`**, so a sweep meant editing code each time — the tooling gap had to close first.
+
+**Code change (the committed increment, with tests).**
+- **`--params` config override on `confirm` and `backtest`.** New `_parse_agent_params(str)` pure
+  helper parses a `key=value,key=value` CLI string into a typed agent-config dict, inferring
+  **int → float → bool → str** (so `lookback_bars=14` is an int, `enter_return=0.05` a float,
+  `reversion=true` a bool); empty string → `{}`; missing-`=`/empty-key raise. A `_coerce_param`
+  inner does the per-value inference. Both CLIs parse `--params` once and thread the dict through
+  every agent factory (`config=cfg` instead of `config={}`), so any candidate's config is now
+  sweepable without a code edit. The factories' previous hardcoded `{}` was the only thing
+  standing between the durability harness and a parameter sweep.
+- **`tests/test_parse_agent_params.py` (+6):** empty→`{}`; int/float/bool/str inference with type
+  assertions; whitespace tolerated; negative numbers; missing-`=` raises; empty-key raises. Pure,
+  offline.
+
+**Experiment — the 1d lookback sweep on majors (measurement; caches gitignored).**
+`confirm --agent xsect_momentum_v1 --coins BTC,ETH,SOL,HYPE,AVAX,LINK --interval 1d --days 240
+--prefer maker --params lookback_bars=N`. Trailing 240d window, walk-forward + cost ladder:
+
+| lookback_bars | in-sample | oos | maker full | taker-3x | verdict |
+|---|---|---|---|---|---|
+| 5  | −38.0 | +50.4 | −13.9 | −23.4 | ❌ |
+| 7  | −24.4 | +41.2 | −2.4  | −11.9 | ❌ |
+| 10 | +0.4  | +43.4 | +16.5 | +7.0  | ❌ (in <+3) |
+| 12 | +33.8 | +31.6 | +34.5 | —     | ✅ CONFIRMED |
+| 13 | +47.9 | +47.6 | +47.0 | —     | ✅ CONFIRMED |
+| **14** | **+49.1** | **+42.7** | **+46.2** | **+36.7** | ✅ **CONFIRMED** |
+| 15 | +29.6 | +36.5 | +31.1 | —     | ✅ CONFIRMED |
+| 16 | +36.3 | +20.1 | +30.0 | —     | ❌ (oos sharpe) |
+| 20 | −13.4 | +19.8 | −3.8  | −13.3 | ❌ |
+| 24 (default) | −1.4 | +52.8 | +18.0 | +8.5 | ❌ (in <+3) |
+
+So the sweep did exactly what slice (1) hoped: a **coherent 12–15-bar plateau** (≈2 weeks of daily
+lookback) **CONFIRMS** the trailing window — not a knife-edge single point — with in & oos both
+~+30–49bps/sharpe ~+1.0–1.5, and at lb=14 the edge is **positive across the entire cost ladder**
+(maker +46.2 → taker-3x +36.7bps). The default 24-bar lookback was simply the wrong horizon.
+
+**Experiment — the durability bar (`--windows 2`), the decisive test.**
+`… --windows 2 --params lookback_bars={13,14}`, two disjoint back-to-back 240d/1d windows:
+
+| lookback | window | full | in | oos | window verdict |
+|---|---|---|---|---|---|
+| 13 | trailing 240d | +47.0 | +47.9 | +47.6 | ✅ confirmed |
+|    | 240d ending 240d ago | **+16.0** | +55.5 | −54.4 | ❌ |
+| 14 | trailing 240d | +46.2 | +49.1 | +42.7 | ✅ confirmed |
+|    | 240d ending 240d ago | **+8.3** | +55.6 | −94.2 | ❌ |
+
+Both → **NOT DURABLE.**
+
+**Evidence — NOT DURABLE, but for a genuinely new (and weaker) reason than the five prunes.** The
+key, honest distinction: the full-sample edge is **positive in BOTH disjoint windows** (lb14 +46.2
+& +8.3bps; lb13 +47.0 & +16.0bps) — i.e. **no sign flip.** Every one of the five 1h/120d prunes
+flipped the full-sample sign across windows; that artifact signature is **absent here.** What blocks
+durability is the *older* window's **walk-forward**: its in-sample is strongly positive (+55.5/+55.6)
+but its OOS tail **reverses hard** (−54.4 / −94.2bps), so that window isn't individually confirmed
+(durability requires *every* window confirmed, not just a stable sign). In plain terms: the most
+recent ~72d of the older 240d window had a momentum-crash-like reversal that the walk-forward
+correctly refuses to ignore — the same kind of regime inversion that the Iteration-19 regime gate
+was built to stand aside from.
+
+**Honest conclusion (the lead persists, still not an edge).** Slice (1) succeeded as research: a
+horizon-appropriate lookback (12–15 daily bars) turns the trailing-window in-sample from −1.4 to
+~+45bps and CONFIRMS it across the full cost ladder — the strongest single-window result of the
+whole search, and on a *plateau*, not a knife-edge. But the durability bar still says **NOT
+DURABLE**: the older 240d window fails its own walk-forward (OOS-tail reversal). This is materially
+better than the five prunes (no sign flip; taker-survivable; a coherent plateau) yet honestly short
+of G0 — so **nothing here touches capital** and the lead stays a P0 candidate, not a pass. The
+amended meta-lesson: *majors 1d cross-sectional momentum at a ~2-week lookback is a real,
+cost-surviving, sign-stable signal — but it is still vulnerable to a momentum-crash window, which is
+exactly what a causal regime gate (next slice) exists to handle.*
+
+**Evidence (gate).** `uv run pytest -q` → **146 passed** (+6); `ruff check src tests scripts` →
+clean. Committed increment is the `--params` flag + pure parser + 6 tests (pure, offline); all
+confirm numbers are measurement (caches gitignored). No strategy/sizing/live-mode change.
+
+**What's next (loop).** Push the lead with B-horizon's remaining slices, in order: (1) **regime-gate
+at 1d** — the older window's *in-sample* is strongly + and only its OOS tail reverses; the
+Iteration-19 causal `regime_gate` (now sweepable via `--params regime_gate=true,regime_lookback=…`)
+may stand the book aside during that crash and confirm the older window. This is the highest-leverage
+next move because the failure mode is exactly what the gate targets. (2) **`--windows 3` + widen the
+majors basket** to test whether the plateau and the no-sign-flip property survive more history/coins.
+(3) **longer `--days`** per window so the OOS tail is a smaller fraction of each window. If the
+regime gate confirms both (then three) windows across the cost ladder → the first G0-class candidate,
+and only then widen + stress before any paper talk. Alts at 1d stay pruned; majors-only.
