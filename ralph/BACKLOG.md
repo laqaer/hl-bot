@@ -53,11 +53,21 @@ Keep it ruthlessly prioritized: the top item should always be the highest-levera
   is cleanly negative both windows (−1316.8/−118.6), so the signal is internally coherent (not noise). **Net:
   a genuine LEAD to push, not a prune and not yet a deploy** — durability is necessary-not-sufficient (pairs
   passed the bar then failed leave-pairs-out/leave-one-out/diversification). `xsect_illiq_v1` stays maker-only
-  paper; nothing touches capital. Numbers in PROGRESS Iter 45. **Push-slices (next iterations):** (1)
-  plateau-sweep `illiq_lookback` (is the alts PASS a param knife-edge?); (2) leave-one-coin-out on the alts
-  basket (is it one lucky coin?); (3) is the alts edge the *liquidity* factor or a confound with low-volume
-  alts simply being the windows' pumpers (size/momentum confound)? decompose; (4) longer baseline / `--windows
-  3`; (5) the majors directional-confound decomposition (strip the static tilt). Maker-only, no live change.
+  paper; nothing touches capital. Numbers in PROGRESS Iter 45.
+  **Slices (1)+(2) DONE (Iteration 46): the lead SURVIVES leave-one-coin-out without sign-flip — stronger than
+  pairs — but the binary PASS is a knife-edge in BOTH lookback and basket composition.** Built reusable
+  cross-sectional leave-one-coin-out machinery (`coins_in_frames`/`drop_coin` in confirm.py drop a coin from the
+  *data* since a cross-sectional book has no per-coin knob; `confirm --leave-one-coin-out` flag; +6 tests).
+  **(1) `illiq_lookback` sweep {24,36,48,72,96}: NO PLATEAU** — only lb=48 clears the full bar (24/36 positive
+  but not durable +32/+38; 72/96 trade-starve), a lookback knife-edge (sign stable, PASS over-conditioned).
+  **(2) leave-one-coin-out (lb=48): NO drop sign-flips** — full DURABLE (+42.0/+13.2); every single-coin drop
+  stays positive in BOTH windows (trailing +14…+72, older +2.3…+24.7); DURABLE survives dropping AERO/EIGEN/S,
+  the other 7 demote only via within-window walk-forward (NOT the sign-flip that killed pairs leave-one-out,
+  Iter 32). So a genuine *pooled* effect, not one lucky coin. **Net: still the best LEAD in the search, still
+  not a deploy** — sign-robust but the deployable-PASS is over-conditioned (lb≈48, full basket). Numbers in
+  PROGRESS Iter 46. **Remaining push-slices:** (3) liquidity-vs-confound decomposition (Amihud premium vs
+  low-volume-alt pumper confound — now the highest-value next move, decides deploy-vs-prune); (4) longer
+  baseline / `--windows 3`; (5) strip the majors static directional tilt. Maker-only, no live change.
 - [x] **B-lowvol — Cross-sectional low-volatility / betting-against-volatility (the ELEVENTH structurally-
   different thesis; the FIRST to key off the volatility cross-section, orthogonal to all ten priors). PRUNED
   as a deployable edge (Iteration 44).** Every prior thesis keyed off price *return* (TWAP-MR, x-sect/ts/

@@ -921,6 +921,7 @@ def confirm(
     params: str = "",
     sweep: str = "",
     leave_one_out: bool = False,
+    leave_one_coin_out: bool = False,
 ):
     """Confirm a strategy through the G0 gate: walk-forward + cost stress.
 
@@ -947,6 +948,12 @@ def confirm(
     subset (loading history once). It answers whether a multi-pair edge is carried
     by the whole basket or collapses onto one relationship — the pairs analogue of
     leave-one-coin-out.
+
+    ``--leave-one-coin-out`` (cross-sectional agents, ``--windows>=2``) runs the
+    durability bar on the full coin universe and on each universe with one coin
+    *dropped from the data* (the agent has no per-coin knob, so the coin is removed
+    from every frame). It answers whether a cross-sectional edge is a real factor or
+    one lucky coin's idiosyncratic run.
     """
     import time as _time
 
@@ -1077,6 +1084,44 @@ def confirm(
                 for w in mw.windows
             )
             console.print(f"{verdict}  {vlabel:30s} full[{edges}]bps")
+        if not durable_any:
+            raise typer.Exit(1)
+        return
+
+    if leave_one_coin_out:
+        from ..backtest.confirm import coins_in_frames, drop_coin
+        if windows < 2:
+            console.print("[red]--leave-one-coin-out requires --windows >= 2[/red]")
+            raise typer.Exit(1)
+        specs = _window_specs(windows, days, int(_time.time() * 1000))
+        try:
+            loaded_windows = [(label, _load(end_ms)) for label, end_ms in specs]
+        except Exception as e:  # noqa: BLE001
+            console.print(f"[red]failed to load history: {e}[/red]")
+            raise typer.Exit(2) from e
+        universe = coins_in_frames(loaded_windows[0][1])
+        if len(universe) < 3:
+            console.print("[red]--leave-one-coin-out needs a universe of >=3 coins[/red]")
+            raise typer.Exit(1)
+        variants: list[tuple[str, str | None]] = [("full: " + ",".join(universe), None)]
+        variants += [(f"drop {coin}", coin) for coin in universe]
+        durable_any = False
+        for vlabel, drop in variants:
+            vwindows = (
+                loaded_windows if drop is None
+                else [(lbl, drop_coin(fr, drop)) for lbl, fr in loaded_windows]
+            )
+            mw = confirm_across_windows(
+                factory, vwindows, prefer=prefer,
+                min_edge_bps=min_edge_bps, min_sharpe=min_sharpe, periods_per_year=per_year,
+            )
+            durable_any = durable_any or mw.durable
+            verdict = "✅ DURABLE    " if mw.durable else "❌ NOT DURABLE"
+            edges = "  ".join(
+                "n/a" if w.full_sample_edge_bps is None else f"{w.full_sample_edge_bps:+.1f}"
+                for w in mw.windows
+            )
+            console.print(f"{verdict}  {vlabel:34s} full[{edges}]bps")
         if not durable_any:
             raise typer.Exit(1)
         return

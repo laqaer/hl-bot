@@ -2726,3 +2726,62 @@ against trailing return / size to see if it's really the Amihud premium or just 
 longer baseline / `--windows 3`; (5) strip the majors static directional tilt to test whether a *rotating*
 illiq signal survives on majors. The first of these (param plateau + leave-one-coin-out) is the highest-value
 next iteration — if the alts PASS survives both, this becomes the best edge candidate the search has produced.
+
+## Iteration 46 — 2026-06-08 — B-illiq push slices (1)+(2): lookback plateau + leave-one-coin-out
+
+**Context.** The twelfth thesis (cross-sectional Amihud illiquidity) is the strongest cross-basket result of
+the entire search (Iter 45): ✅ DURABLE on high-funding alts AND sign-stable-positive on a disjoint alt basket.
+The durability bar is necessary-not-sufficient (pairs cleared it then died on leave-pairs-out / leave-one-out /
+diversification), so before any deploy talk the lead must survive the same disciplined stress sequence that
+pruned pairs. This iteration ran the two highest-value push-slices the Iter-45 "what's next" named: (1) the
+`illiq_lookback` plateau-sweep (is the alts PASS a param knife-edge?) and (2) leave-one-coin-out (is it one
+lucky coin?). Slice (2) needed new machinery — a cross-sectional book has no per-coin config knob, so unlike
+pairs (`leave_one_pair_out` edits the `pairs=` spec) the coin must be dropped from the *data*.
+
+**What I built (pure, tested).** Two pure helpers in `backtest/confirm.py`:
+- `coins_in_frames(frames)` — deduped, order-preserving union of coins in the frames' `mids` (the universe).
+- `drop_coin(frames, coin)` — a copy of the frames with `coin` removed from every per-coin field (mids,
+  funding, day_ntl_vlm, open_interest, candles_1h, closes, spot_mids) via `dataclasses.replace`; `liquidations`
+  (an event list, not coin-keyed) carried through, inputs untouched. The cross-sectional analogue of
+  `leave_one_pair_out`, reusable for ANY cross-sectional candidate (momentum / low-vol / illiq).
+Wired a `confirm --leave-one-coin-out` flag (cross-sectional agents, `--windows>=2`): loads windows once, then
+runs the durability bar on the full universe + each universe with one coin dropped from every window, printing
+durable/not + per-window edges (mirrors the pairs `--leave-one-out` block). +6 unit tests (universe dedup/union;
+drop removes from every field; drop is pure; ts/liquidations preserved; absent-coin no-op copy).
+
+**Result (real HL cache, alts_highfunding, 1h, maker_fee=1bp, `--windows 2 --prefer maker`, two disjoint 120d).**
+- **Slice (1) `illiq_lookback` plateau-sweep {24,36,48,72,96}:** ❌ NO PLATEAU (knife-edge). Only **lb=48**
+  clears the full durability bar; neighbours 24/36 are NOT DURABLE (though trailing full-sample edge is smoothly
+  **positive and rising**: 24 +32.2 / 36 +37.9 / 48 +42.0), and 72/96 trade-starve (no edge). So the binary
+  PASS is a lookback knife-edge — the *sign* is stable across lookbacks but the *durable PASS* sits at one value
+  (same fragility signature as the pairs entry_z knife-edge, Iter 30).
+- **Slice (2) leave-one-coin-out (lb=48):** the full basket is ✅ DURABLE (+42.0/+13.2); dropping a single coin
+  stays DURABLE for **AERO (+36.1/+14.8), EIGEN (+61.4/+16.6), S (+72.0/+24.7)** and demotes to NOT-DURABLE for
+  the other 7 (INJ/PURR/TRUMP/NIL/APT/SPX/PYTH). **The decisive property: NO single-coin drop sign-flips** —
+  every drop is **positive in BOTH windows** (trailing +14.0…+72.0, older +2.3…+24.7). The 7 demotions are all
+  via within-window walk-forward (regime-sensitive), NOT the cross-window sign-flip. This is materially
+  stronger than pairs, whose leave-one-out *sign-flipped* (LINK/AAVE alone and the ETH/BTC|LINK/AAVE pair-out
+  went negative, Iter 32). So the illiq alts edge is a genuine **pooled** cross-sectional effect — not carried
+  by one lucky coin — and stays sign-stable-positive under any single removal.
+
+**Conclusion.** The lead SURVIVES leave-one-coin-out in the way that matters (no sign-flip, every subset
+positive both windows) — the failure mode that killed pairs does NOT appear here. But the binary durability
+PASS is fragile in *both* dimensions probed: a lookback knife-edge (only lb=48) and a basket-composition
+knife-edge (only full + 3 of 10 drops clear the full bar; the rest stay positive but fail within-window
+walk-forward). Net verdict unchanged from Iter 45: a **genuine, still-best-in-search LEAD, not a deploy** —
+the edge is real and sign-robust, but the deployable-PASS is over-conditioned (lb≈48, full basket). The next
+disciplines that could promote or prune it are the confound decomposition (is it the liquidity factor or just
+low-volume alts being the windows' pumpers?) and a longer baseline. `xsect_illiq_v1` stays maker-only paper;
+nothing touches capital.
+
+**Evidence (gate).** `uv run pytest -q` → **271 passed** (+6 leave-one-coin-out). `uv run ruff check src tests
+scripts` → clean. All backtests offline against the existing gitignored cache (no `data/` writes committed).
+No strategy promoted, no roster live-mode change.
+
+**What's next (loop).** Two slices done; remaining illiq push-slices from Iter 45: (3) the **liquidity-vs-
+confound decomposition** — regress the alts edge against trailing return / size to test whether it's the Amihud
+premium or just the low-volume alts being these windows' pumpers (size/momentum confound); this is now the
+highest-value next iteration because the lead is sign-robust but the *economic interpretation* is the open
+question that decides deploy-vs-prune. (4) longer baseline / `--windows 3`; (5) strip the majors static
+directional tilt. The `drop_coin`/`coins_in_frames` machinery is now reusable to retro-run leave-one-coin-out
+on any prior cross-sectional thesis if needed.

@@ -19,7 +19,7 @@ discover it live.
 from __future__ import annotations
 
 from collections.abc import Callable
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 
 from ..agents.base import Agent
 from ..db.schema import init_db
@@ -397,6 +397,58 @@ def sweep_param(
         )
     return SweepResult(param=param, points=points, plateau=plateau,
                        plateau_values=plateau_values, reasons=reasons)
+
+
+# ---------------------------------------------------------------------------
+# Leave-one-coin-out — is a cross-sectional edge carried by one lucky coin?
+#
+# A dollar-neutral cross-sectional book (momentum, low-vol, illiquidity) has no
+# per-coin config knob to drop — the agent simply ranks whatever coins are in the
+# frames. So the leave-one-coin-out probe (the cross-sectional analogue of
+# ``leave_one_pair_out``) must remove a coin from the *data*: drop its key from
+# every per-coin field of every frame, then re-run the durability bar on the
+# shrunk universe. If the edge survives dropping *any* single coin, no one coin
+# carries the whole result; if dropping one coin collapses it, the "edge" was that
+# coin's idiosyncratic run, not a factor. This is the exact test that fragilized
+# pairs (slice 4) and momentum, now reusable for any cross-sectional candidate.
+# ---------------------------------------------------------------------------
+
+
+def coins_in_frames(frames: list[Frame]) -> list[str]:
+    """Deduped, order-preserving union of coins appearing in any frame's ``mids``."""
+    seen: set[str] = set()
+    out: list[str] = []
+    for f in frames:
+        for c in f.mids:
+            if c not in seen:
+                seen.add(c)
+                out.append(c)
+    return out
+
+
+def drop_coin(frames: list[Frame], coin: str) -> list[Frame]:
+    """Return a copy of ``frames`` with ``coin`` removed from every per-coin field.
+
+    Pure: the input frames are untouched (``dataclasses.replace`` builds new
+    frames with filtered dicts). ``liquidations`` is an event list, not keyed by
+    coin, so it is carried through unchanged. The result is a strictly smaller
+    cross-sectional universe the same agent factory can run against."""
+    def _drop(d: dict) -> dict:
+        return {k: v for k, v in d.items() if k != coin}
+
+    return [
+        replace(
+            f,
+            mids=_drop(f.mids),
+            funding=_drop(f.funding),
+            day_ntl_vlm=_drop(f.day_ntl_vlm),
+            open_interest=_drop(f.open_interest),
+            candles_1h=_drop(f.candles_1h),
+            closes=_drop(f.closes),
+            spot_mids=_drop(f.spot_mids),
+        )
+        for f in frames
+    ]
 
 
 def _vals(values: list[object]) -> str:
