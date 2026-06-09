@@ -919,3 +919,87 @@ lead into a trustworthy (or pruned) G0 by re-confirming on a fresh 120d window a
 disjoint alt basket, and mapping the parameter plateau. If it survives, it is the first
 strategy to take through G1→G3 via the existing 5x/1x risk machinery. If it does not
 survive a fresh window, it joins the pruned pile — either way the search advances.
+
+
+---
+
+## Iteration 20 — 2026-06-08 — B-mom-regime-validate: the alts-momentum lead is window-specific (out-of-time FAIL prunes the 4th thesis)
+
+**Context.** Iteration 19 produced the first G0-class lead: regime-gated cross-sectional
+momentum on high-funding alts cleared G0 in base config on the trailing 120d (maker full
+**+8.4bps**, oos +16.0/sh+3.38) and survived walk-forward-split + leave-one-coin-out.
+But it was explicitly flagged a *candidate not a deploy*, pending validation it had not
+had. PROGRESS's own top "what's next" — and B-mom-regime-validate — named the decisive
+test: **a real edge survives a fresh, disjoint time window.** This iteration built the
+capability to fetch one and ran the test.
+
+**Code change (the committed increment, with tests).**
+- **`backtest/data.py` — out-of-time window support.** `load_frames` only ever fetched
+  the *trailing* `days` (end = now), so there was no way to pull a disjoint older window
+  for out-of-sample validation. Added a pure, unit-tested `window_bounds(days, end_ms)`
+  helper and threaded an optional `end_ms` through `load_frames` / `cached_or_fetch` /
+  `default_cache_path` (a historical window gets an `_end{YYYYMMDD}`-tagged cache file so
+  it can't collide with the trailing cache; `end_ms=None` keeps the legacy key, so
+  existing caches still resolve). `cli backtest-fetch --end-offset-days N` exposes it.
+- **`tests/test_backtest.py` (+2):** `window_bounds` trailing-vs-historical math (an
+  older window abuts but never overlaps the trailing one) and `default_cache_path`
+  window-keying (trailing keeps the legacy name; a historical end_ms lands in a distinct,
+  stable, end-date-tagged file).
+
+**Experiment — validate the lead on real history (measurement; caches gitignored).**
+Regime-gated config (regime_gate, regime_lookback=12, thr=0; the Iteration-19 base),
+`confirm_strategy(prefer="maker")`, walk-forward + cost ladder:
+
+| test | window / basket | in-sample | oos | maker full | taker-2x | verdict |
+|---|---|---|---|---|---|---|
+| **sanity (repro Iter-19)** | trailing 120d, orig alts | +4.4 / +1.63 | +16.0 / +3.38 | **+8.4** (1742tr) | +0.9 | ✅ CONFIRMED |
+| **(1) out-of-time** | older 120d (ends 2026-02-09), *same* alts | **−7.4 / −3.43** | **−9.4 / −2.95** | **−7.8** (1400tr) | −15.3 | ❌ FAIL |
+| **(2) held-out basket** | trailing 120d, disjoint liquid alts | +2.3 / +1.03 | +7.3 / +2.78 | +4.2 (1828tr) | −3.3 | ❌ NOT CONFIRMED |
+
+Held-out basket = SUI/SEI/TIA/WLD/ARB/OP/ENA/JUP/LDO/AAVE (disjoint from the original
+INJ/PURR/TRUMP/AERO/NIL/APT/SPX/PYTH/EIGEN/S).
+
+**Evidence — the lead does not survive out-of-time (G0 PRUNE).** The result is sharp and
+decisive. The sanity run reproduces Iteration-19 *exactly* (maker full +8.4bps) — so the
+new `end_ms` plumbing is consistent and the +8.4 number is real *for that window*. But on
+the **immediately-preceding 120d**, the *same* regime-gated agent on the *same* basket
+doesn't merely weaken — it **reverses sign** to maker full **−7.8bps** (in −7.4, oos −9.4,
+both windows negative, sharpe −3). That is the textbook signature of a window-specific
+artifact, not an edge: the trailing-window momentum tailwind simply wasn't present (was
+inverted) in the prior period, and the regime gate — which fixed the in/oos sign-flip
+*within* the recent window — cannot rescue a period where the cross-sectional momentum
+itself is negative. The held-out basket corroborates: on the *recent* window a disjoint
+alt set is only marginally positive (in +2.3bps, below the +3 gate) and dies under any
+taker slippage, so even the recent-window effect is knife-edge and doesn't generalize
+cleanly across baskets. Part (3), the parameter-plateau map, is **moot** — there is no
+value in mapping a stable parameter region of a window-specific artifact.
+
+**Honest conclusion (the fourth thesis pruned).** **Regime-gated cross-sectional momentum
+is not a durable edge.** Iteration-19's G0 PASS was a property of the specific trailing
+120d window, and it fails the one test that matters most — a fresh, disjoint window, where
+it flips to −7.8bps maker. This is exactly why out-of-time validation exists, and exactly
+why the lead was held back from paper/live. The four structurally-different theses now
+pruned after costs: TWAP-MR (B1), funding carry on majors + high-funding alts (B1-alt),
+plain cross-sectional momentum (B-mom), and **regime-gated momentum (B-mom-regime)**. The
+chassis remains strong; no signal has yet cleared a *trustworthy* (out-of-time) G0. The
+negative result is the value — it stopped us deploying a coin-flip dressed as an edge. The
+default-off regime-gate code is kept (harmless, and the gate mechanic may still be useful),
+but the agent is not a deploy candidate.
+
+**Evidence (gate).** `uv run pytest -q` → **125 passed** (+2); `ruff check src tests
+scripts` → clean. Committed increment is the out-of-time fetch capability + 2 tests (pure,
+offline); all confirm numbers are measurement (caches gitignored). No strategy/sizing/
+live-mode change.
+
+**What's next (loop).** With four theses pruned — including the only G0 lead, now failed
+out-of-time — the honest state is: **no signal has a durable, out-of-time-validated edge.**
+The out-of-time harness built this iteration is now the *standard bar* every future
+candidate must clear (trailing-window G0 is necessary but demonstrably not sufficient).
+Priorities: (1) a **structurally different** signal class not yet tested — e.g.
+event/liquidation microstructure, or a basis/term-structure trade — rather than another
+cross-sectional price/funding rank (three of those are now pruned). (2) Before building
+more signals, consider whether the 120d windows are simply too short/regime-dominated for
+*any* cross-sectional rank to be stable, in which case longer-horizon or
+fundamentally-different structure is required. (3) Retire femr from the live roster
+(B-femr-regime) — still dormant + funding-driven, and carry is pruned. Keep pruning until
+one signal clears the out-of-time bar.

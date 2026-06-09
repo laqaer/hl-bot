@@ -38,7 +38,9 @@ Keep it ruthlessly prioritized: the top item should always be the highest-levera
   same mirror on alts. A regime inversion mid-window, which walk-forward correctly
   rejects. Maker full-sample ≈ flat (+0.8/−0.7bps); taker-2x firmly negative. Numbers
   in PROGRESS.md Iteration 18.
-- [~] **B-mom-regime — Regime-gate cross-sectional momentum (FIRST G0-CLASS LEAD).**
+- [x] **B-mom-regime — Regime-gate cross-sectional momentum. PRUNED by B-mom-regime-validate
+  (Iteration 20): the G0 PASS was window-specific — it reverses sign on a fresh out-of-time
+  window. Kept the (default-off) gate code; no live use.**
   DONE-slice (Iteration 19). Added a causal, default-off `regime_gate` to
   `xsect_momentum_v1`: only run the dollar-neutral book when the equal-weighted
   universe trailing return over `regime_lookback` bars ≥ `regime_min_return` (a-priori
@@ -55,14 +57,20 @@ Keep it ruthlessly prioritized: the top item should always be the highest-levera
   at the gate** — in-sample ~+3bps, so the binary PASS toggles under leave-one-out;
   (d) **regime_lookback-sensitive** — only ~12–18 pass, 24+ fail in-sample. Numbers in
   PROGRESS.md Iteration 19.
-- [ ] **B-mom-regime-validate — Harden the alts-momentum lead (the path to a trustworthy G0).**
-  Before any paper→live consideration, the Iteration-19 lead needs out-of-sample
-  validation it hasn't had: (1) **out-of-time** — refetch a *different* 120d window
-  (network is up) and re-confirm; a real edge survives a fresh window. (2) **held-out
-  basket** — pick a disjoint high-funding alt set and confirm the regime-gated agent
-  there (not the basket it was found on). (3) map the parameter **plateau** (is there a
-  stable region of lookback_bars × regime_lookback × thr, or just one cell?). Only on
-  passing all three is this an edge; until then it's a promising candidate. No live change.
+- [x] **B-mom-regime-validate — Harden the alts-momentum lead → PRUNED (Iteration 20).**
+  Added out-of-time window support to the fetch (`window_bounds`/`end_ms` plumbing +
+  `backtest-fetch --end-offset-days`, unit-tested) so a *disjoint* window can be pulled.
+  (1) **out-of-time FAIL:** refetched the immediately-preceding 120d (ends 2026-02-09,
+  same alts basket) and re-confirmed the regime-gated agent — it **reverses sign**:
+  in −7.4 / oos −9.4 / maker full **−7.8bps** (vs +8.4 on the trailing window). A real
+  edge survives a fresh window; this does not. (2) **held-out basket** (disjoint liquid
+  alts SUI/SEI/TIA/WLD/ARB/OP/ENA/JUP/LDO/AAVE, recent window): **marginal, NOT
+  CONFIRMED** — in +2.3bps (below the +3 gate), oos +7.3, maker full +4.2bps, negative
+  at every taker level. The Iteration-19 +8.4bps was **window-specific**, not durable;
+  the regime gate fixes the in/oos sign-flip *within* the recent window but can't make
+  the agent survive a genuinely different time period. (3) plateau map is **moot** — no
+  point mapping a plateau of a window-specific artifact. **The momentum lead is pruned.**
+  Numbers in PROGRESS.md Iteration 20. No live change.
 - [ ] **B-femr-regime — femr is dormant on majors; retire or repurpose.** femr's
   130%-APR entry never trips on liquid coins (B1). B1-alt now shows funding *carry*
   has no edge even where funding is high, so widening femr (also funding-driven) to

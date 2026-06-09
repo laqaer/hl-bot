@@ -683,21 +683,30 @@ def backtest_fetch(
     interval: str = "1h",
     days: int = 30,
     refresh: bool = False,
+    end_offset_days: int = 0,
 ):
     """Fetch + cache HL candle/funding history for offline, reproducible backtests.
 
     Writes a gzipped frame dataset under data/backtest_cache/ (gitignored).
     Run this once where HL is reachable; then `hlbot backtest` runs without network.
+
+    ``--end-offset-days N`` ends the window N days in the past instead of now, so
+    you can pull a *disjoint, older* window for out-of-time validation (e.g.
+    ``--days 120 --end-offset-days 120`` = the 120d before the trailing 120d).
     """
+    import time as _time
+
     from ..backtest.data import cached_or_fetch, default_cache_path
 
     _, s = _conn()
     coin_list = [c.strip() for c in coins.split(",") if c.strip()]
-    path = default_cache_path(coin_list, interval, days)
-    console.print(f"[dim]fetching {days}d {interval} for {coin_list}…[/dim]")
+    end_ms = None if end_offset_days <= 0 else int(_time.time() * 1000) - end_offset_days * 86_400_000
+    path = default_cache_path(coin_list, interval, days, end_ms)
+    window = f"{days}d{'' if end_ms is None else f' ending {end_offset_days}d ago'}"
+    console.print(f"[dim]fetching {window} {interval} for {coin_list}…[/dim]")
     try:
         frames = cached_or_fetch(coin_list, interval=interval, days=days,
-                                 base_url=s.hl_api_url, refresh=refresh)
+                                 base_url=s.hl_api_url, refresh=refresh, end_ms=end_ms)
     except Exception as e:  # noqa: BLE001
         console.print(f"[red]fetch failed: {e}[/red]")
         raise typer.Exit(2) from e

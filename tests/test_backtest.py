@@ -168,3 +168,36 @@ def test_frame_cache_roundtrip(tmp_path):
     r1 = Backtester(CostModel(maker=True, maker_fee_bps=0.0), conn=c1).run(TwapMrAgent(config={}, conn=c1), frames)
     r2 = Backtester(CostModel(maker=True, maker_fee_bps=0.0), conn=c2).run(TwapMrAgent(config={}, conn=c2), loaded)
     assert r1.net_pnl == r2.net_pnl
+
+
+def test_window_bounds_trailing_and_historical():
+    from hl_bot.backtest.data import window_bounds
+
+    day_ms = 86_400_000
+    # explicit end_ms → exact, deterministic [start, end] of the right length
+    start, end = window_bounds(120, end_ms=1_000 * day_ms)
+    assert end == 1_000 * day_ms
+    assert start == (1_000 - 120) * day_ms
+    # a disjoint older window (end shifted back 120d) abuts but never overlaps
+    o_start, o_end = window_bounds(120, end_ms=(1_000 - 120) * day_ms)
+    assert o_end == start              # older window ends where the trailing one starts
+    assert o_start < o_end <= start    # strictly in the past, no overlap
+    # default (now) trails the clock
+    t_start, t_end = window_bounds(30)
+    assert t_end - t_start == 30 * day_ms
+
+
+def test_default_cache_path_window_keying():
+    from hl_bot.backtest.data import default_cache_path
+
+    coins = ["SOL", "ETH", "BTC"]
+    trailing = default_cache_path(coins, "1h", 120)
+    # trailing window keeps the legacy key (existing caches still resolve)
+    assert trailing.name == "BTC-ETH-SOL_1h_120d.json.gz"
+    # a historical window lands in a distinct, end-date-tagged file
+    hist = default_cache_path(coins, "1h", 120, end_ms=1_700_000_000_000)
+    assert hist != trailing
+    assert "_end" in hist.name
+    # same end_ms is stable; a different end_ms is a different file
+    assert hist == default_cache_path(coins, "1h", 120, end_ms=1_700_000_000_000)
+    assert hist != default_cache_path(coins, "1h", 120, end_ms=1_690_000_000_000)

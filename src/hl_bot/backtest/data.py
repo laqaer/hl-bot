@@ -247,6 +247,17 @@ def build_frames(
     return frames
 
 
+def window_bounds(days: int, end_ms: int | None = None) -> tuple[int, int]:
+    """[start, end] ms for a ``days``-long window ending at ``end_ms`` (default now).
+
+    Pure (modulo the default clock) so out-of-time windows are unit-testable: pass
+    an explicit ``end_ms`` in the past to fetch a *disjoint, older* window for
+    out-of-sample validation instead of always the trailing ``days``.
+    """
+    end = int(time.time() * 1000) if end_ms is None else int(end_ms)
+    return end - days * 86_400_000, end
+
+
 def load_frames(
     coins: list[str],
     *,
@@ -255,10 +266,15 @@ def load_frames(
     with_funding: bool = True,
     base_url: str = "https://api.hyperliquid.xyz",
     vwap_window: int = 60,
+    end_ms: int | None = None,
 ) -> list[Frame]:
-    """Fetch real history and build frames. Requires network access."""
-    end_ms = int(time.time() * 1000)
-    start_ms = end_ms - days * 86_400_000
+    """Fetch real history and build frames. Requires network access.
+
+    ``end_ms`` (default now) lets callers pull a *historical* window ending in the
+    past — used for out-of-time validation (re-confirm an edge on a fresh, disjoint
+    window). The trailing-window behavior is unchanged when ``end_ms`` is None.
+    """
+    start_ms, end_ms = window_bounds(days, end_ms)
     candles_by_coin: dict[str, list[dict[str, Any]]] = {}
     funding_by_coin: dict[str, list[dict[str, Any]]] = {}
     for coin in coins:
@@ -294,10 +310,21 @@ def load_cached_frames(path: str | Path) -> list[Frame]:
     return [Frame(**d) for d in payload]
 
 
-def default_cache_path(coins: list[str], interval: str, days: int) -> Path:
-    """Stable on-disk location for a (coins, interval, days) backtest dataset."""
+def default_cache_path(
+    coins: list[str], interval: str, days: int, end_ms: int | None = None
+) -> Path:
+    """Stable on-disk location for a (coins, interval, days[, end]) backtest dataset.
+
+    A trailing (``end_ms is None``) window keeps the original key so existing
+    caches still resolve. A historical window is tagged with its end date so an
+    out-of-time fetch lands in a *distinct* file and can't collide with the
+    trailing cache for the same coins/interval/days.
+    """
     from ..config import DATA_DIR
     key = f"{'-'.join(sorted(coins))}_{interval}_{days}d"
+    if end_ms is not None:
+        day = time.strftime("%Y%m%d", time.gmtime(int(end_ms) / 1000))
+        key += f"_end{day}"
     return DATA_DIR / "backtest_cache" / f"{key}.json.gz"
 
 
@@ -310,12 +337,17 @@ def cached_or_fetch(
     cache_path: str | Path | None = None,
     refresh: bool = False,
     vwap_window: int = 60,
+    end_ms: int | None = None,
 ) -> list[Frame]:
-    """Return frames from cache if present, else fetch (network) and cache them."""
-    p = Path(cache_path) if cache_path else default_cache_path(coins, interval, days)
+    """Return frames from cache if present, else fetch (network) and cache them.
+
+    ``end_ms`` selects a historical (out-of-time) window; it is folded into the
+    default cache key so trailing and historical windows never share a file.
+    """
+    p = Path(cache_path) if cache_path else default_cache_path(coins, interval, days, end_ms)
     if p.exists() and not refresh:
         return load_cached_frames(p)
     frames = load_frames(coins, interval=interval, days=days,
-                         base_url=base_url, vwap_window=vwap_window)
+                         base_url=base_url, vwap_window=vwap_window, end_ms=end_ms)
     save_frames(p, frames)
     return frames
