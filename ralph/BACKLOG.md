@@ -51,16 +51,16 @@ Keep it ruthlessly prioritized: the top item should always be the highest-levera
 - [ ] **B6old — (superseded by B6/B7 above)** Map `funding_payments` to the agent
   holding the position at funding time (via cloid→position replay), so
   `scoring.metrics` includes funding in each agent's net. (REVIEW C4.)
-- [~] **B7 — Per-agent equity curves + Sharpe/DD.** Sharpe done (Iteration 7,
+- [x] **B7 — Per-agent equity curves + Sharpe/DD.** Sharpe done (Iteration 7,
   daily-PnL). **Configs standardized (Iteration 12):** removed the dead
   `max_drawdown` demote guardrail from `funding_arb_v1.yaml` (max_drawdown/calmar
   are account-only — always N/A for a real agent, so it could never fire); demote
-  now keys on the computable `edge_bps`. Added `test_no_config_gates_a_real_agent_
-  on_account_only_metrics` so no config can regress to a dead gate. **Remaining
-  (B7-dd):** a real per-agent maxDD/calmar needs a *capital-base convention*
-  (the backtest anchors on `starting_capital`; live per-agent scoring has none) —
-  design that before computing a fractional per-agent drawdown, or it'll mislead.
-  (REVIEW C5.)
+  now keys on the computable `edge_bps`. **B7-dd done (Iteration 14):** added
+  `Scorecard.max_drawdown_usd` — the peak-to-trough *dollar* give-back of the
+  cumulative net-PnL curve. The design decision the capital-base concern called
+  for: a *fractional* DD needs a capital base, but a *dollar* DD does not, so it's
+  computable for every real agent and gateable by the supervisor. track_record
+  reuses it (single source of truth). (REVIEW C5.)
 - [x] **B8 — Record actual fill price.** Done: `femr_tick` now logs the confirmed
   `res.avg_px`/`res.filled_sz` on fill so stops/TPs key off the real entry. (M1.)
 - [x] **B9 — fills→positions replay.** Done: `db/positions.py`
@@ -75,8 +75,9 @@ Keep it ruthlessly prioritized: the top item should always be the highest-levera
   `hlbot ws` service writes a snapshot; live tick overlays it (HLBOT_WS_SNAPSHOT)
   for sub-second mids, L2 book_top, and a real liquidations feed (fixes C6), with
   REST fallback. Next: userFills WS for instant maker-fill detection. (Iteration 5.)
-- [ ] **B-book — Book-aware maker pricing.** Post at touch/microprice using L2
-  depth (needs B10) instead of mid; raises maker fill rate.
+- [x] **B-book — Book-aware maker pricing.** Done (Iteration 8): `maker_limit_price`
+  joins the near touch from the WS L2 book; live maker entries price off
+  `view.book_top` (fallback mid, never cross).
 - [x] **B11 — Retire or feed liq_cascade.** Done: removed the dead
   `{"type":"liquidations"}` REST call (a non-existent HL endpoint, C6 root cause)
   from `_enrich_view`; liquidations now come solely from the WS feed (B10), with
@@ -91,7 +92,8 @@ Keep it ruthlessly prioritized: the top item should always be the highest-levera
   crashed the whole tick; it now logs an `error` decision and continues, same as
   the safe wrapper. `defer_actions` parametrizes the place/flatten/hold
   "log-after-fill" behavior. Tested (3 cases). (Iteration 13, REVIEW M3.)
-- [ ] **B13 — Move hardcoded trader address to config.** (REVIEW M6.)
+- [x] **B13 — Move hardcoded trader address to config.** Done (Iteration 6):
+  `_resolve_trader_address` (HL_TRADER_ADDRESS → HL_ADDRESS → legacy). (REVIEW M6.)
 - [x] **B14 — Go-live runbook in-repo.** `docs/GO_LIVE.md`: gated checklist,
   secrets/env, promote/kill-switch/rollback, monitoring. (REVIEW D3.)
 - [ ] **B14a — Deploy automation.** Codify the EC2/systemd/Hermes cron + DB sync

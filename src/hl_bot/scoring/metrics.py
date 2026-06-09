@@ -7,6 +7,10 @@ For each agent we compute over rolling windows (1h, 24h, 7d, 30d, all):
   - net_pnl = realized + funding - fees
   - n_trades, win_rate, avg_win, avg_loss, profit_factor
   - sharpe (daily-resampled), max_drawdown, calmar
+  - max_drawdown_usd: peak-to-trough dollar give-back of the cumulative net-PnL
+    curve. Unlike the fractional max_drawdown (which needs a capital base and is
+    therefore '_account'-only), this is in dollars, so it is computable for every
+    real agent and can back a per-agent risk gate.
 
 Equity curve for Sharpe/DD is built from equity_snapshots when the agent is
 "the whole account" (default) or from cumulative agent net_pnl when attribution
@@ -48,8 +52,9 @@ class Scorecard:
     avg_loss: float
     profit_factor: float
     sharpe: float | None
-    max_drawdown: float | None
+    max_drawdown: float | None      # fractional; '_account' only (needs capital base)
     calmar: float | None
+    max_drawdown_usd: float | None  # dollar give-back; computable for every agent
     notional_traded: float
     edge_bps: float | None      # net_pnl / notional_traded in basis points
 
@@ -224,6 +229,25 @@ def _max_dd(equity: pd.Series) -> float | None:
     return float(dd.min()) if not dd.empty else None
 
 
+def _dollar_max_drawdown(daily: list[float]) -> float | None:
+    """Largest peak-to-trough dollar drop of the cumulative PnL curve (≤ 0).
+
+    Seeded at a flat $0 baseline, so an agent that only ever loses has a
+    drawdown equal to its total loss. Needs no capital base (it's in dollars,
+    not a fraction of equity), which is exactly what makes it computable for a
+    real agent — the reason the fractional `max_drawdown` cannot be.
+    """
+    if not daily:
+        return None
+    cum = peak = 0.0
+    max_dd = 0.0
+    for x in daily:
+        cum += x
+        peak = max(peak, cum)
+        max_dd = min(max_dd, cum - peak)
+    return max_dd
+
+
 def score_agent(conn: sqlite3.Connection, agent: str, window: Window) -> Scorecard:
     now_ms = int(time.time() * 1000)
     w = WINDOW_MS[window]
@@ -257,9 +281,10 @@ def score_agent(conn: sqlite3.Connection, agent: str, window: Window) -> Scoreca
     edge_bps = float(net / notional * 10_000) if notional > 0 else None
 
     # Sharpe / DD
-    sharpe = dd = calmar = None
+    sharpe = dd = calmar = dd_usd = None
     if agent == "_account":
-        # Account uses the real equity curve (return-based Sharpe + % drawdown).
+        # Account uses the real equity curve (return-based Sharpe + % drawdown,
+        # plus a dollar drawdown straight off the equity values).
         eq = _equity_curve(conn, since)
         if len(eq) >= 3:
             eq["ts"] = pd.to_datetime(eq["ts_ms"], unit="ms")
@@ -267,6 +292,7 @@ def score_agent(conn: sqlite3.Connection, agent: str, window: Window) -> Scoreca
             rets = eq.pct_change().dropna()
             sharpe = _sharpe(rets, 365)
             dd = _max_dd(eq)
+            dd_usd = float((eq - eq.cummax()).min()) if not eq.empty else None
             if dd is not None and dd < 0:
                 ann_ret = (1 + rets.mean()) ** 365 - 1 if not rets.empty else 0
                 calmar = float(ann_ret / abs(dd)) if dd != 0 else None
@@ -282,12 +308,15 @@ def score_agent(conn: sqlite3.Connection, agent: str, window: Window) -> Scoreca
             d = t // 86_400_000
             daily[d] = daily.get(d, 0.0) + s
         sharpe = _daily_pnl_sharpe(list(daily.values()))
+        # Dollar drawdown of the cumulative daily-PnL curve (chronological order;
+        # days with no activity contribute 0 and so never move the curve).
+        dd_usd = _dollar_max_drawdown([daily[d] for d in sorted(daily)])
 
     return Scorecard(
         agent=agent, window=window, n_trades=n_trades,
         realized_pnl=realized, fees_paid=fees, funding_pnl=funding, net_pnl=net,
         win_rate=win_rate, avg_win=avg_win, avg_loss=avg_loss, profit_factor=profit_factor,
-        sharpe=sharpe, max_drawdown=dd, calmar=calmar,
+        sharpe=sharpe, max_drawdown=dd, calmar=calmar, max_drawdown_usd=dd_usd,
         notional_traded=notional, edge_bps=edge_bps,
     )
 

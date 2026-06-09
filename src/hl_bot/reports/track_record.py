@@ -56,20 +56,6 @@ def _daily_sharpe(daily: list[float]) -> float | None:
     return (mean / std * math.sqrt(365)) if std > 0 else None
 
 
-def _dollar_max_drawdown(daily: list[float]) -> float | None:
-    """Largest peak-to-trough dollar drop of the cumulative PnL curve."""
-    if not daily:
-        return None
-    cum = 0.0
-    peak = 0.0
-    max_dd = 0.0
-    for x in daily:
-        cum += x
-        peak = max(peak, cum)
-        max_dd = min(max_dd, cum - peak)
-    return max_dd
-
-
 def build_track_record(
     conn: sqlite3.Connection,
     *,
@@ -109,7 +95,8 @@ def build_track_record(
             "edge_bps": all_sc.edge_bps,
             "win_rate": all_sc.win_rate,
             "sharpe_daily": _daily_sharpe(daily),
-            "max_drawdown_usd": _dollar_max_drawdown(daily),
+            # Single source of truth: the same dollar drawdown the supervisor gates on.
+            "max_drawdown_usd": all_sc.max_drawdown_usd,
             "windows": {
                 w: score_agent(conn, a, w).as_dict()  # type: ignore[arg-type]
                 for w in ("24h", "7d", "30d")

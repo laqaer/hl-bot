@@ -514,3 +514,56 @@ reviewable slice; the duplication that mattered (the decide-loop) is gone.
 maxDD/calmar — needs a design decision), B-book (book-aware maker pricing off L2
 depth, B10 done), B4-RUN / B1 (confirm carry on real history — still
 network-blocked at api.hyperliquid.xyz).
+
+---
+
+## Iteration 14 — 2026-06-08 — per-agent dollar drawdown (B7-dd / C5)
+
+**Context.** P0 is done or network-blocked; P1 honest-measurement is the top
+unblocked lane. B7-dd was the explicitly-parked tail of B7/C5: for a real agent
+`score_agent` returns `max_drawdown`/`calmar` = `None` (the *fractional* DD needs
+a capital base; only the synthetic `_account` has an equity curve). Iteration 12
+removed the one config that gated on it, but there was still **no computable
+per-agent drawdown** for a risk gate to key on. The parked worry was that
+inventing a fractional per-agent DD would feed a misleading number to a live
+demote gate.
+
+**Design decision.** The honest resolution is to *not* invent a fractional DD at
+all: add a **dollar** drawdown. A fractional DD needs a capital base; a *dollar*
+peak-to-trough give-back of the cumulative net-PnL curve does **not** — so it's
+computable for every real agent and meaningful for a tightening-only per-agent
+gate (e.g. demote if 7d give-back exceeds $X). Notably the dollar-DD logic already
+existed in `reports/track_record.py` but wasn't on the `Scorecard`, so the
+supervisor couldn't see it. This lifts it to the single source of truth.
+
+**Changed (1 commit).**
+- **`scoring/metrics.py`** — new `Scorecard.max_drawdown_usd` (`float | None`) +
+  `_dollar_max_drawdown(daily)` (cum-PnL curve seeded at a flat $0 baseline, so an
+  agent that only loses has a drawdown equal to its total loss; result ≤ 0).
+  Computed for real agents from the same daily-PnL series used for Sharpe
+  (trades net of fees **plus** attributed funding, chronological order — gap days
+  contribute 0). For `_account` it's the dollar peak-to-trough of the equity
+  curve. The fractional `max_drawdown` stays `_account`-only and unchanged.
+- **`reports/track_record.py`** — dropped its private `_dollar_max_drawdown`;
+  per-agent `max_drawdown_usd` now comes from `score_agent(...).max_drawdown_usd`
+  (now also folds funding into the curve — more correct, and the exact number the
+  supervisor would gate on).
+- **`supervisor/goals.py`** docstring — documents `max_drawdown_usd` as the
+  capital-base-free per-agent drawdown gates may use.
+- **`tests/test_attribution.py`** (+4) — per-agent dollar DD on a
+  +100/−40/+5 curve = −$40 (and fractional `max_drawdown` stays N/A); a
+  winners-only agent = $0; no-activity = N/A; account dollar DD from a
+  1000→1200→900→1000 equity curve = −$300.
+
+**Evidence.** `uv run pytest -q` → **113 passed** (+4). `ruff check src tests
+scripts` → clean. Measurement/governance-only — no strategy, sizing, or live
+change.
+
+**Also.** Ticked stale backlog boxes that code already satisfied but were never
+checked: **B-book** (book-aware maker pricing, done Iteration 8) and **B13**
+(env-config trader address, done Iteration 6).
+
+**What's next (loop).** A per-agent `max_drawdown_usd` *demote* guardrail on the
+live-candidate configs now that the metric is computable (tightening-only); a
+dollar-calmar (net / |dollar DD|) if a ratio gate is wanted; B4-RUN / B1 (confirm
+carry on real history — still network-blocked at api.hyperliquid.xyz).

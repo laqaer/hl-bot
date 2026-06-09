@@ -122,3 +122,46 @@ def test_single_day_has_no_sharpe(conn):
         _fill(conn, "twap_mr_v1", "BTC", now - i * 1000, pnl=5.0)  # all same day
     sc = score_agent(conn, "twap_mr_v1", "all")
     assert sc.sharpe is None
+
+
+def _equity(conn, t_ms, value):
+    conn.execute(
+        "INSERT INTO equity_snapshots(ts_ms, account_value, total_margin, "
+        "total_ntl_pos, total_raw_usd, withdrawable, raw_json) VALUES(?,?,0,0,0,0,'{}')",
+        (t_ms, value),
+    )
+
+
+def test_per_agent_dollar_drawdown(conn):
+    now = int(time.time() * 1000)
+    # Chronologically (oldest -> newest): +100, -40, +5 -> cumulative 100, 60, 65.
+    # Peak 100, trough 60 -> max give-back is -$40. fee=0 for clean arithmetic.
+    _fill(conn, "twap_mr_v1", "BTC", now - 2 * DAY, pnl=100.0, fee=0.0)
+    _fill(conn, "twap_mr_v1", "BTC", now - 1 * DAY, pnl=-40.0, fee=0.0)
+    _fill(conn, "twap_mr_v1", "BTC", now - 0 * DAY, pnl=5.0, fee=0.0)
+    sc = score_agent(conn, "twap_mr_v1", "all")
+    assert sc.max_drawdown_usd == pytest.approx(-40.0)
+    # It needs no capital base, so the fractional max_drawdown stays N/A for a real agent.
+    assert sc.max_drawdown is None
+
+
+def test_only_winning_agent_has_zero_drawdown(conn):
+    now = int(time.time() * 1000)
+    _fill(conn, "twap_mr_v1", "BTC", now - 1 * DAY, pnl=10.0, fee=0.0)
+    _fill(conn, "twap_mr_v1", "BTC", now - 0 * DAY, pnl=20.0, fee=0.0)
+    sc = score_agent(conn, "twap_mr_v1", "all")
+    assert sc.max_drawdown_usd == pytest.approx(0.0)
+
+
+def test_no_activity_has_na_drawdown(conn):
+    sc = score_agent(conn, "twap_mr_v1", "all")
+    assert sc.max_drawdown_usd is None
+
+
+def test_account_dollar_drawdown_from_equity_curve(conn):
+    now = int(time.time() * 1000)
+    # Equity 1000 -> 1200 -> 900 -> 1000 across 4 days: peak 1200, trough 900 -> -$300.
+    for i, v in enumerate([1000.0, 1200.0, 900.0, 1000.0]):
+        _equity(conn, now - (3 - i) * DAY, v)
+    sc = score_agent(conn, "_account", "all")
+    assert sc.max_drawdown_usd == pytest.approx(-300.0)

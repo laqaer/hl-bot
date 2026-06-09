@@ -27,10 +27,13 @@ Each agent has a contract:
       - {metric: n_trades, window: 30d, op: ">=", threshold: 100}
 
 Operators: '>', '>=', '<', '<=', '==', '!='.
-Metrics: any field on Scorecard. Note max_drawdown/calmar are computed only for
-the synthetic '_account' agent (they need a capital base); for a real agent they
-are always N/A, so gating a real agent on them means the gate can never fire.
-Real-agent gates should key on net_pnl / edge_bps / sharpe / win_rate / n_trades.
+Metrics: any field on Scorecard. Note the *fractional* max_drawdown/calmar are
+computed only for the synthetic '_account' agent (they need a capital base); for
+a real agent they are always N/A, so gating a real agent on them means the gate
+can never fire. For a per-agent drawdown gate use the *dollar* max_drawdown_usd
+(peak-to-trough give-back of the cumulative net-PnL curve), which needs no
+capital base and is computable for every agent. Real-agent gates should key on
+net_pnl / edge_bps / sharpe / win_rate / n_trades / max_drawdown_usd.
 """
 
 from __future__ import annotations
