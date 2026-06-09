@@ -31,6 +31,33 @@ Keep it ruthlessly prioritized: the top item should always be the highest-levera
   (3) once ~30–60d of 1m/5m data exists, re-run the sub-bar execution + fine-cadence durability theses the
   retention ceiling blocked (B-exec-tickmark overlaps). Until then the search stays exhausted on HL historical
   data.
+- [~] **B-illiq — Cross-sectional illiquidity / Amihud premium (the TWELFTH structurally-different thesis;
+  the FIRST to key off VOLUME / liquidity, orthogonal to all eleven priors). A GENUINE LEAD (Iteration 45):
+  the strongest cross-basket result of any thesis — DURABLE on high-funding alts AND sign-stable-positive on
+  a disjoint alt basket (does NOT sign-flip, unlike pairs/momentum).** Every prior thesis keyed off price
+  *return* (TWAP-MR, x-sect/ts/majors-1d momentum), *funding level* (carry), a *pairwise ratio* (pairs), a
+  *cross-market gap* (basis), the *clock* (session), *microstructure* (maker spread), or *realized-vol rank*
+  (low-vol); none off **trading volume / liquidity**. The Amihud (2002) illiquidity premium is one of TradFi's
+  most robust a-priori factors (less-liquid assets compensate holders for price-impact/inventory risk). New
+  pure `agents/xsect_illiq.py` (`XSectIlliqAgent`): illiquidity = mean(|log-return| over `illiq_lookback`) /
+  dollar-volume (`day_ntl_vlm`), dollar-neutral LONG the most-illiquid top_k / SHORT the most-liquid top_k;
+  `invert` flips legs. Uses only data the cached frames already carry (no plumbing). Registered in confirm/
+  backtest, +8 unit tests. **Result (real HL cache, 1h, maker, 120d×2 disjoint windows):** **high-funding alts**
+  base is **✅ DURABLE** — positive maker edge in BOTH windows *in AND oos* (trailing +42.0 in+18.7/oos+98.7;
+  older +13.2 in+5.3/oos+67.0) — the first to clear the full canonical bar since pairs (Iter 29), at sane
+  per-round-trip magnitudes. **held-out alts (disjoint basket)** is sign-stable-positive both windows
+  (+35.3/+8.5, blocked only by the older window's marginal in −1.9 walk-forward) — crucially it does **NOT
+  sign-flip** on a disjoint basket, the failure that killed pairs (−4.7) and momentum. **majors** base is
+  sign-stable-positive but huge/static (+1314.8/+116.6 — a near-static long-low-volume-coin / short-BTC
+  *directional* bet, the rank barely rotates when volume dispersion is extreme); the **majors invert** mirror
+  is cleanly negative both windows (−1316.8/−118.6), so the signal is internally coherent (not noise). **Net:
+  a genuine LEAD to push, not a prune and not yet a deploy** — durability is necessary-not-sufficient (pairs
+  passed the bar then failed leave-pairs-out/leave-one-out/diversification). `xsect_illiq_v1` stays maker-only
+  paper; nothing touches capital. Numbers in PROGRESS Iter 45. **Push-slices (next iterations):** (1)
+  plateau-sweep `illiq_lookback` (is the alts PASS a param knife-edge?); (2) leave-one-coin-out on the alts
+  basket (is it one lucky coin?); (3) is the alts edge the *liquidity* factor or a confound with low-volume
+  alts simply being the windows' pumpers (size/momentum confound)? decompose; (4) longer baseline / `--windows
+  3`; (5) the majors directional-confound decomposition (strip the static tilt). Maker-only, no live change.
 - [x] **B-lowvol — Cross-sectional low-volatility / betting-against-volatility (the ELEVENTH structurally-
   different thesis; the FIRST to key off the volatility cross-section, orthogonal to all ten priors). PRUNED
   as a deployable edge (Iteration 44).** Every prior thesis keyed off price *return* (TWAP-MR, x-sect/ts/

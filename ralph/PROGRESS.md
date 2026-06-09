@@ -2660,3 +2660,69 @@ classes are getting scarce — remaining candidates would be combinations of pru
 new) or require data HL doesn't retain (sub-bar/tick). Remaining unblocked non-edge tracks are the P3 design
 spikes (B16 HL vault eval, B17 moonshot sleeve spec), both design-only and gated behind a real edge before
 any capital.
+
+## Iteration 45 — 2026-06-08 — B-illiq: cross-sectional illiquidity (Amihud premium) — the TWELFTH thesis, a GENUINE LEAD
+
+**Context.** Eleven structurally-different theses are pruned (Iter 16→44) and the fine-cadence direction is
+retention-blocked on HL candles (Iter 39; the recorder forward-captures 1m data for a future slice-3 re-run,
+but that thread is data-/time-gated). The operator's standing preference is real-data edge work over
+reporting/governance polish, so rather than a Path-C report I tested **one** genuinely-new, a-priori-motivated,
+structurally-different thesis the search had never touched: the **cross-section of liquidity / trading
+volume**. Every prior candidate keyed off price *return* (TWAP-MR, x-sect/ts/majors-1d momentum), *funding
+level* (carry), a *pairwise ratio* (pairs), a *cross-market gap* (basis), the *clock* (session),
+*microstructure* (maker spread), or *realized-vol rank* (low-vol) — **none off volume**. The Amihud (2002)
+illiquidity premium is — alongside size/value/momentum/low-vol — one of TradFi's most robust a-priori
+cross-asset factors: less-liquid assets must compensate holders for price-impact / inventory risk, so they
+earn higher expected returns. And liquidity is *even more persistent* bar-to-bar than realized vol — the
+property that sign-flipped the momentum leads — so it was worth a clean durability test, not a guess.
+
+**What I built (pure, tested).** New `src/hl_bot/agents/xsect_illiq.py` (`XSectIlliqAgent` / `XSectIlliqConfig`),
+mirroring the `xsect_lowvol` machinery but with the signal swapped to **Amihud illiquidity**:
+`_illiquidity(closes, dollar_vol, lb)` = mean(|log-return| over the last `lb` bars) / dollar-volume — price
+impact per dollar of volume; dollar-neutral LONG the most-illiquid `top_k` / SHORT the most-liquid `top_k`,
+requiring ≥`2*top_k` eligible coins to form both legs; exits when a coin drops out of the rank set or switches
+legs; an `invert` flag flips the legs (liquidity-chase mirror) at no extra code. **Uses only data the cached
+frames already carry** (`day_ntl_vlm` as the dollar-volume normalizer, `closes` for the |returns|) — zero new
+data plumbing, so it runs fully offline against the existing cache. Registered in both `confirm`/`backtest`
+CLI factories. +8 unit tests (longs most-illiquid/shorts most-liquid; invert flips both legs; needs ≥2*top_k
+coins else holds; thin coins filtered by the volume gate; short series holds; illiq == manual |log-ret|/vol
+formula; illiq rises with |return| and falls with volume; zero-volume → None).
+
+**Result (real HL cache, 1h, maker_fee=1bp, `confirm --windows 2 --prefer maker`, two disjoint 120d windows).**
+- **high-funding alts (AERO,APT,EIGEN,INJ,NIL,PURR,PYTH,S,SPX,TRUMP) base:** **✅ DURABLE** — positive maker
+  edge in BOTH disjoint windows *in AND oos* (trailing +42.0bps in +18.7/oos +98.7; older +13.2bps in
+  +5.3/oos +67.0). **The first candidate to clear the full canonical durability bar since pairs (Iter 29)**,
+  and at *sane* per-round-trip magnitudes (not a static-tilt artifact).
+- **held-out alts (AAVE,ARB,ENA,JUP,LDO,OP,SEI,SUI,TIA,WLD — disjoint basket):** ❌ NOT DURABLE but
+  **sign-stable POSITIVE both windows** (trailing +35.3 in +35.0/oos +54.0; older +8.5, blocked only by the
+  older window's marginal in −1.9 walk-forward). **Crucially it does NOT sign-flip on a disjoint basket** —
+  the exact failure that killed pairs (held-out −4.7, Iter 31) and the momentum leads (alt-basket sign-flips).
+  This is a materially stronger cross-basket generalization signal than any prior lead.
+- **majors (AVAX,BTC,ETH,HYPE,LINK,SOL) base:** ❌ NOT DURABLE but sign-stable-positive at *huge/static*
+  magnitudes (+1314.8/+116.6) — when volume dispersion is extreme (BTC/ETH ≫ LINK), the illiq rank barely
+  rotates, so the book degenerates into a near-static LONG-low-volume-coin / SHORT-BTC **directional** bet
+  (confounded with the specific coins, not a clean factor harvest). The "lead, not artifact" bucket but not a
+  clean test.
+- **majors invert (liquidity-chase mirror):** ❌ cleanly NEGATIVE both windows (−1316.8/−118.6) — the exact
+  mirror of the majors base, so the signal is **internally coherent** (a real ranked effect, not noise).
+
+**Conclusion.** The twelfth thesis is a **genuine LEAD — the strongest cross-basket result of the entire
+search.** It DURABLY clears the canonical bar on the high-funding alts basket AND stays sign-stable-positive
+on a *disjoint* alt basket (no sign-flip), with a coherent majors mirror. This is the first thesis since pairs
+to clear the bar, and unlike pairs it does not immediately collapse on a held-out basket. **But it is NOT a
+deploy:** the durability bar is necessary-not-sufficient (pairs passed it then failed leave-pairs-out,
+leave-one-out, AND diversification, Iter 31/32/33), and a key open confound is whether the alts edge is the
+*liquidity factor* or simply that the low-volume alts were these windows' pumpers (a size/momentum confound).
+`xsect_illiq_v1` stays maker-only paper; nothing touches capital.
+
+**Evidence (gate).** `uv run pytest -q` → **265 passed** (+8 xsect_illiq). `uv run ruff check src tests
+scripts` → clean. Backtests ran fully offline against the existing gitignored cache (no `data/` writes
+committed). No strategy promoted, no roster live-mode change.
+
+**What's next (loop).** Push the lead, don't deploy it — the same disciplined slice sequence that pruned
+pairs: (1) plateau-sweep `illiq_lookback` (is the alts PASS a param knife-edge?); (2) leave-one-coin-out on
+the alts basket (is it one lucky coin?); (3) the liquidity-vs-confound decomposition (regress the alts edge
+against trailing return / size to see if it's really the Amihud premium or just low-vol-coin momentum); (4)
+longer baseline / `--windows 3`; (5) strip the majors static directional tilt to test whether a *rotating*
+illiq signal survives on majors. The first of these (param plateau + leave-one-coin-out) is the highest-value
+next iteration — if the alts PASS survives both, this becomes the best edge candidate the search has produced.
