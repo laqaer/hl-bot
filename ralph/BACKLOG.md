@@ -24,6 +24,30 @@ Keep it ruthlessly prioritized: the top item should always be the highest-levera
   cost, −0.0bps; OOS still +17.3bps, full-sample taker-1× +5.6bps) — the older
   regime's edge survives only at maker cost, consistent with REVIEW C1. This
   closes "what's next (b) — longer-history confirm for G0 stability."
+- [x] **B1d-trend-pin — Pin the paper agent to the G0-confirmed universe.** Done
+  (Iter 36). Found a deploy-vs-evidence drift of the same class as the 1m-vs-1h bug:
+  the live `_enrich_view` feeds `closes` for the **top-20-by-volume** set (drifts day
+  to day), but G0/G1 were confirmed on a **fixed** 20-coin liquid universe — so the
+  paper agent was trading whatever names drifted into the volume top-20, not the
+  confirmed set, making the G1 forward-test an unfaithful test of the G0 evidence.
+  Fix: added a tightening-only `universe` allowlist to `TrendBreakoutConfig` (default
+  `()` = off = trade every coin fed, so all backtests/`confirm` are unchanged); when
+  set, only **entries** are filtered to the allowlist — **exits are never filtered**
+  so a coin leaving the set can't strand an open position. The `femr_tick` roster pins
+  trend_breakout to the exact confirmed 20 names (ADA APT ARB AVAX BTC DOGE ETH HYPE
+  INJ LINK LTC NEAR OP SEI SOL SUI TIA TRX WIF ZEC). 2 new tests (entries restricted +
+  default-off backward compat; seeded out-of-universe position still exits). 165→167.
+  No edge claim — measurement faithfulness over the Iter-30/35 G0-confirmed signal.
+  **Follow-up (next):** `_enrich_view` still only *fetches* closes for top-20-by-volume,
+  so confirmed names that fall out of the volume top-20 won't have closes to trade that
+  tick (the agent trades the intersection). A faithful deployment would fetch 1h closes
+  for the pinned universe directly; left in the backlog as B1d-trend-pin-fetch.
+- [ ] **B1d-trend-pin-fetch — Feed `_enrich_view` the pinned universe's 1h closes.**
+  Today `_enrich_view` builds `closes` only for top-20-by-volume; the pinned trend
+  agent therefore trades (confirmed universe ∩ today's volume-top-20). For a fully
+  faithful forward-test, fetch `build_closes_1h` for the union of (top-20-by-volume,
+  the trend agent's pinned `universe`) so every confirmed name always has its 1h series
+  available. Small, testable; needs a way to surface the pinned set to `_enrich_view`.
 - [x] **B1d-trend-deploy — Wire trend_breakout to PAPER on the 20-coin universe.**
   G0→paper is the next gate. **BLOCKER (honest):** live `cli/main.py::_enrich_view`
   fills `view.extra['closes']` with **60×1-MINUTE** candles (the VWAP feed), but the

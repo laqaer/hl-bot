@@ -11,6 +11,11 @@ description: >-
   slippage, cost-robust to taker-3x +1.6bps). Maker is the load-bearing lever:
   prefer=taker does NOT confirm because the older 90d half is flat at taker cost
   (-0.0bps) — so this stays a maker-execution strategy (REVIEW C1).
+  The live/paper roster PINS this agent to the exact 20-coin universe it was
+  confirmed on (ADA APT ARB AVAX BTC DOGE ETH HYPE INJ LINK LTC NEAR OP SEI SOL
+  SUI TIA TRX WIF ZEC) via the agent `universe` allowlist, so the G1 paper clock
+  is a faithful forward-test of the G0 evidence rather than a drifting
+  top-20-by-volume set (Iter 36, "evidence before capital").
 mode: paper
 
 # Per-agent metrics only (sharpe/max_drawdown are account-level). G1 paper gate

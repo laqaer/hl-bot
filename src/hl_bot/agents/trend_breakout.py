@@ -56,6 +56,12 @@ class TrendBreakoutConfig:
     max_notional_per_trade: float = 100.0
     max_total_notional: float = 300.0
     max_concurrent_positions: int = 4
+    # Universe allowlist (tightening-only; () = off = trade every coin fed). When
+    # set, only ENTER coins in this set — so the deployed agent trades exactly the
+    # universe its edge was confirmed on, instead of whatever the live closes feed
+    # happens to carry (top-20-by-volume drifts day to day). Exits are NEVER
+    # filtered, so a coin leaving the allowlist can't strand an open position.
+    universe: tuple[str, ...] = ()
     # Regime gate (tightening-only; 0.0 = off). When >0, only enter a breakout if
     # the trailing ``regime_lookback``-bar efficiency ratio clears this floor —
     # i.e. the broader context is genuinely trending, not chopping. Sits out chop.
@@ -81,6 +87,7 @@ class TrendBreakoutAgent(Agent):
             max_notional_per_trade=float(c.get("max_notional_per_trade", 100.0)),
             max_total_notional=float(c.get("max_total_notional", 300.0)),
             max_concurrent_positions=int(c.get("max_concurrent_positions", 4)),
+            universe=tuple(c.get("universe", ()) or ()),
             min_efficiency_ratio=float(c.get("min_efficiency_ratio", 0.0)),
             regime_lookback=int(c.get("regime_lookback", 60)),
         )
@@ -156,6 +163,8 @@ class TrendBreakoutAgent(Agent):
         for coin, closes in closes_by_coin.items():
             if coin in active_after:
                 continue
+            if self.cfg.universe and coin not in self.cfg.universe:
+                continue  # trade only the confirmed universe (exits unaffected)
             if vol.get(coin, 0) < self.cfg.min_daily_volume_usd:
                 continue
             mid = view.mids.get(coin)

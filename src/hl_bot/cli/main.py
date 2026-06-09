@@ -487,12 +487,20 @@ def femr_tick(live: bool = False, execution: str = "taker"):
         }), conn=conn),
         TwapMrAgent(config=_cfg("twap_mr_v1", {}), conn=conn),
         TwapMrRegimeAgent(config=_cfg("twap_mr_regime_v1", {}), conn=conn),
-        # G0-confirmed (Iter 30): trend_breakout earns its paper track record on the
-        # top-20-by-volume universe `_enrich_view` already feeds it (real 1h closes
-        # since Slice 1). Defaults reproduce the confirmed backtest config; paper by
-        # default and live-gated by agent_state, so this starts the G1 paper clock
-        # without touching capital.
-        TrendBreakoutAgent(config=_cfg("trend_breakout_v1", {}), conn=conn),
+        # G0-confirmed (Iter 30/35): trend_breakout earns its paper track record on
+        # the SAME 20-coin liquid universe its edge was walk-forward confirmed on.
+        # `_enrich_view` feeds top-20-by-volume closes (real 1h since Slice 1), which
+        # DRIFTS day to day, so the agent is pinned to the confirmed `universe` — it
+        # only enters those names (exits still run on anything held), keeping the
+        # paper agent a faithful forward-test of the G0 evidence ("evidence before
+        # capital"). Paper by default + live-gated by agent_state; no capital touched.
+        TrendBreakoutAgent(config=_cfg("trend_breakout_v1", {
+            "universe": [
+                "ADA", "APT", "ARB", "AVAX", "BTC", "DOGE", "ETH", "HYPE", "INJ",
+                "LINK", "LTC", "NEAR", "OP", "SEI", "SOL", "SUI", "TIA", "TRX",
+                "WIF", "ZEC",
+            ],
+        }), conn=conn),
         LiqCascadeAgent(config=_cfg("liq_cascade_v1", {}), conn=conn),
         BasisAgent(config=_cfg("basis_v1", {}), conn=conn),
     ]

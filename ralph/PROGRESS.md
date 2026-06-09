@@ -1769,3 +1769,57 @@ backtest evidence to weigh the (always human-gated) live_small decision against.
 further hardening: an even-longer window if HL 1h history extends past 180d, or a
 365d-equivalent at 4h. (c) The remaining B1d candidate (i) — spot-vs-perp basis at
 funding deciles — for a *second uncorrelated* edge, now that the first is twice-confirmed.
+
+---
+
+## Iteration 36 — 2026-06-09 — Pinned the paper trend agent to the G0-confirmed universe (closes a deploy-vs-evidence drift).
+
+**Context.** Iter 30/35 confirmed `trend_breakout_v1` (G0, twice — 90d + 180d) on a
+**fixed** 20-coin liquid universe; Iters 31–34 wired it to the paper roster and made
+the G1 clock observable. Reading the live wiring this iteration surfaced a
+deploy-vs-evidence drift of the *same class* the project already guards against (the
+careful 1m-vs-1h `closes` fix in B1d-trend-deploy): `cli/main.py::_enrich_view` builds
+`view.extra['closes']` for the **top-20-by-volume** set, which drifts day to day,
+while the agent trades *every* coin in that feed (only filtered by `min_daily_volume_usd`).
+So the paper agent was trading whatever names drifted into the volume top-20 — not the
+confirmed 20 — making the G1 forward-test an *unfaithful* test of the G0 evidence.
+Picked this over the speculative spot-vs-perp basis hunt (candidate (i)) because
+hardening the faithfulness of the *one edge we have* before any live decision is
+higher-leverage than starting a second, unconfirmed edge ("evidence before capital").
+
+**Changed (1 commit).**
+- **`agents/trend_breakout.py`** — `TrendBreakoutConfig.universe: tuple[str,...] = ()`
+  (tightening-only; `()` = off = trade every coin fed, so every existing backtest and
+  `hlbot confirm` run is byte-for-byte unchanged). Parsed in `__init__`
+  (`tuple(c.get("universe", ()) or ())`). In `decide`, the **entry** candidate loop
+  skips coins not in the allowlist when set; the **exit** loop is untouched, so a coin
+  leaving the universe can never strand an open position.
+- **`cli/main.py`** — the `femr_tick` roster pins trend_breakout to the exact confirmed
+  20 names (ADA APT ARB AVAX BTC DOGE ETH HYPE INJ LINK LTC NEAR OP SEI SOL SUI TIA
+  TRX WIF ZEC) via the `_cfg("trend_breakout_v1", {"universe": [...]})` default, with a
+  comment explaining the faithfulness rationale. Paper by default + live-gated by
+  `agent_state` — no capital touched.
+- **`configs/trend_breakout_v1.yaml`** — description documents the pinned universe.
+- **`tests/test_trend_breakout.py`** (+2) — (1) with `universe=["BTC"]`, two coins
+  both breaking out → only BTC entered, the drifted-in name skipped; empty universe
+  (default) takes both (backward compat). (2) a seeded out-of-universe open position
+  (TST not in `["BTC"]`) reversed below its exit channel still **flattens** — exits
+  aren't filtered.
+
+**Evidence (tests/lint).** 165 → **167 pass**; `ruff check src tests scripts` clean.
+No edge claim — this is measurement-faithfulness plumbing over the Iter-30/35
+G0-confirmed signal; the edge numbers stand from `hlbot confirm` (90d + 180d).
+
+**Why it matters.** The G1 paper gate is the decisive pre-live forward-test, and it's
+only meaningful if the paper agent trades the *same* strategy that passed G0. Pinning
+the universe removes the silent drift (volatile alts cycling through the volume top-20)
+so the forward sample validates the confirmed edge rather than an ever-changing
+universe. Strictly tightening, default-off, fully offline-tested; promotion to
+live_small stays human-gated.
+
+**What's next (loop).** (a) **B1d-trend-pin-fetch** (new backlog item): `_enrich_view`
+still only *fetches* closes for top-20-by-volume, so the pinned agent trades the
+intersection (confirmed ∩ today's top-20). Fetch `build_closes_1h` for the union of the
+volume top-20 and the agent's pinned `universe` so every confirmed name always has its
+1h series. (b) Let the G1 paper clock run (time-gated). (c) The remaining B1d candidate
+(i) spot-vs-perp basis at funding deciles for a *second uncorrelated* edge.

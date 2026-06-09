@@ -121,6 +121,64 @@ def test_trailing_channel_exits_on_reversal():
     assert "place" in actions and "flatten" in actions
 
 
+def test_universe_allowlist_restricts_entries_only():
+    """Pinned to the confirmed universe, the agent only ENTERS allowlisted coins —
+    so the live paper agent trades the universe its edge was confirmed on, not
+    whatever the (drifting) top-20-by-volume closes feed carries (evidence before
+    capital). An out-of-universe coin breaking out is skipped; an in-universe one
+    is taken; exits are never filtered.
+    """
+    from hl_bot.agents.base import MarketView
+
+    # Both coins print a fresh 6-bar-high breakout on the last bar.
+    closes = {
+        "BTC": [100.0] * 6 + [100.0 + 2.0 * i for i in range(1, 8)],   # in-universe
+        "PEPE": [100.0] * 6 + [100.0 + 2.0 * i for i in range(1, 8)],  # drifted in
+    }
+    vol = {c: 50_000_000.0 for c in closes}
+    mids = {c: s[-1] for c, s in closes.items()}
+    view = MarketView(ts_ms=100 * HOUR, mids=mids,
+                      extra={"closes": closes, "day_ntl_vlm": vol})
+
+    conn = init_db(":memory:")
+    cfg = {**CFG, "universe": ["BTC"]}
+    entries = {(d.coin, d.side) for d in TrendBreakoutAgent(config=cfg, conn=conn).decide(view)
+               if d.action == "place"}
+    assert ("BTC", "B") in entries          # confirmed coin entered
+    assert all(c != "PEPE" for c, _ in entries)  # drifted-in coin skipped
+
+    # Empty universe (default) takes both — backward compatible, backtests unchanged.
+    conn2 = init_db(":memory:")
+    entries_off = {(d.coin, d.side) for d in TrendBreakoutAgent(config=CFG, conn=conn2).decide(view)
+                   if d.action == "place"}
+    assert ("BTC", "B") in entries_off and ("PEPE", "B") in entries_off
+
+
+def test_universe_allowlist_does_not_strand_out_of_universe_positions():
+    """A coin that left the allowlist (or was opened before pinning) must still get
+    its trailing-channel / stop / max-hold exit — entries are filtered, exits aren't.
+    Seed an open LONG on TST, then tick with the universe pinned elsewhere and a
+    price that has reversed below the exit channel: the agent must still flatten TST.
+    """
+    from hl_bot.agents.base import MarketView
+
+    conn = init_db(":memory:")
+    # Seed an open long on TST (the agent reads open positions from agent_decisions).
+    conn.execute(
+        "INSERT INTO agent_decisions(ts_ms, agent, action, coin, side, sz, px) "
+        "VALUES(0, 'trend_breakout_v1', 'place', 'TST', 'B', 1.0, 120.0)")
+    conn.commit()
+
+    # TST has reversed well below its trailing exit channel -> exit condition met.
+    closes = {"TST": [120.0, 118.0, 116.0, 110.0, 105.0, 100.0]}
+    view = MarketView(ts_ms=10 * HOUR, mids={"TST": 100.0},
+                      extra={"closes": closes, "day_ntl_vlm": {"TST": 50_000_000.0}})
+    cfg = {**CFG, "universe": ["BTC"]}  # TST is NOT in the allowlist
+    out = TrendBreakoutAgent(config=cfg, conn=conn).decide(view)
+    flattens = {d.coin for d in out if d.action == "flatten"}
+    assert "TST" in flattens  # out-of-universe position still exits, not stranded
+
+
 def _decisions(view) -> set[tuple[str, str | None, str | None]]:
     """(action, coin, side) tuples the agent emits on `view`, no open positions."""
     conn = init_db(":memory:")
