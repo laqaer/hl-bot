@@ -38,12 +38,12 @@ def _funding(conn, coin, t_ms, usdc):
     )
 
 
-def _fill(conn, agent, coin, t_ms, pnl, fee=0.05, sz=1.0, px=100.0):
+def _fill(conn, agent, coin, t_ms, pnl, fee=0.05, sz=1.0, px=100.0, side="B"):
     conn.execute(
         """INSERT INTO fills(hash, tid, time_ms, coin, side, px, sz, start_position,
            dir, closed_pnl, fee, fee_token, builder_fee, cloid, agent, raw_json)
            VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
-        (f"h{agent}{coin}{t_ms}", t_ms, t_ms, coin, "B", px, sz, 0, "Close Long",
+        (f"h{agent}{coin}{t_ms}", t_ms, t_ms, coin, side, px, sz, 0, "Close Long",
          pnl, fee, "USDC", 0, None, agent, "{}"),
     )
 
@@ -74,6 +74,42 @@ def test_funding_split_between_concurrent_holders(conn):
     a = sum(s for _, s in _agent_funding_payments(conn, "xfund_carry_v1", now - DAY))
     b = sum(s for _, s in _agent_funding_payments(conn, "funding_carry_v1", now - DAY))
     assert a == pytest.approx(2.0) and b == pytest.approx(2.0)  # split, no double-count
+
+
+def test_funding_split_by_held_size_when_fills_exist(conn):
+    now = int(time.time() * 1000)
+    # Two agents hold BTC at different sizes (real fills): A long 3, B long 1.
+    _fill(conn, "xfund_carry_v1", "BTC", now - 600_000, pnl=0.0, fee=0.0, sz=3.0)
+    _fill(conn, "funding_carry_v1", "BTC", now - 600_000, pnl=0.0, fee=0.0, sz=1.0)
+    _funding(conn, "BTC", now - 300_000, 4.0)
+    a = sum(s for _, s in _agent_funding_payments(conn, "xfund_carry_v1", now - DAY))
+    b = sum(s for _, s in _agent_funding_payments(conn, "funding_carry_v1", now - DAY))
+    # 4.0 split 3:1 by size — not 2:2 — proving size-weighting beats equal-split.
+    assert a == pytest.approx(3.0)
+    assert b == pytest.approx(1.0)
+    assert a + b == pytest.approx(4.0)  # conserves the account total
+
+
+def test_funding_attribution_handles_offsetting_hedge(conn):
+    now = int(time.time() * 1000)
+    # A long 3, B short 1 -> account net = +2; funding is paid on the net.
+    _fill(conn, "xfund_carry_v1", "BTC", now - 600_000, pnl=0.0, fee=0.0, sz=3.0, side="B")
+    _fill(conn, "funding_carry_v1", "BTC", now - 600_000, pnl=0.0, fee=0.0, sz=1.0, side="A")
+    _funding(conn, "BTC", now - 300_000, 2.0)
+    a = sum(s for _, s in _agent_funding_payments(conn, "xfund_carry_v1", now - DAY))
+    b = sum(s for _, s in _agent_funding_payments(conn, "funding_carry_v1", now - DAY))
+    assert a == pytest.approx(3.0)   # 2.0 * (+3 / +2)
+    assert b == pytest.approx(-1.0)  # 2.0 * (-1 / +2): the hedge collects
+    assert a + b == pytest.approx(2.0)  # signed shares still sum to the total
+
+
+def test_funding_after_fill_close_not_attributed(conn):
+    now = int(time.time() * 1000)
+    # Open long 2 then fully close (sell 2) before funding -> flat, gets nothing.
+    _fill(conn, "funding_carry_v1", "SOL", now - 600_000, pnl=0.0, fee=0.0, sz=2.0, side="B")
+    _fill(conn, "funding_carry_v1", "SOL", now - 500_000, pnl=0.0, fee=0.0, sz=2.0, side="A")
+    _funding(conn, "SOL", now - 100_000, 1.0)
+    assert _agent_funding_payments(conn, "funding_carry_v1", now - DAY) == []
 
 
 def test_funding_not_attributed_outside_holding_window(conn):

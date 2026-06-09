@@ -44,9 +44,10 @@ Keep it ruthlessly prioritized: the top item should always be the highest-levera
 - [x] **B6/B7 — Per-agent funding attribution + Sharpe.** Done: funding split to
   the agent holding the coin at funding time (scoring includes it in net/edge);
   per-agent Sharpe from daily PnL so sharpe-gates evaluate. Tested. (Iteration 7.)
-- [ ] **B6old — (superseded by B6/B7 above)** Map `funding_payments` to the agent
-  holding the position at funding time (via cloid→position replay), so
-  `scoring.metrics` includes funding in each agent's net. (REVIEW C4.)
+- [x] **B6old — (superseded by B6/B7/B9b)** Map `funding_payments` to the agent
+  holding the position at funding time. Done by B9b: `_agent_funding_payments` now
+  splits each payment by *signed held size* from the fills replay (B9), falling
+  back to decision-log equal-split only when no fills exist. (REVIEW C4. Iter 11.)
 - [x] **B7 — Per-agent equity curves + Sharpe/DD.** Done: per-agent Sharpe from
   daily PnL (Iter 7) + per-agent fractional `max_drawdown`/`calmar` from a
   `capital`-based synthetic equity curve (`_daily_pnl_drawdown`), threaded via

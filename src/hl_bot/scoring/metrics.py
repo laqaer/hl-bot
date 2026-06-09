@@ -15,6 +15,7 @@ is partial. We expose both.
 
 from __future__ import annotations
 
+import bisect
 import math
 import sqlite3
 import time
@@ -79,6 +80,10 @@ def _funding_total(conn: sqlite3.Connection, since_ms: int | None) -> float:
 
 _HOLD_INF = 1 << 62
 
+# Residual smaller than this (in coins) counts as flat, matching the fills
+# replay, so float dust from partial fills doesn't leave a phantom holder.
+_SZ_EPS = 1e-9
+
 
 def _coin_holders_over_time(
     conn: sqlite3.Connection,
@@ -111,16 +116,64 @@ def _coin_holders_over_time(
     return intervals
 
 
+def _coin_agent_sizes_over_time(
+    conn: sqlite3.Connection,
+) -> dict[str, tuple[list[int], list[dict[str, float]]]]:
+    """Per coin, fills-derived snapshots of each agent's signed net size over time.
+
+    Returns ``coin -> (times, snaps)`` where ``snaps[i]`` is ``{agent: net_sz}``
+    immediately after the fill at ``times[i]`` (times ascending). This is the
+    fills-based ground truth (B9) for looking up how much of a coin each agent
+    held at any funding timestamp, so a payment can be split by *size* — funding's
+    actual economic driver — rather than equally among holders.
+    """
+    rows = conn.execute(
+        """SELECT time_ms, agent, coin, side, sz FROM fills
+           WHERE coin IS NOT NULL ORDER BY time_ms ASC, tid ASC"""
+    ).fetchall()
+    running: dict[str, dict[str, float]] = {}
+    out: dict[str, tuple[list[int], list[dict[str, float]]]] = {}
+    for r in rows:
+        coin = r["coin"]
+        agent = r["agent"] or "manual"
+        signed = float(r["sz"]) if r["side"] == "B" else -float(r["sz"])
+        book = running.setdefault(coin, {})
+        book[agent] = book.get(agent, 0.0) + signed
+        if abs(book[agent]) < _SZ_EPS:
+            book[agent] = 0.0
+        times, snaps = out.setdefault(coin, ([], []))
+        times.append(int(r["time_ms"]))
+        snaps.append(dict(book))
+    return out
+
+
+def _sizes_as_of(
+    timeline: tuple[list[int], list[dict[str, float]]] | None, t_ms: int
+) -> dict[str, float]:
+    """Each agent's signed net size in a coin as of ``t_ms`` (latest fill ≤ t)."""
+    if not timeline:
+        return {}
+    times, snaps = timeline
+    i = bisect.bisect_right(times, t_ms) - 1
+    return snaps[i] if i >= 0 else {}
+
+
 def _agent_funding_payments(
     conn: sqlite3.Connection, agent: str, since_ms: int | None
 ) -> list[tuple[int, float]]:
     """This agent's attributed funding payments as (time_ms, usdc_share).
 
-    Each account-level funding payment is split equally among the agents holding
-    that coin at that instant, so shares sum to the total without double-counting.
-    Coins held only by manual positions stay unattributed (counted under _account).
+    Each account-level funding payment is split among the agents holding the coin
+    at that instant in proportion to their *signed* net size (from the fills
+    replay) — funding is paid on size, so a 10x-larger position earns 10x the
+    share, and a hedging short is attributed a negative (i.e. collected) share.
+    The signed shares sum to the account total without double-counting. When no
+    fills exist for the coin yet (paper, or pre-fills history), we fall back to an
+    equal split among the decision-log holders. Coins held only by manual size
+    stay unattributed (counted under _account).
     """
     intervals = _coin_holders_over_time(conn)
+    sizes_timeline = _coin_agent_sizes_over_time(conn)
     q = "SELECT time_ms, coin, usdc FROM funding_payments"
     params: list = []
     if since_ms is not None:
@@ -131,9 +184,19 @@ def _agent_funding_payments(
         t = int(r["time_ms"])
         coin = r["coin"]
         usdc = float(r["usdc"] or 0.0)
-        holders = [ag for (ag, o, c) in intervals.get(coin, []) if o <= t < c]
-        if agent in holders:
-            out.append((t, usdc / len(holders)))
+        sizes = _sizes_as_of(sizes_timeline.get(coin), t)
+        net = sum(sizes.values())
+        if sizes and abs(net) >= _SZ_EPS:
+            # Size-weighted: this agent's economic share of the account's net
+            # funding for the coin (signed; a hedge collects what the book pays).
+            frac = sizes.get(agent, 0.0) / net
+            if frac != 0.0:
+                out.append((t, usdc * frac))
+        else:
+            # Fallback: equal split among decision-log holders (no fills yet).
+            holders = [ag for (ag, o, c) in intervals.get(coin, []) if o <= t < c]
+            if agent in holders:
+                out.append((t, usdc / len(holders)))
     return out
 
 

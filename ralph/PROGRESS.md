@@ -376,3 +376,40 @@ claim here; this is measurement plumbing.
 **What's next (loop).** B12 (consolidate `runtime.run_tick` vs `femr_tick`, M3),
 userFills WS for instant maker-fill detection, B11 (feed/retire liq_cascade),
 B4-RUN (confirm carry on real history — network-gated).
+
+---
+
+## Iteration 11 — 2026-06-08 — funding attribution by held size (B9b / C4)
+
+**Context.** Honest-measurement leverage (#3), continuing the B9 thread. Iter 7's
+`_agent_funding_payments` split each funding payment *equally* among the agents
+holding a coin (from the decision log). But funding is paid **on size**: if agent
+A holds 10 units and B holds 1, A should earn ~10× B's funding, not an even half.
+Equal-split mis-states every multi-holder funding payment — the exact revenue line
+carry strategies (`xfund_carry_v1`, `funding_carry_v1`) live or die on. B9 (Iter
+10) gave us fills-based position replay, so we can now attribute by true size.
+
+**Changed (1 commit).**
+- **metrics.py** — `_coin_agent_sizes_over_time` replays fills into per-coin
+  time-ordered snapshots of each agent's *signed* net size; `_sizes_as_of`
+  (bisect) looks up the held book at any funding timestamp. `_agent_funding_payments`
+  now splits each payment by `usdc * (agent_signed_size / account_net_size)` — the
+  economic decomposition that (a) weights by size, (b) gives a hedging short a
+  *negative* (collected) share, (c) sums **exactly** to the account total, (d)
+  leaves manual-only size under `_account`. Falls back to the old decision-log
+  equal-split only when a coin has no fills yet (paper / pre-fills history), so the
+  existing decision-log tests stay valid.
+- **tests** — 3 new: size 3:1 split → $3/$1 (not $2/$2); offsetting hedge (long 3
+  / short 1, net 2) → +$3 / −$1, summing to the $2 account total; flat-after-close
+  gets nothing. Plus `_fill` gained a `side` param for short fills.
+
+**Evidence.** 102 → **105 tests pass**; `ruff check src tests scripts` clean.
+
+**Why it matters.** Per-agent funding (hence net/edge/Sharpe and every gate that
+keys off them) now reflects how much each agent actually held, not a head-count.
+This is measurement plumbing, not an edge claim — but it's the number the
+supervisor will use to promote/demote carry strategies, so it must be true.
+
+**What's next (loop).** B12 (consolidate `runtime.run_tick` vs `femr_tick`, M3),
+userFills WS for instant maker-fill detection, B11 (feed/retire liq_cascade),
+B4-RUN (confirm carry on real history — network-gated).
