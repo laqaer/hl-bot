@@ -186,6 +186,31 @@ def gate_progress(agent: str = "", configs: Path = CONFIG_DIR):
         console.print(table)
 
 
+@app.command("paper_score")
+def paper_score(agent: str, window: str = "30d", execution: str = "maker"):
+    """Score a PAPER agent's forward-test by simulating fills from its decisions.
+
+    A paper agent logs decisions but produces no exchange fills, so the normal
+    ``score`` (which reads the fills table) reports 0 trades / N/A edge for it —
+    the G1 forward-test gate is then unmeasurable. This simulates fills from the
+    paper decision log using the SAME cost model the backtest confirmed the edge
+    under (default maker; pass --execution taker for the taker comparison) and
+    scores them with the production ``score_agent``. Read-only.
+    """
+    from ..backtest.engine import CostModel
+    from ..scoring.paper_fills import score_paper_forward
+
+    conn, _ = _conn()
+    cost = CostModel(maker=(execution != "taker"))
+    sc = score_paper_forward(conn, agent, window, cost)  # type: ignore[arg-type]
+    edge = "—" if sc.edge_bps is None else f"{sc.edge_bps:+.1f}bps"
+    console.print(
+        f"[bold]{agent}[/bold] paper forward-test [{execution}] ({window}): "
+        f"net ${sc.net_pnl:+.2f} · edge {edge} · trades {sc.n_trades} · "
+        f"win {sc.win_rate*100:.0f}%"
+    )
+
+
 @app.command()
 def research_strategies(write: bool = True):
     """Evaluate strategy health from fills; emit risk-reducing proposals.

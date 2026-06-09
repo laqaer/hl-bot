@@ -243,6 +243,29 @@ Keep it ruthlessly prioritized: the top item should always be the highest-levera
 
 ## P1 — honest measurement (so the supervisor can trust itself)
 
+- [x] **B1d-trend-G1measure — Make the paper forward-test measurable (G1 clock with hands).**
+  Done (Iter 38). Found the G1 "paper clock" was unmeasurable: a paper agent logs
+  `place`/`flatten` to `agent_decisions` but produces no exchange `fills`, and
+  `score_agent`/`promotion_progress`/`gate-progress` all read the `fills` table — so a
+  paper agent shows **0 trades / None edge forever** no matter how long it runs. The
+  "let the G1 paper clock run (time-gated)" line in every recent PROGRESS was a clock
+  with no hands. Fix: `scoring/paper_fills.py` — pure `simulate_paper_fills(decisions,
+  cost)` replays the paper decision log into simulated fills using the **exact same
+  price/slip/fee accounting as `backtest.engine`** (shares its `CostModel`), so the
+  paper forward-test is measured under the *same* model that confirmed the edge
+  (trend_breakout +5.5bps maker/180d) — removing a deploy-vs-evidence drift of the same
+  class the project keeps closing. `score_paper_forward(conn, agent, window, cost)`
+  reads the paper decisions, simulates fills into a throwaway in-memory DB, and scores
+  with the unchanged production `score_agent` (read-only; the live fills table is never
+  written). New read-only `hlbot paper_score --agent --window --execution` renders the
+  paper net/edge/trades. Funding is not modeled (paper decisions carry none; exact for
+  price strategies, honest understatement for carry — documented). 9 tests (engine-parity
+  on a round-trip, long/short, taker<maker, partial close, opposite-side flip,
+  skip-missing-px/sz, end-to-end measurable + read-only, ignores non-paper). 169→178.
+  No edge claim — measurement plumbing. **Follow-up (next):** fold `score_paper_forward`
+  into `promotion_progress`/`gate-progress` so the supervisor evaluates the paper G1 gate
+  on simulated-paper edge (currently it scores real fills only → always N/A for paper).
+  Left as **B1d-trend-G1gate** — a careful, separately-reviewed supervisor change.
 - [x] **B1d-trend-G1obs — Observable gate progress.** Done (Iter 33): pure
   `supervisor/goals.py::promotion_progress(conn, g) -> GateProgress` reports every
   promotion condition's current value vs threshold + met/na/fail (not just the

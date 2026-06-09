@@ -1867,3 +1867,67 @@ live_small stays human-gated.
 B1d candidate (i) — spot-vs-perp basis at funding deciles — for a *second uncorrelated*
 edge, now that the first is twice-confirmed AND faithfully deployed. (c) Optional further
 hardening: even-longer-window `confirm` if HL 1h history extends past 180d.
+
+---
+
+## Iteration 38 — 2026-06-09 — Made the paper forward-test measurable (the G1 "clock" had no hands).
+
+**Context.** Iters 30–37 confirmed `trend_breakout_v1` at G0 (twice: 90d + 180d maker),
+wired it to the paper roster, pinned + fed its G0-confirmed 20-coin universe, and made
+gate progress observable (Iter 33/34). Every recent PROGRESS closed with "let the G1
+paper clock run (time-gated)." Reading the measurement path this iteration surfaced that
+**the G1 paper clock is unmeasurable**: a paper agent logs `place`/`flatten` to
+`agent_decisions` but produces **no exchange `fills`**, and `score_agent` (hence
+`promotion_progress` and `hlbot gate-progress`) reads the `fills` table — so a paper
+agent reports **0 trades / `edge_bps=None` forever**. The forward-test gate
+(edge>=+5bps, net>=$50, >=150 trades over 30d) can never register progress no matter how
+long the paper agent runs — the clock has no hands. Picked this over the speculative
+spot-vs-perp basis hunt (candidate (i)) because a forward-test we *cannot measure* is a
+silent blocker on the one edge we have; "evidence before capital" needs the evidence to
+actually exist.
+
+**Changed (1 commit).**
+- **`scoring/paper_fills.py`** (new) — pure `simulate_paper_fills(decisions, cost,
+  *, agent) -> list[fill-rows]` replays the paper decision log (`ts_ms, action, coin,
+  side, sz, px`) into simulated fills using the **same price/slip/fee accounting as
+  `backtest.engine._open/_close`** (imports and shares its `CostModel`): entry pays slip
+  + fee and books a `closed_pnl==0` fill (counts as a trade, as in the backtest);
+  same-side re-entry averages in; opposite-side closes up to the resting size then opens
+  the leftover (no fee/notional double-count); `flatten` closes `min(sz, held)` at the
+  slipped exit and books `closed_pnl=price_pnl`. So a paper forward-test and a backtest
+  of the *same* decisions agree — the paper test is scored under the model that confirmed
+  the edge. `score_paper_forward(conn, agent, window, cost)` reads the paper decisions,
+  simulates fills into a throwaway `init_db(":memory:")`, and returns the unchanged
+  production `score_agent` — **read-only**: the live ground-truth `fills` table is never
+  written. Funding is not modeled (paper decisions carry no funding rate; exact for the
+  price-based trend edge, an honest understatement for carry) — documented divergence.
+- **`cli/main.py`** — new read-only `hlbot paper_score --agent --window 30d
+  --execution maker|taker` renders the paper forward-test net/edge/trades/win. Defaults
+  to **maker** (the execution the passive edge was confirmed under); `--execution taker`
+  gives the honest taker comparison.
+- **`tests/test_paper_fills.py`** (+9) — engine-parity on a maker round-trip (px/fee/pnl
+  equal the engine formulas), long & short round-trips, taker net strictly < maker,
+  partial close leaves remainder, opposite-side flip books one close + one open without
+  double-count, skips decisions missing px/sz and ignores `hold`, end-to-end
+  `score_paper_forward` makes a paper agent measurable **and** leaves the live fills
+  table empty (read-only), and ignores `is_paper=0` decisions.
+
+**Evidence (tests/lint).** 169 → **178 pass**; `ruff check src tests scripts` clean.
+No edge claim — this is measurement plumbing over the Iter-30/35 G0-confirmed signal;
+the edge numbers stand from `hlbot confirm` (90d + 180d maker).
+
+**Why it matters.** The G1 paper forward-test is the decisive pre-live gate, and it was
+producing **zero measurable signal** — the supervisor's `gate-progress` would show the
+G1 conditions N/A indefinitely while the paper agent traded. Simulating fills from the
+paper decision log under the *same* cost model the backtest confirmed the edge with turns
+the forward-test into an actual, scoreable number without touching capital or the live
+DB. Strictly additive, read-only, fully offline-tested; promotion to live_small stays
+human-gated.
+
+**What's next (loop).** (a) **B1d-trend-G1gate** (new backlog item): fold
+`score_paper_forward` into `promotion_progress`/`gate-progress` so the supervisor actually
+*evaluates* the paper G1 gate on simulated-paper edge (a careful, separately-reviewed
+supervisor change — it currently scores real fills only, so paper agents are permanently
+N/A at the gate). (b) Let the (now-measurable) paper clock run + watch `hlbot paper_score`.
+(c) The remaining B1d candidate (i) — spot-vs-perp basis at funding deciles — for a second
+uncorrelated edge.
