@@ -4,10 +4,13 @@ from __future__ import annotations
 
 import sqlite3
 from collections.abc import Iterable
+from pathlib import Path
 
 import httpx
 
+from ..config import CONFIG_DIR
 from ..scoring.metrics import Scorecard, score_all
+from ..supervisor.goals import GateProgress, load_goals, promotion_progress
 
 
 def _fmt(v: float | None, fmt: str = "{:+.2f}") -> str:
@@ -39,9 +42,56 @@ def render_markdown(cards: Iterable[Scorecard]) -> str:
     return "\n".join(lines)
 
 
-def build(conn: sqlite3.Connection) -> str:
+_STATUS_MARK = {"pass": "✓", "fail": "✗", "na": "N/A"}
+
+
+def render_gate_progress(reports: Iterable[GateProgress]) -> str:
+    """Render the distance-to-gate section (e.g. the trend_breakout G1 clock).
+
+    One block per agent with a promotion gate, listing each condition's current
+    value vs threshold and whether it's met — so the daily digest shows how close
+    paper agents are to their next (human-gated) promotion. Empty string when no
+    agent has a promotion gate, so the caller can skip the section entirely.
+    """
+    reports = list(reports)
+    if not reports:
+        return ""
+    lines: list[str] = ["## Gate progress", ""]
+    for gp in reports:
+        head = "READY" if gp.ready else f"{gp.n_met}/{gp.n_total} met"
+        lines.append(f"### {gp.agent} — {gp.from_mode} → {gp.to_mode} ({head})")
+        for c in gp.conditions:
+            mark = _STATUS_MARK[c.status]
+            val = _fmt(c.value)
+            lines.append(
+                f"- {mark} `{c.metric}({c.window}) {c.op} {c.threshold:g}` "
+                f"→ `{val}`"
+            )
+        lines.append("")
+    return "\n".join(lines).rstrip() + "\n"
+
+
+def gate_progress_reports(
+    conn: sqlite3.Connection, configs: Path | None = None
+) -> list[GateProgress]:
+    """Load every agent config and compute its promotion-gate progress.
+
+    Agents without a promotion block are skipped (``promotion_progress`` → None).
+    Read-only; reuses the same scoring the supervisor promotes on.
+    """
+    goals = []
+    for p in sorted(Path(configs or CONFIG_DIR).glob("*.yaml")):
+        goals.extend(load_goals(p))
+    return [gp for g in goals if (gp := promotion_progress(conn, g))]
+
+
+def build(conn: sqlite3.Connection, configs: Path | None = None) -> str:
     cards = score_all(conn, windows=["24h", "7d", "30d", "all"])
-    return render_markdown(cards)
+    md = render_markdown(cards)
+    gates = render_gate_progress(gate_progress_reports(conn, configs))
+    if gates:
+        md = f"{md}\n{gates}"
+    return md
 
 
 def send_telegram(text: str, bot_token: str, chat_id: str) -> None:

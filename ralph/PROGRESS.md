@@ -1663,3 +1663,49 @@ report/Telegram digest can call. Live promotion stays human-gated.
 the digest automatically; (b) longer-history (>90d) `confirm` for G0 stability across
 more regime cycles; (c) the remaining B1d candidate (i) spot-vs-perp basis at funding
 deciles for a second uncorrelated edge.
+
+---
+
+## Iteration 34 — 2026-06-08 — G1 distance-to-live now shows up in the daily digest automatically (`report` folds in `promotion_progress`).
+
+**Context.** Iter 33 added `promotion_progress`/`hlbot gate-progress` so the
+trend_breakout G1 paper clock (edge>=+5bps, net>=$50, >=150 trades @30d) is watchable
+on demand. Its "what's next" (a) called for folding that into the daily `report` so
+the operator (and the loop) sees G1 distance in the digest without running a second
+command. This is that — pure wiring over the Iter-33 primitive, no new math, no edge
+claim, fully offline-testable. Picked over (b)/(c) because those need network for real
+history and are larger; this is the smallest valuable unblocked slice.
+
+**Changed (1 commit).**
+- **`reports/daily.py`** — `build(conn, configs=None)` now appends a
+  `## Gate progress` section after the per-agent scorecard. Two new pure helpers:
+  `render_gate_progress(reports) -> str` (one block per agent with a promotion gate:
+  `from → to (n/total met | READY)` header + a `✓/✗/N/A` line per condition with its
+  current value vs threshold; returns `""` when no agent has a gate, so the section is
+  skipped cleanly) and `gate_progress_reports(conn, configs=None)` (loads every
+  `configs/*.yaml`, returns the non-None `promotion_progress` results). `build`'s
+  signature gained an optional `configs` (defaults to `CONFIG_DIR`), so the existing
+  `hlbot report` call site is unchanged.
+- **`tests/test_daily_report.py`** (new, +4) — (1) empty reports → blank string;
+  (2) `render_gate_progress` marks each condition (`✗ edge_bps`, `✓ n_trades`,
+  `N/A net_pnl`) and renders values (`+0.50`, `—` for na); (3) all-pass → `(READY)`
+  header; (4) `build` with the real `trend_breakout_v1.yaml` + 200 tiny-edge fills
+  shows the base report AND the gate section with n_trades met but edge short.
+
+**Evidence (tests/lint).** 161 → **165 pass**; `ruff check src tests scripts` clean.
+No edge claim — measurement plumbing over the Iter-30 G0-confirmed signal; edge
+numbers stand from Iter 30's `hlbot confirm`.
+
+**Why it matters.** The G1 gate runs >=30d on forward paper data; the daily report is
+the artifact an operator actually reads each day (and the loop can diff). Surfacing
+distance-to-gate there means promotion-readiness is visible passively, so a human knows
+when to consider the (always human-gated) live_small flip without re-deriving three
+`score_agent` windows by hand. `gate_progress_reports` is also the reusable primitive a
+future track-record/Telegram digest can call.
+
+**What's next (loop).** Let the paper clock run. Remaining candidates: (b) longer-history
+(>90d) `confirm` for G0 stability across more regime cycles (needs network); (c) the
+B1d candidate (i) spot-vs-perp basis at funding deciles for a second uncorrelated edge
+(needs network). Offline alternative: a longer-history backtest fixture or a regime-aware
+*allocation* benchmark for trend (run-only-in-trend vs buy-and-hold) since G0's symmetric
+two-half rule structurally penalises a pure trend-follower in chop.

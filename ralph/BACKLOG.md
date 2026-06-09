@@ -214,6 +214,13 @@ Keep it ruthlessly prioritized: the top item should always be the highest-levera
   distance-to-gate table so the trend_breakout G1 clock (edge>=+5bps, net>=$50,
   >=150 trades @30d) is watchable without hand-deriving it. Read-only; 3 tests
   (partial-progress, all-pass=ready, no-promotion=None). 158→161 tests.
+- [x] **B1d-trend-G1digest — Fold gate progress into the daily report.** Done
+  (Iter 34): `reports/daily.py::build` now appends a `## Gate progress` section
+  (pure `render_gate_progress` + `gate_progress_reports` helper, reusing Iter-33's
+  `promotion_progress`), so the Telegram/console daily digest shows the
+  trend_breakout G1 distance-to-live automatically — no separate `gate-progress`
+  run needed. Read-only; 4 tests (empty=blank, per-condition marks, READY header,
+  build-with-real-config partial). 161→165 tests.
 
 - [x] **B6/B7 — Per-agent funding attribution + Sharpe.** Done: funding split to
   the agent holding the coin at funding time (scoring includes it in net/edge);
