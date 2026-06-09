@@ -3020,3 +3020,44 @@ recorded fine-cadence archive (B-fine-record slice 3), which needs calendar time
 `data/recorded_candles.jsonl` to run `hlbot record-coverage` and see READY. Until then the remaining unblocked
 work is non-edge machinery: P2 **B14a** (deploy automation — codify the EC2/systemd/Hermes cron + DB sync so the
 live loop is reproducible from the repo) and Path-C reporting polish (B15 chart export TODO).
+
+## Iteration 51 — 2026-06-09 — B15 chart export: dependency-free equity-curve SVG
+
+**Context (orientation).** The HL-historical-candle edge search is exhausted: all twelve structurally-different
+theses AND every parked sub-angle (B-session-tod closed last iteration; B-exec-tickmark needs tick/L2 data the
+208d retention ceiling blocks) are pruned. The one route to genuinely new edge evidence — B-fine-record slice 3,
+re-running the sub-bar/fine-cadence theses on forward-recorded 1m/5m candles — is blocked on calendar time AND
+needs a deployed host's `data/recorded_candles.jsonl` to run `hlbot record-coverage` (no recorded archive exists
+locally). Iter 50 named the two remaining *unblocked* non-edge items: P2 **B14a** (deploy automation) and the
+**B15 chart-export TODO**. B14a's chassis is already shipped (deploy/ has install.sh, update.sh, litestream.yml,
+all systemd units incl. tick/report/update timers + recorder + ws, and the AWS terraform) — its residual `[ ]`
+is stale, the cron/DB-sync it asks for already exists via systemd timers + Litestream. So the cleanest atomic
+unblocked increment was the B15 chart export.
+
+**What I built (pure, tested).** Added `equity_curve_svg(curve, *, width, height, pad)` to
+`reports/track_record.py`: renders the account equity curve as a **self-contained SVG string with zero
+dependencies** (no matplotlib — a single heavy plotting dep would otherwise enter the tree just for one chart).
+Pure function, never raises: maps ts→x / value→y (inverted) over the data range, draws a green polyline + a
+last-point marker + min/max value labels + start/end date labels inside a framed plot area. Degenerate cases
+handled: empty curve → a "no equity snapshots" placeholder SVG (no polyline); single point or flat curve →
+tspan/vspan floored to 1 so no zero-division, marker still drawn. `export` now also writes `track_record.svg`
+(returns 3 paths instead of 2) and `to_markdown` references the chart (`![equity curve](track_record.svg)`) when
+snapshots exist. CLI `track-record` updated to unpack/announce the 3rd path. `allocator_packet` is unaffected (it
+composes `build_track_record`/`to_markdown`, not `export`).
+
+**Why this matters (Path C).** The track record is the artifact a vault depositor / allocator reads before
+committing capital; they read the Markdown but *see* the equity curve. The export was JSON+MD only — the chart
+was a standing TODO. A dependency-free SVG keeps the export self-contained and unit-testable (assert valid
+`<svg>…</svg>`, one coordinate pair per snapshot, correct min/max labels) rather than emitting a binary PNG that
+can't be asserted on.
+
+**Evidence (gate).** `uv run pytest -q` → **286 passed** (+2: plots N points with correct labels/coord-count;
+handles empty→placeholder and single-point→marker without zero-division; the export test now also asserts the MD
+references the SVG and the SVG is well-formed). `uv run ruff check src tests scripts` → clean. Read-only on the
+DB; no `data/` writes committed; no strategy/roster/live-mode change; nothing touched capital.
+
+**What's next (loop).** The track-record deliverable is now complete (JSON + Markdown + chart). The edge search
+remains exhausted on HL historical candles; the only un-searched regime is the forward-recorded fine-cadence
+archive (B-fine-record slice 3), which still needs calendar time + a deployed host's `recorded_candles.jsonl`
+before `hlbot record-coverage` can report READY. Until then the residual unblocked work is non-edge polish; the
+stale P2 B14a `[ ]` can be marked done (its EC2/systemd/Litestream/cron chassis already ships in deploy/).

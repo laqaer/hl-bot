@@ -7,7 +7,12 @@ import time
 import pytest
 
 from hl_bot.db.schema import init_db
-from hl_bot.reports.track_record import build_track_record, export, to_markdown
+from hl_bot.reports.track_record import (
+    build_track_record,
+    equity_curve_svg,
+    export,
+    to_markdown,
+)
 
 
 @pytest.fixture
@@ -62,7 +67,36 @@ def test_track_record_structure_and_numbers(conn):
 
 
 def test_export_writes_files(conn, tmp_path):
-    _fill(conn, "femr_v1", int(time.time() * 1000), pnl=1.0)
-    jp, mp = export(conn, tmp_path / "tr")
-    assert jp.exists() and mp.exists()
-    assert "track record" in mp.read_text().lower()
+    now = int(time.time() * 1000)
+    _fill(conn, "femr_v1", now, pnl=1.0)
+    _equity(conn, now, 1000.0)
+    jp, mp, sp = export(conn, tmp_path / "tr")
+    assert jp.exists() and mp.exists() and sp.exists()
+    md = mp.read_text()
+    assert "track record" in md.lower()
+    # the markdown references the chart, and the chart is a real SVG
+    assert "track_record.svg" in md
+    svg = sp.read_text()
+    assert svg.startswith("<svg") and svg.rstrip().endswith("</svg>")
+
+
+def test_equity_curve_svg_plots_points():
+    day = 86_400_000
+    curve = [(i * day, 1000.0 + i * 10.0) for i in range(5)]
+    svg = equity_curve_svg(curve)
+    assert svg.startswith("<svg") and "</svg>" in svg
+    assert "polyline" in svg
+    # min/max value labels appear (start 1000, end 1040)
+    assert "1,000.00" in svg and "1,040.00" in svg
+    # one coordinate pair per snapshot
+    pts = svg.split('points="', 1)[1].split('"', 1)[0]
+    assert len(pts.split()) == len(curve)
+
+
+def test_equity_curve_svg_handles_empty_and_single_point():
+    empty = equity_curve_svg([])
+    assert empty.startswith("<svg") and "no equity snapshots" in empty
+    assert "polyline" not in empty
+    # single point: no zero-division, still a valid svg with a marker
+    one = equity_curve_svg([(0, 1234.0)])
+    assert one.startswith("<svg") and "circle" in one

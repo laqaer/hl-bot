@@ -125,6 +125,9 @@ def to_markdown(track: dict[str, Any]) -> str:
         f"· calmar `{_num(a.get('calmar'))}` · net `${a.get('net_pnl', 0):+.2f}` "
         f"· snapshots `{a.get('n_snapshots', 0)}`"
     )
+    if a.get("n_snapshots", 0):
+        lines.append("")
+        lines.append("![equity curve](track_record.svg)")
     lines.append("")
     lines.append("## Agents")
     lines.append("| agent | trades | net | edge | win | sharpe(d) | maxDD$ |")
@@ -136,6 +139,76 @@ def to_markdown(track: dict[str, Any]) -> str:
             f"{_num(ag['sharpe_daily'])} | {_money(ag['max_drawdown_usd'])} |"
         )
     return "\n".join(lines)
+
+
+def equity_curve_svg(
+    curve: list[tuple[int, float]],
+    *,
+    width: int = 640,
+    height: int = 240,
+    pad: int = 36,
+) -> str:
+    """Render the account equity curve as a self-contained SVG (no deps).
+
+    A vault depositor reads the Markdown record but *sees* the equity curve; a
+    pure-Python SVG keeps the chart export dependency-free (no matplotlib) and
+    unit-testable. Returns a complete ``<svg>…</svg>`` string. Handles the empty
+    and single-point cases (placeholder / flat line) so it never raises.
+    """
+    w, h = int(width), int(height)
+    x0, y0 = pad, pad
+    x1, y1 = w - pad, h - pad
+    header = (
+        f'<svg xmlns="http://www.w3.org/2000/svg" width="{w}" height="{h}" '
+        f'viewBox="0 0 {w} {h}" font-family="monospace" font-size="11">'
+    )
+    bg = f'<rect width="{w}" height="{h}" fill="#ffffff"/>'
+    frame = (
+        f'<rect x="{x0}" y="{y0}" width="{x1 - x0}" height="{y1 - y0}" '
+        f'fill="none" stroke="#cccccc"/>'
+    )
+    title = f'<text x="{x0}" y="{y0 - 12}" fill="#333333">hl-bot account equity</text>'
+
+    if not curve:
+        empty = (
+            f'<text x="{w // 2}" y="{h // 2}" fill="#999999" '
+            f'text-anchor="middle">no equity snapshots</text>'
+        )
+        return header + bg + frame + title + empty + "</svg>"
+
+    ts = [p[0] for p in curve]
+    vals = [p[1] for p in curve]
+    tmin, tmax = min(ts), max(ts)
+    vmin, vmax = min(vals), max(vals)
+    tspan = (tmax - tmin) or 1
+    vspan = (vmax - vmin) or 1.0
+
+    def sx(t: int) -> float:
+        return x0 + (t - tmin) / tspan * (x1 - x0)
+
+    def sy(v: float) -> float:
+        # invert: larger value → higher on screen (smaller y)
+        return y1 - (v - vmin) / vspan * (y1 - y0)
+
+    pts = " ".join(f"{sx(t):.1f},{sy(v):.1f}" for t, v in curve)
+    line = (
+        f'<polyline points="{pts}" fill="none" stroke="#1a7f37" '
+        f'stroke-width="2"/>'
+    )
+    # mark the last point so a flat single-point curve is still visible
+    last = f'<circle cx="{sx(ts[-1]):.1f}" cy="{sy(vals[-1]):.1f}" r="3" fill="#1a7f37"/>'
+    labels = (
+        f'<text x="{x0 + 2}" y="{y0 + 12}" fill="#666666">${vmax:,.2f}</text>'
+        f'<text x="{x0 + 2}" y="{y1 - 4}" fill="#666666">${vmin:,.2f}</text>'
+        f'<text x="{x1}" y="{y1 + 16}" fill="#666666" text-anchor="end">'
+        f"{_date(tmax)}</text>"
+        f'<text x="{x0}" y="{y1 + 16}" fill="#666666">{_date(tmin)}</text>'
+    )
+    return header + bg + frame + title + line + last + labels + "</svg>"
+
+
+def _date(ms: int) -> str:
+    return time.strftime("%Y-%m-%d", time.gmtime(ms / 1000))
 
 
 def _num(v: float | None) -> str:
@@ -154,13 +227,19 @@ def _money(v: float | None) -> str:
     return "—" if v is None else f"${v:+.2f}"
 
 
-def export(conn: sqlite3.Connection, out_dir: str | Path) -> tuple[Path, Path]:
-    """Write track_record.json + track_record.md; return their paths."""
+def export(conn: sqlite3.Connection, out_dir: str | Path) -> tuple[Path, Path, Path]:
+    """Write track_record.{json,md,svg}; return their paths.
+
+    The SVG is the equity-curve chart (dependency-free) that the Markdown record
+    references — what an allocator looks at first.
+    """
     track = build_track_record(conn)
     d = Path(out_dir)
     d.mkdir(parents=True, exist_ok=True)
     jp = d / "track_record.json"
     mp = d / "track_record.md"
+    sp = d / "track_record.svg"
     jp.write_text(json.dumps(track, indent=2))
     mp.write_text(to_markdown(track))
-    return jp, mp
+    sp.write_text(equity_curve_svg(track["equity_curve"]))
+    return jp, mp, sp

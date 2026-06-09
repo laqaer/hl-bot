@@ -612,7 +612,13 @@ Keep it ruthlessly prioritized: the top item should always be the highest-levera
   PROGRESS Iter 40.
 - [x] **B15 — Public-grade track-record export.** Done: `reports/track_record.py`
   + `hlbot track-record` → track_record.{json,md} (equity curve, Sharpe/DD/edge,
-  per-agent). Chart export still TODO. (Iteration 2.)
+  per-agent). (Iteration 2.) **Chart export DONE (Iteration 51):** added pure,
+  dependency-free `equity_curve_svg(curve)` (no matplotlib — renders the account
+  equity curve as a self-contained `<svg>` polyline + min/max + date labels;
+  empty→placeholder, single-point→marker, never raises); `export` now writes
+  `track_record.svg` too (returns 3 paths) and the markdown references it. +2 tests
+  (plots N points / handles empty+single-point). Allocator-packet unaffected (uses
+  build/to_markdown, not export). Numbers in PROGRESS Iter 51.
 - [ ] **B16 — Hyperliquid vault evaluation.** Spike: requirements, fees, risk of
   running an HL vault; gate behind a real track record (G3).
 - [ ] **B17 — Moonshot sleeve spec.** Design the ring-fenced, loss-bounded Path B
