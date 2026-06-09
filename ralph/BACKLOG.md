@@ -103,11 +103,29 @@ Keep it ruthlessly prioritized: the top item should always be the highest-levera
   inversion), and the older 120d window **flips sign** (majors −4.6 / alts −10.6). Five
   structurally-different theses now pruned after the out-of-time bar. Numbers in
   PROGRESS.md Iteration 23.
+- [ ] **B-horizon — Push the majors 1d cross-sectional-momentum lead over G0.** NEW LEAD
+  (Iteration 24). At the **1d/240d** horizon (vs the 1h/120d of all five prunes),
+  `xsect_momentum_v1` on majors (BTC,ETH,SOL,HYPE,AVAX,LINK) is the **first** signal that
+  (a) does **not** sign-flip across two disjoint 240d windows (full +18.0 and +69.0bps) and
+  (b) is **taker-survivable** (trailing window maker +18.0 → taker-3x +8.5bps, robust-to-2x-slip).
+  Verdict is still **NOT DURABLE**, but blocked *only* by the trailing window's gate-marginal
+  in-sample half (−1.4bps < +3; its OOS +52.8/sh+2.12, older window in +110.9/oos +20.9). Next
+  slices, in order: (1) **1d lookback sweep** — the default `lookback_bars` is 1h-tuned; lift the
+  −1.4 in-sample over +3. (2) **`--windows 3`** at 1d (≈2yr majors history) to test the
+  no-sign-flip property over three windows. (3) **regime-gate at 1d**. (4) if a lookback confirms
+  both windows across the cost ladder → first G0-class candidate; widen the majors basket + stress
+  more windows before any paper talk. **Alts at 1d are pruned** (full −50.4/−122.0bps); majors-only.
+  Numbers in PROGRESS.md Iteration 24. No live change.
 - [ ] **B-femr-regime — femr is dormant on majors; retire or repurpose.** femr's
   130%-APR entry never trips on liquid coins (B1). B1-alt now shows funding *carry*
   has no edge even where funding is high, so widening femr (also funding-driven) to
   alts is unlikely to help — the honest move is to **retire it from the live roster**
   until there's a universe+variant with a demonstrated G0 PASS. No live change either way.
+- [x] **B-fetch-retry — 429-resilient history fetch.** DONE (Iteration 24). `fetch_candles`
+  + `_fetch_funding_page` route their POST through `_request_with_retry` (exponential backoff
+  on 429/5xx, honors `Retry-After`, pure/testable). Longer/larger windows (1d/240d ≈ 12 funding
+  pages/coin) were dying on HL's rate limiter and losing the whole window; this unblocked the
+  longer-horizon research (B-horizon). +4 unit tests. Numbers in PROGRESS.md Iteration 24.
 - [x] **B1a — Offline history cache.** Done: `hlbot backtest-fetch` +
   save/load/cached_or_fetch under `data/backtest_cache/` (gzipped JSON,
   gitignored); `hlbot backtest --cache` runs without network. (Iteration 2.)

@@ -1193,3 +1193,82 @@ M5 flags the spot-scaling as fragile; (3) consider a **longer evaluation horizon
 bars, >120d) to test whether the regime-domination is a horizon artifact before abandoning
 cross-sectional structure entirely. (4) Retire femr from the live roster (B-femr-regime).
 Keep pruning until one signal clears the multi-window bar.
+
+---
+
+## Iteration 24 — 2026-06-08 — 429-resilient fetch unblocks the longer-horizon test; majors xsect-momentum at 1d/240d is the first taker-survivable, non-sign-flipping lead
+
+**Context.** Five momentum/carry theses are pruned, all at the **1h/120d** horizon, and the
+standing meta-lesson (Iteration 20/22/23) was that *price-return momentum in any form is
+regime-dominated at 1h/120d* — every prune showed the same signature (maker-only edge, taker
+negative, and a full-sample **sign flip** across disjoint windows). The explicit open question
+across the last three iterations: **is the regime-domination a horizon artifact?** The
+`confirm`/`backtest` CLIs already accept `--interval {4h,1d}`, and the data layer already scales
+funding per-bar, so the longer-horizon test needed *no new strategy code* — just the ability to
+fetch a longer/larger window without dying on the rate limiter.
+
+**Code change (the committed increment, with tests).**
+- **429-resilient fetch.** `fetch_candles` and `_fetch_funding_page` now route their POST
+  through a new `_request_with_retry(do_request, …)` that retries 429 + transient 5xx with
+  exponential backoff (honoring a `Retry-After` header), capped at `max_delay`. A longer/larger
+  backtest window means many more candle requests **and** many more funding pages (1d/240d ≈ 12
+  funding pages/coin), which reliably tripped HL's limiter — and a 429 mid-window used to lose
+  the *whole* window's progress (cache is per-completed-window). The helper is pure given
+  `do_request` + `sleep` (no network/real clock), so it is unit-tested with a fake response
+  sequence: first-success → no backoff; 429→503→200 → recovers with growing delays; `Retry-After`
+  header overrides backoff; exhausted retries → surfaces `HTTPStatusError`.
+- **`tests/test_backtest.py` (+4):** the four cases above. Pure / offline.
+
+**Experiment — the longer-horizon durability test (measurement; caches gitignored).**
+`confirm --agent xsect_momentum_v1 --interval 1d --days 240 --windows 2 --prefer maker`, two
+disjoint back-to-back 240d/1d windows, walk-forward + full cost ladder:
+
+| universe | window | full | in | oos | cost ladder (full) |
+|---|---|---|---|---|---|
+| **majors** (BTC,ETH,SOL,HYPE,AVAX,LINK) | trailing 240d | **+18.0** | −1.4 | +52.8 | maker +18.0 / **taker-1x +12.5 / 2x +10.5 / 3x +8.5** (robust-to-2x-slip ✅) |
+|  | 240d ending 240d ago | **+69.0** | +110.9 | +20.9 | — |
+| **high-funding alts** (INJ,PURR,TRUMP,AERO,NIL,APT,SPX,PYTH,EIGEN,S) | trailing 240d | −50.4 | −90.7 | +26.3 | — |
+|  | 240d ending 240d ago | −122.0 | −72.9 | −183.3 | — |
+
+**Evidence — a qualitatively new result on majors, and the opposite on alts.** The bar's
+verdict is still **NOT DURABLE** for majors — but for a *different, much weaker* reason than the
+five prunes. On majors at 1d:
+1. **No sign flip.** Full-sample edge is **positive in both disjoint windows** (+18.0 and
+   +69.0bps). Every 1h/120d prune flipped sign across windows — that was the artifact signature.
+   It is absent here.
+2. **Taker-survivable.** The trailing window is **positive across the entire cost ladder**
+   (maker +18.0 → taker-3x +8.5bps, "robust to 2x slippage: True"). Every prior signal was
+   maker-only with taker firmly negative. This is the **first** signal in the whole search that
+   nets positive *as a taker*.
+3. **Blocked only at the per-window gate.** The single thing failing G0 is the trailing window's
+   **in-sample half** (−1.4bps < the +3 bar); its OOS is +52.8bps/sh+2.12 and the *older* window
+   is strongly positive in both halves (in +110.9 / oos +20.9). So this is gate-marginal in one
+   half of one window — not the structural sign-reversal that pruned the others.
+
+On **alts** at 1d the signal is **strongly negative** (full −50.4 / −122.0bps) — the longer
+horizon does **not** rescue alts; if anything it's worse than the 1h alts result. (Caveat: a few
+alts in the basket — TRUMP/NIL/SPX — may have <240d of listed history, which can distort the
+older window; the trailing-window negativity is not explained by that.)
+
+**Honest conclusion (a lead, not an edge — but the best lead so far).** The meta-lesson needs
+amending: *price-return momentum is regime-dominated **at 1h/120d**, but on **majors at the 1d
+horizon** cross-sectional momentum stops sign-flipping and survives the full cost ladder.* This
+is the first candidate that fails the durability bar **only** on a gate-marginal in-sample half
+rather than on the artifact sign-flip — i.e. the first signal worth *trying to push over* G0
+instead of pruning. It is **not** a confirmed edge and nothing here touches capital: NOT DURABLE
+stands, it's majors-only, and it's blocked by a real (if marginal) in-sample weakness. Recorded
+as a P0 lead (B-horizon) to investigate next, not as a pass.
+
+**Evidence (gate).** `uv run pytest -q` → **140 passed** (+4); `ruff check src tests scripts` →
+clean. Committed increment is the retry helper + 4 tests (pure, offline); all confirm numbers are
+measurement (caches gitignored). No strategy/sizing/live-mode change.
+
+**What's next (loop).** Push the majors-1d lead toward G0 (B-horizon): (1) **lookback sweep** at
+1d — the default `lookback_bars` is 1h-tuned; the trailing in-sample is only −1.4bps, so a
+horizon-appropriate lookback may lift it over +3 and confirm the window. (2) **More/longer
+windows** — run `--windows 3` at 1d to see if the no-sign-flip property holds over 3 disjoint
+240d windows (≈2yr of majors history exists). (3) **Regime-gate at 1d** — the Iteration-19 gate
+helped the recent window; re-test it at the daily horizon where the base signal is already
+taker-survivable. (4) If a 1d lookback confirms both windows on majors across the cost ladder,
+that is the **first G0-class candidate** — then widen the majors basket and stress more windows
+before any paper talk. Alts at 1d are pruned; this is a majors-only thread.

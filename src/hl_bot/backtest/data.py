@@ -13,6 +13,7 @@ from __future__ import annotations
 import gzip
 import json
 import time
+from collections.abc import Callable
 from dataclasses import asdict
 from pathlib import Path
 from typing import Any
@@ -35,6 +36,51 @@ INTERVAL_MS: dict[str, int] = {
 # Network fetch
 # ---------------------------------------------------------------------------
 
+# Status codes worth retrying: 429 (rate limit) + transient 5xx.
+_RETRY_STATUSES = frozenset({429, 500, 502, 503, 504})
+
+
+def _retry_delay(
+    resp: httpx.Response, attempt: int, base_delay: float, max_delay: float
+) -> float:
+    """Seconds to wait before the next attempt: honor ``Retry-After`` if present,
+    else exponential backoff (``base_delay * 2**attempt``), capped at ``max_delay``."""
+    ra = resp.headers.get("Retry-After")
+    if ra:
+        try:
+            return min(float(ra), max_delay)
+        except ValueError:
+            pass
+    return min(base_delay * (2 ** attempt), max_delay)
+
+
+def _request_with_retry(
+    do_request: Callable[[], httpx.Response],
+    *,
+    max_retries: int = 5,
+    base_delay: float = 1.0,
+    max_delay: float = 30.0,
+    sleep: Callable[[float], None] = time.sleep,
+) -> httpx.Response:
+    """Call ``do_request()``, retrying on 429/5xx with exponential backoff.
+
+    A longer/larger backtest window means more candle requests *and* more funding
+    pages, which reliably trips HL's rate limiter (429) — and a 429 mid-window
+    used to lose the whole window. This retries transient failures (honoring a
+    ``Retry-After`` header when present) so the fetch completes. On a non-retryable
+    status it raises immediately; once retries are exhausted it surfaces the last
+    error via ``raise_for_status``. Pure given ``do_request`` + ``sleep``, so it is
+    unit-tested without a network or real clock.
+    """
+    attempt = 0
+    while True:
+        resp = do_request()
+        if resp.status_code not in _RETRY_STATUSES or attempt >= max_retries:
+            resp.raise_for_status()
+            return resp
+        sleep(_retry_delay(resp, attempt, base_delay, max_delay))
+        attempt += 1
+
 
 def fetch_candles(
     coin: str,
@@ -45,13 +91,13 @@ def fetch_candles(
     base_url: str = "https://api.hyperliquid.xyz",
 ) -> list[dict[str, Any]]:
     """Raw candle dicts: {t, T, o, h, l, c, v, n}. Newest-last."""
+    payload = {
+        "type": "candleSnapshot",
+        "req": {"coin": coin, "interval": interval,
+                "startTime": start_ms, "endTime": end_ms},
+    }
     with httpx.Client(timeout=20) as client:
-        r = client.post(base_url + "/info", json={
-            "type": "candleSnapshot",
-            "req": {"coin": coin, "interval": interval,
-                    "startTime": start_ms, "endTime": end_ms},
-        })
-        r.raise_for_status()
+        r = _request_with_retry(lambda: client.post(base_url + "/info", json=payload))
         out = r.json()
     return out if isinstance(out, list) else []
 
@@ -64,12 +110,12 @@ def _fetch_funding_page(
     base_url: str = "https://api.hyperliquid.xyz",
 ) -> list[dict[str, Any]]:
     """One funding page (HL caps this at 500 rows, oldest-first from start_ms)."""
+    payload = {
+        "type": "fundingHistory", "coin": coin,
+        "startTime": start_ms, "endTime": end_ms,
+    }
     with httpx.Client(timeout=20) as client:
-        r = client.post(base_url + "/info", json={
-            "type": "fundingHistory", "coin": coin,
-            "startTime": start_ms, "endTime": end_ms,
-        })
-        r.raise_for_status()
+        r = _request_with_retry(lambda: client.post(base_url + "/info", json=payload))
         out = r.json()
     return out if isinstance(out, list) else []
 

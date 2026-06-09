@@ -201,3 +201,64 @@ def test_default_cache_path_window_keying():
     # same end_ms is stable; a different end_ms is a different file
     assert hist == default_cache_path(coins, "1h", 120, end_ms=1_700_000_000_000)
     assert hist != default_cache_path(coins, "1h", 120, end_ms=1_690_000_000_000)
+
+
+def _resp(status: int, headers: dict | None = None):
+    import httpx
+
+    return httpx.Response(
+        status, headers=headers or {}, request=httpx.Request("POST", "http://x/info")
+    )
+
+
+def test_request_with_retry_returns_first_success():
+    from hl_bot.backtest.data import _request_with_retry
+
+    calls = 0
+
+    def do_request():
+        nonlocal calls
+        calls += 1
+        return _resp(200)
+
+    slept: list[float] = []
+    r = _request_with_retry(do_request, sleep=slept.append)
+    assert r.status_code == 200
+    assert calls == 1, "a 200 on the first try makes no extra calls"
+    assert slept == [], "no backoff on immediate success"
+
+
+def test_request_with_retry_recovers_from_429():
+    from hl_bot.backtest.data import _request_with_retry
+
+    # 429 then 503, then a 200 — the fetch must complete, not abort the window.
+    # seq.pop() takes the last element, so list is reversed: returns 429, 503, 200.
+    seq = [_resp(200), _resp(503), _resp(429)]
+    slept: list[float] = []
+    r = _request_with_retry(seq.pop, base_delay=1.0, sleep=slept.append)
+    assert r.status_code == 200
+    assert len(slept) == 2, "two transient failures → two backoffs"
+    assert slept[0] < slept[1], "exponential backoff grows between attempts"
+
+
+def test_request_with_retry_honors_retry_after_header():
+    from hl_bot.backtest.data import _request_with_retry
+
+    seq = [_resp(200), _resp(429, {"Retry-After": "7"})]
+    slept: list[float] = []
+    _request_with_retry(seq.pop, base_delay=1.0, sleep=slept.append)
+    assert slept == [7.0], "Retry-After header overrides exponential backoff"
+
+
+def test_request_with_retry_raises_after_exhausting():
+    import httpx
+    import pytest
+
+    from hl_bot.backtest.data import _request_with_retry
+
+    slept: list[float] = []
+    with pytest.raises(httpx.HTTPStatusError):
+        _request_with_retry(
+            lambda: _resp(429), max_retries=3, base_delay=1.0, sleep=slept.append
+        )
+    assert len(slept) == 3, "retried exactly max_retries times before surfacing"
