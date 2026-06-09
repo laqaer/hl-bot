@@ -205,6 +205,7 @@ class Backtester:
                 "closes": {k: list(v) for k, v in frame.closes.items()},
                 "spot_mids": dict(frame.spot_mids),
                 "liquidations": list(frame.liquidations),
+                "liquidations_feed": True,
                 "live_positions": live_positions,
             },
         )

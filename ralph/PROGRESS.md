@@ -413,3 +413,44 @@ supervisor will use to promote/demote carry strategies, so it must be true.
 **What's next (loop).** B12 (consolidate `runtime.run_tick` vs `femr_tick`, M3),
 userFills WS for instant maker-fill detection, B11 (feed/retire liq_cascade),
 B4-RUN (confirm carry on real history — network-gated).
+
+---
+
+## Iteration 12 — 2026-06-08 — retire/feed liq_cascade (B11 / C6)
+
+**Context.** Cadence/structure leverage. liq_cascade was the last "dead" agent
+(REVIEW C6): `_enrich_view` POSTed `{"type":"liquidations"}` to `/info`, which is
+not a real Hyperliquid info endpoint, so the list was always empty. Iter 5 added a
+real WS liquidation feed (`trades` channel `liquidation` flag), but two gaps
+remained: the phantom REST call still ran every tick, and — critically — the agent
+could not tell a *calm market* (no liqs) from a *broken feed* (no source), so in
+the default REST-only path it was silently inert and would have traded the instant
+any stray data appeared. The risk control looked present but wasn't explicit.
+
+**Changed (1 commit).**
+- **cli/main.py `_enrich_view`** — removed the phantom REST liquidations call;
+  now sets `liquidations=[]` and `liquidations_feed=False` (REST has no real
+  liquidation source). One fewer doomed network round-trip per tick.
+- **cli/main.py WS overlay** — a fresh WS snapshot now sets
+  `liquidations_feed=True` and always passes through its liqs (empty = calm, not
+  broken), so liq_cascade is *enabled* only when genuinely fed.
+- **agents/liq_cascade.py** — `decide` gates **entries** on `liquidations_feed`:
+  no feed → a single explicit "feed unavailable (set HLBOT_WS_SNAPSHOT) — entries
+  disabled" hold. Exits (TP/SL/max-hold) still run unconditionally so a live
+  position is never stranded if the feed drops mid-hold. Tightening-only.
+- **backtest/engine.py** — synthetic frames set `liquidations_feed=True` (the
+  backtest *is* a controlled feed), so liq_cascade remains backtestable.
+
+**Evidence.** 105 → **109 tests pass** (4 new: no-feed suppresses entries,
+real-feed enters same side as cascade, real-feed-but-calm holds with n_events=0,
+exits run even without a feed); `ruff check src tests scripts` clean; CLI imports.
+
+**Why it matters.** No agent now trades on a dead/ambiguous data source. This is a
+safety/honesty tightening (consistent with the risk-reducing-only rule), not an
+edge claim — liq_cascade still needs a confirmed edge before any live use, and the
+live gate is unchanged. With B11 closed, every remaining "dead/phantom" finding
+from the review is resolved.
+
+**What's next (loop).** B12 (consolidate `runtime.run_tick` vs `femr_tick`, M3),
+userFills WS for instant maker-fill detection, B4-RUN (confirm carry on real
+history — network-gated), B16 (HL vault eval for AUM).

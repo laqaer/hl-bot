@@ -71,8 +71,12 @@ Keep it ruthlessly prioritized: the top item should always be the highest-levera
 - [x] **B-book — Book-aware maker pricing.** Done: `maker_limit_price` joins the
   near touch (best bid/ask) from the WS L2 book; live maker entries price off
   `view.book_top` (fallback mid, never cross). Tested. (Iteration 8.)
-- [ ] **B11 — Retire or feed liq_cascade.** Source real liquidation data (WS
-  trades liquidation flag) or disable the agent until it can be fed. (REVIEW C6.)
+- [x] **B11 — Retire or feed liq_cascade.** Done: retired the phantom REST
+  `{"type":"liquidations"}` call (always returned nothing) and added a
+  `liquidations_feed` flag. liq_cascade now opens new positions ONLY when a real
+  feed is present (WS trades liquidation flag / backtest), else it emits an
+  explicit "feed unavailable" hold; exits still run so positions aren't stranded.
+  (REVIEW C6. Iteration 12.)
 - [ ] **B12 — Consolidate execution paths.** `runtime.run_tick` vs `femr_tick`
   duplicate logic; unify so the safe wrapper is what live uses. (REVIEW M3.)
 - [ ] **B13 — Move hardcoded trader address to config.** (REVIEW M6.)

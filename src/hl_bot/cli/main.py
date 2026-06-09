@@ -246,7 +246,6 @@ def _enrich_view(view, api_url: str, vol: dict[str, float]) -> None:
     candles_1h: dict[str, dict] = {}
     closes_by_coin: dict[str, list[float]] = {}
     spot_mids: dict[str, float] = {}
-    liquidations: list[dict] = []
 
     with _httpx.Client(timeout=15) as cli:
         # 60 × 1m candles -> vwap & sigma per top coin
@@ -336,31 +335,16 @@ def _enrich_view(view, api_url: str, vol: dict[str, float]) -> None:
         except Exception:  # noqa: BLE001
             pass
 
-        # recent liquidations (best-effort; endpoint may not exist publicly)
-        try:
-            ev = cli.post(api_url + "/info", json={"type": "liquidations"}).json()
-            if isinstance(ev, list):
-                for e in ev:
-                    try:
-                        coin = e.get("coin")
-                        sz = float(e.get("sz") or 0)
-                        px = float(e.get("px") or 0)
-                        if coin and sz > 0 and px > 0:
-                            liquidations.append({
-                                "coin": coin,
-                                "side": e.get("side"),
-                                "notional_usd": sz * px,
-                                "ts_ms": int(e.get("time") or 0),
-                            })
-                    except (TypeError, ValueError):
-                        continue
-        except Exception:  # noqa: BLE001
-            pass
-
+    # No liquidation source over REST: HL exposes no `{"type":"liquidations"}`
+    # info endpoint (the old call was a phantom that always returned nothing).
+    # The real feed is the WS `trades` liquidation flag, overlaid below when a
+    # fresh snapshot exists. `liquidations_feed=False` tells liq_cascade it has
+    # no real feed yet, so it keeps entries disabled (REVIEW C6 / B11).
     view.extra["candles_1h"] = candles_1h
     view.extra["closes"] = closes_by_coin
     view.extra["spot_mids"] = spot_mids
-    view.extra["liquidations"] = liquidations
+    view.extra["liquidations"] = []
+    view.extra["liquidations_feed"] = False
 
 
 @app.command("femr_tick")
@@ -517,9 +501,12 @@ def femr_tick(live: bool = False, execution: str = "taker"):
             view.funding.update(snap.funding)
             if snap.book_top:
                 view.book_top.update(snap.book_top)
+            # A fresh WS snapshot IS a real liquidation feed (trades flag), even
+            # when no liquidations occurred this window — empty means a calm
+            # market, not a broken feed — so liq_cascade entries are enabled.
             liqs = snap.extra.get("liquidations") or []
-            if liqs:
-                view.extra["liquidations"] = liqs
+            view.extra["liquidations"] = liqs
+            view.extra["liquidations_feed"] = True
             console.print(f"[dim]ws snapshot overlaid: {len(snap.mids)} mids, "
                           f"{len(liqs)} liqs[/dim]")
 

@@ -90,6 +90,12 @@ class LiqCascadeAgent(Agent):
     def decide(self, view: MarketView) -> list[Decision]:
         out: list[Decision] = []
         liqs: list[dict] = view.extra.get("liquidations", []) or []
+        # A real liquidation feed (WS trades flag / backtest) must be present
+        # before we open new positions. Without it we cannot distinguish a calm
+        # market from a broken feed (the legacy REST endpoint was a phantom), so
+        # entries stay disabled. Exits below still run so live positions are
+        # never stranded if the feed drops mid-hold.
+        has_feed: bool = bool(view.extra.get("liquidations_feed", False))
         vol: dict[str, float] = view.extra.get("day_ntl_vlm", {}) or {}
         open_pos = self._open_positions()
 
@@ -116,6 +122,17 @@ class LiqCascadeAgent(Agent):
                     reasoning=f"LIQ-CASCADE EXIT {coin}: {reason}",
                     market_snapshot={"exit_px": mid, "entry": entry, "ret_pct": ret_pct},
                 ))
+
+        # ---- entries require a real liquidation feed ----
+        if not has_feed:
+            if not out:
+                out.append(Decision(
+                    agent=self.name, action="hold",
+                    reasoning="liq feed unavailable (set HLBOT_WS_SNAPSHOT) — "
+                              "entries disabled until fed",
+                    market_snapshot={"liquidations_feed": False},
+                ))
+            return out
 
         # ---- aggregate liquidations in window ----
         now_ms = view.ts_ms
