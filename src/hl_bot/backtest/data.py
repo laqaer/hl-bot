@@ -56,14 +56,14 @@ def fetch_candles(
     return out if isinstance(out, list) else []
 
 
-def fetch_funding_history(
+def _fetch_funding_page(
     coin: str,
     start_ms: int,
     end_ms: int,
     *,
     base_url: str = "https://api.hyperliquid.xyz",
 ) -> list[dict[str, Any]]:
-    """Raw funding rows: {coin, fundingRate, premium, time}."""
+    """One funding page (HL caps this at 500 rows, oldest-first from start_ms)."""
     with httpx.Client(timeout=20) as client:
         r = client.post(base_url + "/info", json={
             "type": "fundingHistory", "coin": coin,
@@ -72,6 +72,61 @@ def fetch_funding_history(
         r.raise_for_status()
         out = r.json()
     return out if isinstance(out, list) else []
+
+
+def _paginate_funding(
+    fetch_page: Any, start_ms: int, end_ms: int, *, max_pages: int = 64
+) -> list[dict[str, Any]]:
+    """Walk a 500-row-capped page fetcher to cover the whole [start, end] window.
+
+    ``fetch_page(start, end)`` returns one oldest-first page (≤500 rows). We
+    advance the cursor past the last row each page and stop on: empty page, a
+    short page (<500 → last page), no time progress, or ``max_pages``. Dedupes by
+    ``time`` so a boundary row repeated across pages is counted once. Pure given
+    ``fetch_page`` — unit-tested without a network.
+    """
+    rows: list[dict[str, Any]] = []
+    seen: set[int] = set()
+    cursor = start_ms
+    for _ in range(max_pages):
+        page = fetch_page(cursor, end_ms)
+        if not page:
+            break
+        for row in page:
+            try:
+                t = int(row.get("time", 0))
+            except (TypeError, ValueError):
+                continue
+            if t in seen:
+                continue
+            seen.add(t)
+            rows.append(row)
+        last_t = max((int(r.get("time", 0)) for r in page), default=cursor)
+        nxt = last_t + 1
+        if len(page) < 500 or nxt <= cursor or nxt > end_ms:
+            break
+        cursor = nxt
+    return rows
+
+
+def fetch_funding_history(
+    coin: str,
+    start_ms: int,
+    end_ms: int,
+    *,
+    base_url: str = "https://api.hyperliquid.xyz",
+) -> list[dict[str, Any]]:
+    """Raw funding rows {coin, fundingRate, premium, time} over the full window.
+
+    HL's ``fundingHistory`` returns at most 500 rows (~20.8d at the hourly
+    cadence), so a single call silently truncates any longer backtest window —
+    every frame older than the last 500h would otherwise read funding=0, which is
+    fatal for *carry* measurement. Page through to cover the whole window.
+    """
+    return _paginate_funding(
+        lambda s, e: _fetch_funding_page(coin, s, e, base_url=base_url),
+        start_ms, end_ms,
+    )
 
 
 # ---------------------------------------------------------------------------

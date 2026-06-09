@@ -14,16 +14,24 @@ Keep it ruthlessly prioritized: the top item should always be the highest-levera
   (flat in-sample, negative OOS). Carry/femr are dormant on majors (realized funding
   peaks ~57% APR < their 88–130% APR thresholds) and net-negative even when forced
   to trade. **No agent passes G0 on majors.** Numbers in PROGRESS.md Iteration 16.
-- [ ] **B1-alt — Test the carry thesis on HIGH-FUNDING alts (top edge lead).** Majors
-  never fund hard enough for carry to fire (B1). Fetch a basket where realized
-  |funding| actually reaches the thresholds (scan HL `predictedFundings`/metaCtxs for
-  the highest-|funding| perps), `backtest-fetch` them, then `confirm --agent
-  xfund_carry_v1 --prefer maker`. This is the honest test of whether funding carry
-  has ANY net-of-cost edge. Promote to paper only on a G0 PASS.
-- [ ] **B-femr-regime — femr is dormant on majors (decide its fate).** femr's
-  130%-APR entry never trips on liquid coins (B1). Either widen its universe to the
-  high-funding alts (overlaps B1-alt) and confirm, or retire it from the live roster
-  until it has a universe it can act in. No live change without a G0 PASS.
+- [x] **B1-alt — Test the carry thesis on HIGH-FUNDING alts.** DONE (Iteration 17).
+  First fixed a real measurement bug: `fetch_funding_history` was 500-row capped
+  (~21d), so any longer carry backtest silently read funding=0 on older frames.
+  Paginated it → full 120d funding (now unit-tested). Then fetched a high-funding
+  alt basket (INJ/PURR/TRUMP/AERO/NIL/APT/SPX/PYTH/EIGEN/S, realized 14–48% APR
+  |funding|) and ran `confirm --prefer maker` with the volume gate lowered so the
+  alts aren't filtered out. **Result: NOT CONFIRMED, both agents.** xfund_carry oos
+  edge −16.8bps (sharpe −2.95); funding_carry oos −33.2bps. A selectivity sweep
+  (raise enter threshold 26→175% APR) is net-negative at **every** level and per-trade
+  edge_bps gets *worse* as you pick the most-extreme funding — the carry collected is
+  smaller than maker cost + the directional noise of the (imperfectly neutral) legs.
+  **The carry thesis is pruned: no G0 on majors (B1) OR high-funding alts.** Numbers
+  in PROGRESS.md Iteration 17.
+- [ ] **B-femr-regime — femr is dormant on majors; retire or repurpose.** femr's
+  130%-APR entry never trips on liquid coins (B1). B1-alt now shows funding *carry*
+  has no edge even where funding is high, so widening femr (also funding-driven) to
+  alts is unlikely to help — the honest move is to **retire it from the live roster**
+  until there's a universe+variant with a demonstrated G0 PASS. No live change either way.
 - [x] **B1a — Offline history cache.** Done: `hlbot backtest-fetch` +
   save/load/cached_or_fetch under `data/backtest_cache/` (gzipped JSON,
   gitignored); `hlbot backtest --cache` runs without network. (Iteration 2.)
@@ -48,11 +56,12 @@ Keep it ruthlessly prioritized: the top item should always be the highest-levera
 - [x] **B5 — Confirmation harness (G0 as code).** Done: `backtest/confirm.py`
   walk-forward + cost ladder (maker/taker 1×/2×/3×) → PASS/FAIL; `hlbot confirm`.
   (Iteration 3.)
-- [~] **B4-RUN — Confirm carry strategies on real history.** Ran on majors
-  (Iteration 16): xfund_carry_v1/funding_carry_v1 are **dormant on liquid majors**
-  (funding never reaches threshold) and **net-negative when forced to trade** — so
-  NOT confirmable on this universe. Superseded by **B1-alt**: the carry thesis can
-  only be tested on a high-funding alt basket. Keep open until B1-alt resolves it.
+- [x] **B4-RUN — Confirm carry strategies on real history.** DONE (Iteration 17 via
+  B1-alt). Majors (Iteration 16): dormant / net-negative when forced. High-funding
+  alts (Iteration 17): both agents trade plenty but are **NOT CONFIRMED** as makers
+  (xfund oos −16.8bps, funding_carry oos −33.2bps), negative across the whole cost
+  ladder and every funding-selectivity threshold. Carry has no demonstrable
+  net-of-cost edge on either universe.
 
 ## P1 — honest measurement (so the supervisor can trust itself)
 

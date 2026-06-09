@@ -682,3 +682,84 @@ thresholds) and re-run `confirm --agent xfund_carry_v1 --prefer maker` — this 
 honest test of whether funding carry has *any* edge. Then **B-femr-regime** (femr is
 dormant on majors; either widen its universe or retire it). The TWAP family looks
 like a dead end after costs even as a maker.
+
+---
+
+## Iteration 17 — 2026-06-08 — B1-alt: carry has no edge on high-funding alts either (and a funding-data bug fixed)
+
+**Context.** Iteration 16 (B1) proved no agent passes G0 on liquid majors and left
+one open edge lead: **B1-alt** — the carry thesis can only be fairly tested where
+realized |funding| actually reaches the agents' thresholds, i.e. high-funding alts,
+not majors. Network is still open (POST /info → 200). This iteration ran that test
+honestly — and first had to fix a measurement bug that would have silently faked it.
+
+**Code change (the committed increment, with tests).**
+- **`backtest/data.py`: paginate `fetch_funding_history`.** HL's `fundingHistory`
+  returns at most **500 rows (~20.8d at 1h)**. A single call therefore silently
+  truncated any longer window: every frame older than the last ~500h read
+  `funding=0` (via `funding_rate_at`: most-recent row ≤ ts, none found → 0.0).
+  For a *carry* backtest, where funding is the entire signal, that's fatal — the
+  Iteration-16 majors carry numbers only had real funding for their last ~21d.
+  Extracted `_fetch_funding_page` (one POST) + a pure `_paginate_funding` loop that
+  advances the cursor past each page's last `time`, dedupes by `time`, and stops on
+  a short/empty page or `max_pages`. `fetch_funding_history` now returns the full
+  window. **Verified live:** the alt basket below now shows `funding` nonzero on
+  **100%** of 2881 frames (was ~17%).
+- **`tests/test_backtest.py` (+2):** `test_paginate_funding_covers_full_window`
+  (1008 synthetic hourly rows reassembled across ≥3 capped pages, unique & ordered)
+  and `test_paginate_funding_stops_on_short_page` (a <500-row first page is the last
+  page — no wasted call). Pure, no network.
+
+**Experiment — B1-alt (measurement; cache gitignored).**
+- `backtest-fetch --coins INJ,PURR,TRUMP,AERO,NIL,APT,SPX,PYTH,EIGEN,S --days 120`
+  → 2881 frames, full-window funding. Picked by scanning `metaAndAssetCtxs` +
+  `fundingHistory` for liquid, persistently-high-|funding| perps. Realized 120d
+  mean|f|: TRUMP 48%, PURR 36%, INJ 31%, AERO/NIL ~24–28%, others 14–23% APR.
+- `confirm_strategy(prefer="maker")` with `min_daily_volume_usd=0` (so the
+  high-funding, lower-liquidity alts aren't gated out — the point is to test the
+  *funding* edge, not liquidity).
+
+**Evidence — carry is NOT CONFIRMED on high-funding alts (G0 FAIL).**
+| agent | in-sample (maker) | oos (maker) | maker full | taker-2x |
+|---|---|---|---|---|
+| xfund_carry_v1 | −3.6bps / sh −1.10 | **−16.8bps / sh −2.95** | −7.7bps (876 tr) | −15.2bps |
+| funding_carry_v1 | −6.3bps / sh −0.91 | **−33.2bps / sh −3.58** | −16.5bps (416 tr) | −24.0bps |
+Both agents now *trade plenty* (the threshold mismatch is gone), and both lose —
+negative edge in- AND out-of-sample, across the entire cost ladder, even as makers.
+
+**Evidence — selectivity doesn't rescue it.** xfund_carry maker, raising the entry
+threshold to demand ever-more-extreme funding:
+| enter/hr | ≈APR | net$ | edge_bps | trades | sharpe |
+|---|---|---|---|---|---|
+| 0.00003 | 26% | −31.06 | −4.5 | 2788 | −2.31 |
+| 0.00010 | 88% | −16.81 | −7.7 | 876 | −1.82 |
+| 0.00015 | 131% | −11.73 | −10.8 | 436 | −1.52 |
+| 0.00020 | 175% | −15.58 | −19.0 | 328 | −2.26 |
+Net-negative at *every* threshold, and per-trade `edge_bps` gets **worse** as you
+pick the most-extreme funding — the highest-funding names carry more directional
+risk than carry reward, even in a dollar-neutral book. Being pickier shrinks the
+dollar loss only by trading less.
+
+**Honest conclusion (prunes the search further).** Funding carry has **no
+demonstrable net-of-cost edge on majors (B1) OR on high-funding alts (B1-alt)**.
+The carry collected is structurally smaller than maker cost + the residual
+directional variance of imperfectly-neutral legs, and concentrating into the
+highest-funding names makes the variance worse, not the edge better. **The carry
+thesis — the review's "highest-conviction candidate" — is pruned.** This also
+settles B-femr-regime: femr is funding-driven too, so widening it to alts is
+unlikely to help; the honest move is to retire it from the live roster absent a
+demonstrated G0 PASS.
+
+**Evidence (gate).** `uv run pytest -q` → **116 passed** (+2); `ruff check src
+tests scripts` → clean. The only code change is the funding-pagination fix + its
+tests (a real data-correctness bug); the carry result is measurement (cache is
+gitignored). No strategy/sizing/live-mode change.
+
+**What's next (loop).** With both the TWAP family (B1) and the carry family
+(B1-alt) now pruned after costs, the surviving P0 question is whether *any* signal
+has edge. Candidates not yet tested on real history: (1) a genuinely
+low-frequency basis/cross-sectional momentum that tolerates the 5-min loop;
+(2) retire femr from the live roster (B-femr-regime) to stop paying attention to a
+dormant/edgeless agent. The negative results are the value here — they've pruned
+the two most-hyped theses, so the next iteration should test a *structurally
+different* signal rather than re-tuning a known loser.

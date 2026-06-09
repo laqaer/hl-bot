@@ -112,6 +112,45 @@ def test_build_frames_from_candles():
     assert last.candles_1h["TST"]["sigma"] > 0
 
 
+def test_paginate_funding_covers_full_window():
+    from hl_bot.backtest.data import _paginate_funding
+
+    # synthetic hourly funding rows spanning ~42 days (1008h) — well past one
+    # 500-row page; the fetcher must page through to cover the whole window.
+    HR = 3_600_000
+    total = 1008
+    all_rows = [{"time": i * HR, "fundingRate": 0.0001} for i in range(total)]
+    calls: list[tuple[int, int]] = []
+
+    def fake_page(start: int, end: int):
+        calls.append((start, end))
+        page = [r for r in all_rows if start <= r["time"] <= end]
+        return page[:500]  # HL's hard cap
+
+    rows = _paginate_funding(fake_page, 0, (total - 1) * HR)
+    times = [int(r["time"]) for r in rows]
+    assert len(rows) == total, "should reassemble every row across pages"
+    assert times == sorted(set(times)), "rows unique and time-ordered"
+    assert len(calls) >= 3, "a >1000-row window needs multiple 500-row pages"
+
+
+def test_paginate_funding_stops_on_short_page():
+    from hl_bot.backtest.data import _paginate_funding
+
+    HR = 3_600_000
+    rows_src = [{"time": i * HR, "fundingRate": -0.0002} for i in range(120)]
+    n_calls = 0
+
+    def fake_page(start: int, end: int):
+        nonlocal n_calls
+        n_calls += 1
+        return [r for r in rows_src if start <= r["time"] <= end][:500]
+
+    rows = _paginate_funding(fake_page, 0, 119 * HR)
+    assert len(rows) == 120
+    assert n_calls == 1, "a <500-row first page is the last page — no extra calls"
+
+
 def test_frame_cache_roundtrip(tmp_path):
     from hl_bot.backtest.data import load_cached_frames, save_frames
     frames = _mean_reversion_path()
