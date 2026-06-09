@@ -612,3 +612,73 @@ and genuinely per-agent computable) does not trip
 **What's next (loop).** A dollar-calmar (net / |dollar DD|) ratio gate if wanted;
 B4-RUN / B1 (confirm carry on real history — still network-blocked at
 api.hyperliquid.xyz); B14a deploy automation.
+
+---
+
+## Iteration 16 — 2026-06-08 — B1 UNBLOCKED: the taker tax, quantified on real history
+
+**Context.** For 15 iterations B1 — the #1 backlog item and the central question of
+the whole review (REVIEW C1) — was blocked because the sandbox couldn't reach
+`api.hyperliquid.xyz` (403). **This iteration the network was open** (POST /info →
+200), so I finally ran the real-data measurement the entire roadmap is gated on.
+
+**What I did.**
+- `hlbot backtest-fetch --coins BTC,ETH,SOL,HYPE,AVAX,LINK --interval 1h --days 120`
+  → cached **2881 frames** under `data/backtest_cache/` (gitignored). Reproducible
+  offline from here.
+- `hlbot backtest --agent <a> --compare` for all seven agents.
+- `hlbot confirm --prefer maker` (walk-forward + cost ladder) for both TWAP variants.
+- A direct experiment: forced `xfund_carry_v1` to trade by lowering its funding
+  threshold, to test whether carry survives costs *when it fires*.
+
+**Evidence — the taker tax is real and ~73% of the bleed (C1 CONFIRMED).**
+| agent | taker net / edge | maker net / edge | gap |
+|---|---|---|---|
+| twap_mr_v1 | −$192.73 / −7.7bps | −$52.09 / −2.0bps | ~5.7bps |
+| twap_mr_regime_v1 | −$197.14 / −8.0bps | −$58.49 / −2.3bps | ~5.7bps |
+Maker execution removes ~73% of the loss — the review's "most of the bleed is the
+spread" hypothesis is now a measured fact, not a guess.
+
+**Evidence — but maker alone does NOT create edge (G0 not passed by anything).**
+`confirm --prefer maker` → **both TWAP variants NOT CONFIRMED**. As a maker they're
+~flat *in-sample* (−0.3 to −0.4 bps) but clearly negative *out-of-sample* (−5.5 to
+−6.2 bps, sharpe ≈ −2.4 to −2.8) — i.e. no edge that generalizes. The regime filter
+(B3) that helped on a *synthetic* trend is **slightly worse than baseline on real
+majors** (−2.3 vs −2.0 bps maker) — on this 120d window it didn't earn its keep.
+
+**Evidence — carry/femr are DORMANT on liquid majors (the threshold mismatch).**
+femr/funding_carry/xfund_carry/basis all produced **0 trades**. Root cause is *not*
+a bug: realized hourly funding on BTC/ETH/SOL/HYPE/AVAX/LINK over 120d peaked at
+**|f| ≈ 0.000065/hr (SOL ≈ 57% APR)**, while the entry thresholds demand far more
+(xfund 0.0001/hr ≈ 88% APR; femr 0.00015/hr ≈ 130% APR). Liquid majors simply never
+fund that hard, so these agents correctly hold.
+
+**Evidence — and when forced to trade, carry still loses after costs.** Lowering
+`xfund_carry` `enter_funding_per_hr` to make it fire:
+| thr (/hr) | maker net / edge / trades | taker net / edge |
+|---|---|---|
+| 0.00005 | −$0.08 / −5.4bps / 6 | −$0.16 / −10.9bps |
+| 0.00002 | −$1.34 / −5.1bps / 104 | −$2.76 / −10.6bps |
+| 0.00001 | −$4.47 / −4.1bps / 440 | −$10.49 / −9.6bps |
+Net-negative even as a maker at every threshold: the carry collected on majors is
+smaller than maker cost + the residual directional noise of the (imperfectly
+dollar-neutral) legs. So *lowering the threshold to chase carry on majors is not an
+edge* — consistent with the no-raising-caps/tightening-only discipline.
+
+**Honest conclusion (prunes the search).** Over the last 120d on the six most
+liquid HL coins: (1) the taker tax is the dominant, now-quantified cost; (2) maker
+execution is necessary but *not sufficient*; (3) neither TWAP-MR, its regime
+variant, nor cross-sectional funding carry shows positive net-of-cost edge that
+survives walk-forward. **No strategy passes G0 on this dataset.** The carry thesis
+isn't dead — but it lives in *high-funding alts*, not majors. That's the next test.
+
+**Evidence (gate).** `uv run pytest -q` → **114 passed**; `ruff check src tests
+scripts` → clean. Measurement-only — no strategy/sizing/live change. The cache is
+gitignored (data/), so this commit is docs + backlog only.
+
+**What's next (loop).** **B1-alt** (the highest-leverage follow-up): fetch a
+high-funding alt basket (where realized |funding| actually reaches the carry
+thresholds) and re-run `confirm --agent xfund_carry_v1 --prefer maker` — this is the
+honest test of whether funding carry has *any* edge. Then **B-femr-regime** (femr is
+dormant on majors; either widen its universe or retire it). The TWAP family looks
+like a dead end after costs even as a maker.

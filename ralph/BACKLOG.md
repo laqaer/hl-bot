@@ -7,10 +7,23 @@ Keep it ruthlessly prioritized: the top item should always be the highest-levera
 
 ## P0 — find an edge (the whole point)
 
-- [B] **B1 — Quantify the taker tax on every agent.** Run
-  `hlbot backtest --agent <a> --compare` over ≥90d for twap_mr/femr; record the
-  taker vs maker net/edge in `PROGRESS.md`. _Blocked in CI sandbox: outbound to
-  api.hyperliquid.xyz is 403. Run where HL history is reachable, or add B1a._
+- [x] **B1 — Quantify the taker tax on every agent.** DONE (Iteration 16, network
+  open). 120d/1h over BTC,ETH,SOL,HYPE,AVAX,LINK: taker tax ≈ **5.7 bps round-trip**,
+  ~**73% of the TWAP bleed** (twap_mr −7.7→−2.0 bps taker→maker; regime −8.0→−2.3).
+  But maker alone doesn't create edge: `confirm --prefer maker` → **NOT CONFIRMED**
+  (flat in-sample, negative OOS). Carry/femr are dormant on majors (realized funding
+  peaks ~57% APR < their 88–130% APR thresholds) and net-negative even when forced
+  to trade. **No agent passes G0 on majors.** Numbers in PROGRESS.md Iteration 16.
+- [ ] **B1-alt — Test the carry thesis on HIGH-FUNDING alts (top edge lead).** Majors
+  never fund hard enough for carry to fire (B1). Fetch a basket where realized
+  |funding| actually reaches the thresholds (scan HL `predictedFundings`/metaCtxs for
+  the highest-|funding| perps), `backtest-fetch` them, then `confirm --agent
+  xfund_carry_v1 --prefer maker`. This is the honest test of whether funding carry
+  has ANY net-of-cost edge. Promote to paper only on a G0 PASS.
+- [ ] **B-femr-regime — femr is dormant on majors (decide its fate).** femr's
+  130%-APR entry never trips on liquid coins (B1). Either widen its universe to the
+  high-funding alts (overlaps B1-alt) and confirm, or retire it from the live roster
+  until it has a universe it can act in. No live change without a G0 PASS.
 - [x] **B1a — Offline history cache.** Done: `hlbot backtest-fetch` +
   save/load/cached_or_fetch under `data/backtest_cache/` (gzipped JSON,
   gitignored); `hlbot backtest --cache` runs without network. (Iteration 2.)
@@ -35,9 +48,11 @@ Keep it ruthlessly prioritized: the top item should always be the highest-levera
 - [x] **B5 — Confirmation harness (G0 as code).** Done: `backtest/confirm.py`
   walk-forward + cost ladder (maker/taker 1×/2×/3×) → PASS/FAIL; `hlbot confirm`.
   (Iteration 3.)
-- [ ] **B4-RUN — Confirm carry strategies on real history.** Run `hlbot confirm
-  --agent xfund_carry_v1 --prefer maker` (and funding_carry_v1) on a net host;
-  promote to the paper roster if confirmed. Blocked by B1 network.
+- [~] **B4-RUN — Confirm carry strategies on real history.** Ran on majors
+  (Iteration 16): xfund_carry_v1/funding_carry_v1 are **dormant on liquid majors**
+  (funding never reaches threshold) and **net-negative when forced to trade** — so
+  NOT confirmable on this universe. Superseded by **B1-alt**: the carry thesis can
+  only be tested on a high-funding alt basket. Keep open until B1-alt resolves it.
 
 ## P1 — honest measurement (so the supervisor can trust itself)
 
