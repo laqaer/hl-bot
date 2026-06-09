@@ -332,7 +332,7 @@ def femr_tick(live: bool = False, execution: str = "taker"):
           Bot only touches positions it itself opened (cloid-tagged).
     """
     from ..agents.decisions import Decision, log_decision
-    from ..agents.runtime import fetch_market_view
+    from ..agents.runtime import collect_decisions, fetch_market_view
     from ..exec.orders import (
         HL_TRADER_ADDRESS,
         GuardrailConfig,
@@ -536,18 +536,17 @@ def femr_tick(live: bool = False, execution: str = "taker"):
         f"bot-owned: {sorted(owned_all) or '∅'} · manual: {manual_coins or '∅'}[/dim]"
     )
 
-    all_decisions = []
-    for agent in agents:
-        decisions = agent.decide(view)
-        for d in decisions:
-            d.is_paper = not live
-            # Only log non-place/flatten actions immediately (holds skipped, rejected later).
-            # `place` and `flatten` are logged ONLY after exchange acceptance in the execution
-            # loop below — otherwise the cooldown check would see our own intent rows and
-            # block subsequent ticks forever.
-            if d.action not in ("hold", "place", "flatten"):
-                log_decision(conn, d)
-            all_decisions.append(d)
+    # Gather decisions through the shared safe core (REVIEW M3): one agent
+    # raising in decide() logs an error and the tick continues instead of
+    # crashing the whole live loop. `place`/`flatten` are deferred (logged ONLY
+    # after exchange acceptance in the execution loop below — otherwise the
+    # cooldown check would see our own intent rows and block forever); `hold`
+    # is collected for display but never logged.
+    all_decisions = collect_decisions(
+        conn, agents, view,
+        is_paper=not live,
+        defer_actions=frozenset({"hold", "place", "flatten"}),
+    )
 
     console.print(f"[green]✓[/green] {len(all_decisions)} decisions (live={live})")
     for d in all_decisions:

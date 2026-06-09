@@ -70,6 +70,47 @@ def _agent_mode(conn: sqlite3.Connection, agent: str) -> tuple[str, bool]:
     return row["mode"], bool(row["enabled"])
 
 
+def collect_decisions(
+    conn: sqlite3.Connection,
+    agents: list[Agent],
+    view: MarketView,
+    *,
+    is_paper: bool,
+    defer_actions: frozenset[str] = frozenset(),
+) -> list[Decision]:
+    """Ask each agent to ``decide()`` safely; tag, log, and collect decisions.
+
+    This is the single decision-gathering core shared by the paper diagnostic
+    tick (``run_tick``) and the live loop (``cli.femr_tick``) so the two paths
+    can't drift (REVIEW M3). Each ``decide()`` is wrapped: if one agent raises,
+    an ``error`` decision is logged and the loop continues — one bad agent never
+    aborts the whole tick (the live loop previously had no such guard).
+
+    Every returned decision has ``is_paper`` set to ``is_paper``. Decisions whose
+    action is in ``defer_actions`` are returned but NOT logged here; the caller
+    logs them later (e.g. ``place``/``flatten`` only after the exchange confirms,
+    so the cooldown check doesn't see our own intent rows and block forever).
+    """
+    all_decisions: list[Decision] = []
+    for agent in agents:
+        try:
+            decisions = agent.decide(view)
+        except Exception as e:  # noqa: BLE001
+            log_decision(conn, Decision(
+                agent=agent.name, action="error",
+                reasoning="decide() raised", error=str(e),
+                is_paper=is_paper,
+            ))
+            log.exception("agent %s decide() failed", agent.name)
+            continue
+        for d in decisions:
+            d.is_paper = is_paper
+            if d.action not in defer_actions:
+                log_decision(conn, d)
+            all_decisions.append(d)
+    return all_decisions
+
+
 def run_tick(
     conn: sqlite3.Connection,
     agents: list[Agent],
@@ -78,31 +119,19 @@ def run_tick(
     *,
     force_paper: bool = True,
 ) -> list[Decision]:
-    """One scheduling tick: fetch view, ask each agent, log decisions.
+    """One scheduling tick: fetch view, ask each enabled agent, log decisions.
 
-    If force_paper is True (default), every decision is recorded with
-    is_paper=True regardless of agent mode. Flip to False only when you've
-    wired and reviewed the live order adapter.
+    Paper-only diagnostic path: decisions are logged but never executed, so
+    ``is_paper`` is purely a log tag here. ``force_paper`` is retained for
+    backward compatibility and currently always tags decisions as paper (live
+    placement goes through ``cli.femr_tick``, not this path).
     """
     view = fetch_market_view(base_url, coins)
-    all_decisions: list[Decision] = []
+    enabled_agents: list[Agent] = []
     for agent in agents:
-        mode, enabled = _agent_mode(conn, agent.name)
+        _, enabled = _agent_mode(conn, agent.name)
         if not enabled:
             log.info("agent %s disabled, skipping", agent.name)
             continue
-        try:
-            decisions = agent.decide(view)
-        except Exception as e:  # noqa: BLE001
-            log_decision(conn, Decision(
-                agent=agent.name, action="error",
-                reasoning="decide() raised", error=str(e),
-                is_paper=True,
-            ))
-            log.exception("agent %s decide() failed", agent.name)
-            continue
-        for d in decisions:
-            d.is_paper = True if force_paper else (mode == "paper")
-            log_decision(conn, d)
-            all_decisions.append(d)
-    return all_decisions
+        enabled_agents.append(agent)
+    return collect_decisions(conn, enabled_agents, view, is_paper=True)

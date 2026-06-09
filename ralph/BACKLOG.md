@@ -84,8 +84,13 @@ Keep it ruthlessly prioritized: the top item should always be the highest-levera
   tick warning when liq_cascade is in the roster but `HLBOT_WS_SNAPSHOT` is unset
   (effectively disabled), plus `tests/test_liq_cascade.py` proving fed→enters /
   unfed→holds / thin-coin & stale-event filters. (Iteration 11.)
-- [ ] **B12 — Consolidate execution paths.** `runtime.run_tick` vs `femr_tick`
-  duplicate logic; unify so the safe wrapper is what live uses. (REVIEW M3.)
+- [x] **B12 — Consolidate execution paths.** Done: extracted
+  `runtime.collect_decisions` — the single decision-gathering core both
+  `run_tick` (paper tick) and `cli.femr_tick` (live loop) now call. Live previously
+  had its own loop with **no try/except**, so one agent raising in `decide()`
+  crashed the whole tick; it now logs an `error` decision and continues, same as
+  the safe wrapper. `defer_actions` parametrizes the place/flatten/hold
+  "log-after-fill" behavior. Tested (3 cases). (Iteration 13, REVIEW M3.)
 - [ ] **B13 — Move hardcoded trader address to config.** (REVIEW M6.)
 - [x] **B14 — Go-live runbook in-repo.** `docs/GO_LIVE.md`: gated checklist,
   secrets/env, promote/kill-switch/rollback, monitoring. (REVIEW D3.)

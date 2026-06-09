@@ -466,3 +466,51 @@ design decision, rather than rushed here.
 **What's next (loop).** B12 (consolidate `runtime.run_tick` vs `femr_tick` so the
 safe wrapper is what live uses — REVIEW M3), B7-dd (capital-base convention for
 per-agent drawdown), B4-RUN (confirm carry on real history — network-blocked).
+
+---
+
+## Iteration 13 — 2026-06-08 — consolidate the two execution paths (B12/M3)
+
+**Context.** P0 is done or network-blocked. The top unblocked item was **B12**
+(REVIEW M3): `agents/runtime.run_tick` (the "safe" path) and
+`cli/main.femr_tick` (the live loop) each had their own agent-decision loop. The
+safe wrapper was effectively dead for live, and — more importantly — the live
+loop's copy had **no exception handling**: a single agent raising in `decide()`
+would crash the whole live tick (no decisions logged, no error recorded, the
+remaining agents never consulted).
+
+**Changed (1 commit).**
+- **`agents/runtime.py` — new `collect_decisions(conn, agents, view, *,
+  is_paper, defer_actions)`**: the single decision-gathering core. Wraps each
+  `decide()` so a raising agent logs an `error` decision and the loop continues;
+  tags every decision with `is_paper`; logs immediately *except* actions in
+  `defer_actions` (returned for the caller to act on/display but not yet logged).
+  `run_tick` now filters enabled agents then delegates to it.
+- **`cli/main.py::femr_tick`** — replaced its bespoke decide-loop with
+  `collect_decisions(..., is_paper=not live, defer_actions={"hold","place",
+  "flatten"})`. Same defer semantics as before (place/flatten logged only after
+  exchange acceptance so cooldown checks don't see our own intent; hold shown but
+  not logged) — but now the live path gets the safe wrapper's per-agent error
+  isolation it was missing.
+- **`tests/test_collect_decisions.py`** (new, 3 cases) — raising agent is
+  isolated (logged as `error`, sibling agent still runs, error not returned);
+  deferred actions collected-but-not-logged while non-deferred are logged; and
+  `is_paper` applied uniformly.
+
+**Evidence.** `uv run pytest -q` → **109 passed** (+3). `ruff check src tests
+scripts` → clean. `python -c "import hl_bot.cli.main"` → ok.
+
+**Why it matters.** Removes the duplicate loop the review flagged (M3) so the two
+paths can no longer drift, and closes a real robustness gap: the live loop now
+survives one agent throwing instead of taking the whole tick down. Behavior of
+the live execution/risk machinery is otherwise unchanged — measurement/robustness
+only, no strategy, sizing, or live-mode change.
+
+**Deliberately NOT done.** Did not fold femr_tick's risk/reconcile/execution
+stages into runtime — those are genuinely live-only and out of scope for a single
+reviewable slice; the duplication that mattered (the decide-loop) is gone.
+
+**What's next (loop).** B7-dd (capital-base convention for a real per-agent
+maxDD/calmar — needs a design decision), B-book (book-aware maker pricing off L2
+depth, B10 done), B4-RUN / B1 (confirm carry on real history — still
+network-blocked at api.hyperliquid.xyz).
