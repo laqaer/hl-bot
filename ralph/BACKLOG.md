@@ -55,8 +55,11 @@ Keep it ruthlessly prioritized: the top item should always be the highest-levera
   N/A). Configs that want fractional gates set `capital:`. (REVIEW C5. Iter 9.)
 - [x] **B8 — Record actual fill price.** Done: `femr_tick` now logs the confirmed
   `res.avg_px`/`res.filled_sz` on fill so stops/TPs key off the real entry. (M1.)
-- [ ] **B9 — fills→positions replay.** Populate the unused `positions` table from
-  fills so attribution survives partial fills/manual interference. (REVIEW M2.)
+- [x] **B9 — fills→positions replay.** Done: `scoring/positions.py`
+  (`replay_positions` pure state machine + `rebuild_positions(conn)`) populates
+  the `positions` table from fills (net_sz, size-weighted avg_entry, accumulated
+  realized_pnl/fees), surviving partial fills/flips/manual interference; wired
+  into `hlbot ingest` and exposed via `hlbot positions`. (REVIEW M2. Iter 10.)
 
 ## P2 — cadence, structure, devops
 

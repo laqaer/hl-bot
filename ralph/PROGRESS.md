@@ -337,3 +337,42 @@ present but did nothing. The twap configs even documented the caveat.
 **What's next (loop).** B9 (fills→positions replay so attribution survives partial
 fills, M2), B12 (consolidate the two execution paths, M3), userFills WS for
 instant maker-fill detection, B4-RUN (confirm carry on real history — network-gated).
+
+---
+
+## Iteration 10 — 2026-06-08 — fills→positions replay (B9 / M2)
+
+**Context.** Honest-measurement leverage (#3). The `positions` table has existed
+in the schema since day 0 ("Updated from fills on ingest") but was **never
+populated** — per-agent attribution was inferred only from the binary
+place/flatten decision log, so partial fills, size drift, and manual interference
+weren't tracked (REVIEW M2). The decision-log heuristic can't tell a half-filled
+entry from a full one, or notice a manual trim.
+
+**Changed (1 commit).**
+- **`scoring/positions.py`** — `replay_positions(fills)` is a pure per-(agent,coin)
+  state machine: signed `net_sz` (B=+, A=−), size-weighted `avg_entry_px` that
+  (a) weights on same-side adds, (b) is preserved on partial closes, (c) clears
+  to 0 on full close, (d) resets to the fill price on a flip through zero; plus
+  accumulated `realized_pnl` (taken straight from exchange `closed_pnl`, never
+  invented) and `fees_paid`. A `_EPS` snaps float-dust residuals to flat.
+  `rebuild_positions(conn)` replays the full fills history (ordered by time_ms,
+  tid) and rewrites the table — idempotent, cheap, always reflects ground truth.
+- **CLI** — `hlbot ingest` now calls `rebuild_positions` after fills/funding (so
+  the table stays current on every pull); new `hlbot positions` command displays
+  per-agent net size / avg entry / realized / fees.
+
+**Evidence.** 93 → **102 tests pass** (9 new: weighted entry on partial fills,
+preserved entry on partial close, clear-on-close, flip-through-zero, agent/coin
+separation, idempotent rebuild, time-ordering-not-insertion-order, null→manual);
+`ruff check src tests scripts` clean; `hlbot positions` registers and runs.
+
+**Why it matters.** Attribution now derives from the exchange's fills, not a
+heuristic — the foundation the supervisor trusts. Next this unlocks funding
+attribution by *held size* (vs the current equal-split-among-holders in
+`_agent_funding_payments`) and makes partial-fill PnL honest. No strategy/edge
+claim here; this is measurement plumbing.
+
+**What's next (loop).** B12 (consolidate `runtime.run_tick` vs `femr_tick`, M3),
+userFills WS for instant maker-fill detection, B11 (feed/retire liq_cascade),
+B4-RUN (confirm carry on real history — network-gated).

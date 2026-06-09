@@ -36,6 +36,7 @@ from ..research.strategy_health import (
 from ..risk.allocation import resolve_agent_caps
 from ..risk.scaling import compute_notional_cap, spot_usdc_from_state, unified_portfolio_value
 from ..scoring.metrics import score_all
+from ..scoring.positions import rebuild_positions
 from ..supervisor.loop import supervise
 
 app = typer.Typer(no_args_is_help=True, add_completion=False)
@@ -87,7 +88,11 @@ def ingest(funding_days: int = 7):
     n_fills = ingest_fills(conn, s.hl_address, s.hl_api_url)
     n_fund = ingest_funding(conn, s.hl_address, s.hl_api_url, funding_days)
     snapshot_equity(conn, s.hl_address, s.hl_api_url)
-    console.print(f"[green]✓[/green] fills:{n_fills} funding:{n_fund} +1 equity snapshot")
+    n_pos = rebuild_positions(conn)
+    console.print(
+        f"[green]✓[/green] fills:{n_fills} funding:{n_fund} positions:{n_pos} "
+        "+1 equity snapshot"
+    )
 
 
 @app.command()
@@ -106,6 +111,28 @@ def score():
             "—" if c.sharpe is None else f"{c.sharpe:+.2f}",
             "—" if c.max_drawdown is None else f"{c.max_drawdown*100:+.1f}%",
             "—" if c.edge_bps is None else f"{c.edge_bps:+.1f}",
+        )
+    console.print(table)
+
+
+@app.command()
+def positions(rebuild: bool = True):
+    """Show per-agent position attribution (replayed from fills)."""
+    conn, _ = _conn()
+    if rebuild:
+        rebuild_positions(conn)
+    rows = conn.execute(
+        """SELECT agent, coin, net_sz, avg_entry_px, realized_pnl, fees_paid
+           FROM positions ORDER BY agent, coin"""
+    ).fetchall()
+    table = Table(title="Positions (per-agent, from fills)")
+    for col in ("agent", "coin", "net_sz", "avg_entry", "realized_pnl", "fees"):
+        table.add_column(col)
+    for r in rows:
+        table.add_row(
+            r["agent"], r["coin"], f"{r['net_sz']:+.4f}",
+            f"{r['avg_entry_px']:.4f}" if r["net_sz"] else "—",
+            f"{r['realized_pnl']:+.2f}", f"{r['fees_paid']:.2f}",
         )
     console.print(table)
 
