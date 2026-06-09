@@ -633,8 +633,20 @@ Keep it ruthlessly prioritized: the top item should always be the highest-levera
   G3 / ready when G3; default not-ready; all aspects unverified by design; aspects populated; markdown renders
   gate+aspects and READY when cleared; JSON/MD export round-trip). Spec only, no live change. Numbers in
   PROGRESS Iter 52.
-- [ ] **B17 — Moonshot sleeve spec.** Design the ring-fenced, loss-bounded Path B
-  sleeve (separate sub-account, hard cap, defined max loss). Spec only; no live.
+- [x] **B17 — Moonshot sleeve spec. DONE (Iteration 53).** Pure, tested report
+  `reports/moonshot_sleeve.py` (mirrors vault_evaluation): a frozen `SleeveConstraint` record enumerating
+  the six ring-fence rules — hard size cap (≤5% core), separate sub-account, defined max loss per bet,
+  tightening-only risk, negative-EV disclosure, human-gated activation — each citing a **real internal
+  source** (`risk/scaling.py`, `risk/allocation.py`, `research/strategy_health.py`, ROADMAP, GO_LIVE), NOT
+  unverified-external like the vault. Load-bearing pieces: (a) computed `moonshot_sizing(core_capital,
+  sleeve_fraction, max_bets)` proving the loss-bound invariant — worst-case total loss == sleeve budget and
+  core_floor = core − budget stays positive, so the sleeve can never drain the core (raises on >5% / non-pos
+  / <1 bet); (b) computed `moonshot_gate` defaulting NOT READY until capped ≤5% AND separate sub-account AND
+  per-bet max loss defined AND human go-live approval. `build`/`to_markdown`/`export` + offline CLI
+  `hlbot moonshot-sleeve`. +10 tests (loss-bound invariant; ring-fence ValueErrors; gate lists every unmet
+  condition incl. human-gated; ready only when fully configured+approved; oversize rejected; every
+  constraint sourced to a file that exists; markdown renders gate/loss-bound/constraints; JSON/MD export).
+  Spec only, no live change. Numbers in PROGRESS Iter 53.
 
 ## Done
 

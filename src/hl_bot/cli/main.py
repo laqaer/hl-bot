@@ -1344,6 +1344,39 @@ def vault_evaluation(out: Path = Path("data/vault_evaluation"), g3_cleared: bool
 
 
 @app.command()
+def moonshot_sleeve(
+    out: Path = Path("data/moonshot_sleeve"),
+    core_capital: float = 10_000.0,
+    sleeve_fraction: float = 0.05,
+    max_bets: int = 5,
+    separate_subaccount: bool = False,
+    per_bet_max_loss_defined: bool = False,
+    human_approved: bool = False,
+):
+    """Export the ring-fenced Path-B moonshot-sleeve spec (B17).
+
+    Writes moonshot_sleeve.{json,md}: the hard-capped, fully-loss-bounded sleeve
+    for negative-EV bets that can never touch the core. The gate defaults to NOT
+    READY — the sleeve only activates when capped <=5%, isolated in a separate
+    sub-account, every bet has a defined max loss, AND a human approves go-live.
+    Pure data, no network or DB. Spec only — nothing touches capital.
+    """
+    from ..reports.moonshot_sleeve import export
+
+    jp, mp = export(
+        out,
+        core_capital=core_capital,
+        sleeve_fraction=sleeve_fraction,
+        max_bets=max_bets,
+        separate_subaccount=separate_subaccount,
+        per_bet_max_loss_defined=per_bet_max_loss_defined,
+        human_approved=human_approved,
+    )
+    console.print(mp.read_text())
+    console.print(f"[green]✓[/green] wrote {jp} and {mp}")
+
+
+@app.command()
 def allocator_packet(out: Path = Path("data/allocator_packet")):
     """Export the complete allocator packet (chassis + track record + edge search).
 

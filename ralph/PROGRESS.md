@@ -3113,3 +3113,58 @@ with full integrity + tests) and the stale P2 **B14a** `[ ]` (whose deploy chass
 iteration can mark it done). The edge search remains exhausted on HL historical candles; genuinely new edge
 evidence still requires the forward-recorded fine-cadence archive (B-fine-record slice 3), which needs calendar
 time + a deployed host's `recorded_candles.jsonl` before `hlbot record-coverage` can report READY.
+
+## Iteration 53 — 2026-06-09 — B17: ring-fenced moonshot sleeve spec (Path B)
+
+**Context (orientation).** The HL-historical-candle edge search is exhausted (all twelve theses + every
+parked sub-angle pruned); the one route to genuinely new edge evidence — B-fine-record slice 3 — is blocked on
+calendar time AND a deployed host's `recorded_candles.jsonl` (no local archive). Iter 52 (B16 vault spike)
+named the only two remaining open backlog items: P3 **B17** (Moonshot sleeve spec — explicitly "fully derivable
+from this repo's risk machinery so it can be written with full integrity + tests") and the stale P2 **B14a**
+(deploy chassis already ships in `deploy/`, its `[ ]` is just unmarked). B17 was the higher-positioned *and* the
+one that produces a real, tested artifact, so it was the cleanest unblocked increment.
+
+**What I built (pure, tested).** `reports/moonshot_sleeve.py`, mirroring the established Path-C report pattern
+(`vault_evaluation.py`): a frozen `SleeveConstraint` record enumerating the **six ring-fence rules** — (1) hard
+size cap (≤5% of core), (2) separate sub-account, (3) defined max loss per bet, (4) tightening-only risk,
+(5) negative-EV disclosure, (6) human-gated activation. **Integrity contrast with B16:** the vault's mechanics
+were external HL protocol facts (all `verified=False`); the moonshot's constraints are *internal* — each carries
+a `source` citing a real repo module (`risk/scaling.py`, `risk/allocation.py`, `research/strategy_health.py`)
+or roadmap section, so they are verifiable by reading the source, not flagged unverified. (A test asserts every
+cited source path actually exists — which caught my first draft citing `research/strategy_health.py` instead of
+the real `src/hl_bot/research/strategy_health.py`.)
+
+**The two load-bearing computed pieces.** (a) `moonshot_sizing(core_capital, sleeve_fraction, max_bets)` is the
+pure loss-bound arithmetic: `sleeve_budget = core × fraction`, `per_bet_max_loss = budget / max_bets`, and the
+**invariant** `worst_case_total_loss == sleeve_budget` with `core_floor = core − budget > 0` — i.e. even if
+every bet zeroes, the loss is exactly the sleeve budget and the core is untouched. It raises `ValueError` on any
+ring-fence violation (fraction >5% / ≤0, non-positive capital, <1 bet). (b) `moonshot_gate(...)` defaults to
+**NOT READY** and only flips ready when the sleeve is capped ≤5% **AND** isolated in a separate sub-account
+**AND** every bet has a defined max loss **AND** a human has approved go-live — the last condition enforces the
+repo's never-auto-enable-live hard rule on a convex negative-EV bet. `build`/`to_markdown`/`export` +
+offline CLI `hlbot moonshot-sleeve` (`--separate-subaccount/--per-bet-max-loss-defined/--human-approved` flip
+the gate; `--core-capital/--sleeve-fraction/--max-bets` size the illustrative loss bound; no DB/network).
+
+**Why this matters (Path B).** B17 was the last named open spec. The roadmap's Path B is the only way a *small*
+account reaches $1M (a convex lottery ticket), but a negative-EV bet is exactly what the evidence-before-capital
+and human-go-live rules exist to keep off the autopilot. This turns "carve a moonshot sleeve" into an auditable
+artifact: here are the six ring-fence rules each sourced to real machinery, here is the proof the sleeve can
+never drain the core (the loss-bound invariant), and here is the one gate that keeps it closed until it is both
+correctly configured AND human-approved. It is explicitly excluded from every track-record/allocator edge claim.
+
+**Evidence (gate).** `uv run pytest -q` → **303 passed** (+10: loss-bound invariant; ring-fence `ValueError`s;
+gate enumerates every unmet condition incl. human-gated; ready only when fully configured+approved; oversize
+sleeve rejected even when otherwise approved; every constraint sourced to a file that exists; markdown renders
+gate/loss-bound/all constraints; default not-ready; JSON/MD export round-trip with the loss-bound equality).
+`uv run ruff check src tests scripts` → clean. CLI smoke-tested (`hlbot moonshot-sleeve --out /tmp/...` →
+NOT READY). Offline/pure; no `data/` writes committed; no strategy/roster/live-mode change; nothing touched
+capital.
+
+**What's next (loop).** With B17 done, the backlog has **no open spec/report items** — the only remaining `[ ]`
+is the stale P2 **B14a** (deploy automation), whose EC2/systemd/Litestream/cron chassis already ships in
+`deploy/`; a future iteration can simply mark it done after a quick chassis audit. The edge search remains
+exhausted on HL historical candles; genuinely new edge evidence still requires the forward-recorded fine-cadence
+archive (B-fine-record slice 3), which needs calendar time + a deployed host's `recorded_candles.jsonl` before
+`hlbot record-coverage` can report READY. Absent that, the loop is at the honest boundary: the machinery and the
+capital-formation specs (track record, allocator packet, vault eval, moonshot sleeve) are all complete, and the
+binding constraint is *time accumulating recorded data*, not code.
