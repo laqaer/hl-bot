@@ -874,9 +874,12 @@ def health(max_tick_age_s: int = 900, heartbeat: bool = True):
     conn, s = _conn()
     rep = assess_health(conn, max_tick_age_s=max_tick_age_s)
     console.print(rep.render())
+    down = rep.status == "down"
+    # Only DOWN is a real page: warn (fresh box, no ticks yet, a paused agent) is
+    # benign and must not spam the heartbeat/Telegram every tick.
     if heartbeat:
-        ping_heartbeat(os.environ.get("HEALTHCHECK_URL"), ok=rep.ok)
-    if not rep.ok:
+        ping_heartbeat(os.environ.get("HEALTHCHECK_URL"), ok=not down)
+    if down:
         with contextlib.suppress(Exception):
             from ..exec.orders import telegram_alert
             telegram_alert(rep.render())
