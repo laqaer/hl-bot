@@ -81,6 +81,12 @@ class FundingCarryAgent(Agent):
     def decide(self, view: MarketView) -> list[Decision]:
         out: list[Decision] = []
         funding = view.funding or {}
+        # enter/exit thresholds + APR are per-hour; the backtest data layer scales
+        # Frame.funding by bar length. Normalize back to per-hour so one config is
+        # interval-invariant (live HL funding is hourly → no-op). See xfund_carry.
+        bar_hours = float(view.extra.get("bar_hours", 1.0) or 1.0)
+        if bar_hours != 1.0:
+            funding = {c: f / bar_hours for c, f in funding.items()}
         vol = view.extra.get("day_ntl_vlm", {}) or {}
         open_pos = self._open_positions()
 

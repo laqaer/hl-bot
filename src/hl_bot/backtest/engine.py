@@ -50,6 +50,7 @@ class Frame:
     ts_ms: int
     mids: dict[str, float]
     funding: dict[str, float] = field(default_factory=dict)          # per-bar rate
+    bar_hours: float = 1.0                                            # bar length in hours
     day_ntl_vlm: dict[str, float] = field(default_factory=dict)
     open_interest: dict[str, float] = field(default_factory=dict)
     candles_1h: dict[str, dict] = field(default_factory=dict)        # coin -> {vwap, sigma}
@@ -200,6 +201,7 @@ class Backtester:
             funding=dict(frame.funding),
             open_interest=dict(frame.open_interest),
             extra={
+                "bar_hours": frame.bar_hours,
                 "day_ntl_vlm": dict(frame.day_ntl_vlm),
                 "candles_1h": dict(frame.candles_1h),
                 "closes": {k: list(v) for k, v in frame.closes.items()},

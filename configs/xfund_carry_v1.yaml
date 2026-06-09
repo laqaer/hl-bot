@@ -4,7 +4,11 @@ description: >-
   coins, long the bottom-K most-negative, dollar-neutral, collect the funding
   spread. Highest-conviction candidate (low directional variance, scalable,
   capital/AUM-friendly). Must pass the G0 confirmation gate on real history
-  before it is wired into the live roster.
+  before it is wired into the live roster. NOT yet passing: best honest config is
+  ~−2 to −4 bps maker on 90d (still negative). A 4h-cadence run appeared positive
+  but was a measurement artifact (per-hour funding thresholds compared against
+  bar_hours-scaled funding); fixed in Iter 25, after which the coarse-cadence edge
+  collapses to ~−11 bps maker. Cadence lever pruned.
 mode: paper
 
 goals:

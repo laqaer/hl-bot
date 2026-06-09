@@ -79,8 +79,28 @@ Keep it ruthlessly prioritized: the top item should always be the highest-levera
   so residual net-short-the-market variance was burying ~half the bleed. BUT it does
   NOT cross to positive: best is still −2.3bps maker, and `confirm` OOS sign-flips
   between universes (10-coin OOS +6.3bps, 20-coin OOS −19.8bps) → no robust positive
-  edge. **Not promoted.** Lever kept (default off, tested). Remaining un-pruned lever:
-  a lower cadence (4h/1d) where funding accrual outweighs per-bar price noise.
+  edge. **Not promoted.** Lever kept (default off, tested). **Fifth/last lever
+  pruned (Iter 25): lower cadence (4h).** A 4h run first looked strongly positive
+  (maker +26bps, `confirm` PASS) but that was a **measurement artifact**: the agent
+  compared its per-HOUR funding thresholds against `Frame.funding`, which the data
+  layer scales by `bar_hours` (4× at 4h) → a silently 4×-looser entry filter.
+  **Fixed** (`Frame.bar_hours` plumbed into the view; xfund_carry + funding_carry
+  normalize funding back to per-hour; no-op live where HL funding is already
+  hourly). Post-fix the honest 4h number is maker **−12.8bps** (10-coin) /
+  **−19.0bps** (20-coin); `confirm` FAILs (OOS −27.5bps); and a true cadence gate
+  on 1h data (`rebalance_hours=4`, new tested lever, default off) is −22bps —
+  coarse cadence does NOT help, it hurts. **All B1c levers pruned; best config in
+  book remains beta_neutral 10-coin 1h at −2.3bps maker — negative. xfund carry on
+  liquid alts is structurally negative net-of-cost; the hunt must PIVOT** (e.g.
+  funding-decile spot-vs-perp basis, or a different signal class). B1c is closed.
+- [ ] **B1d — Pivot the edge hunt off cross-sectional funding carry.** B1c
+  exhausted xfund_carry's lever space (entry tightness, universe width, churn,
+  beta-neutralisation, cadence) — all negative net-of-cost on liquid alts. Next
+  candidate signal classes to backtest: (i) spot-vs-perp **basis** at funding
+  deciles (carry without the alt price-variance), (ii) a slower **trend/regime**
+  overlay on majors at maker cost, (iii) revisit FEMR as a pure hold-to-collect
+  maker on the *lower*-|funding| band (extreme funding = extreme vol). Pick one,
+  backtest, confirm.
 
 ## P1 — honest measurement (so the supervisor can trust itself)
 

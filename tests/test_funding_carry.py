@@ -177,3 +177,65 @@ def test_carry_skips_calm_funding():
     ]
     res, _ = _run(FundingCarryAgent, frames)
     assert res.scorecard.n_trades == 0
+
+
+def _entries(out) -> dict[str, str]:
+    return {d.coin: d.side for d in out if d.action == "place"}
+
+
+def test_per_hour_funding_thresholds_are_interval_invariant():
+    # The enter/exit thresholds are per-HOUR, but the data layer scales
+    # Frame.funding by bar length (4h bar -> 4x the hourly rate). The agent must
+    # normalize by extra["bar_hours"] so the SAME config picks the same legs at
+    # any interval. MEH's hourly rate (0.00003) is below the 0.0001 entry
+    # threshold; without normalization its 4h-scaled value (0.00012) would clear
+    # it and MEH would be wrongly entered.
+    vol = {"day_ntl_vlm": {"HOT": 5e7, "COLD": 5e7, "MEH": 5e7}}
+    v1 = MarketView(
+        ts_ms=HOUR, mids={"HOT": 100.0, "COLD": 50.0, "MEH": 10.0},
+        funding={"HOT": 0.0002, "COLD": -0.0002, "MEH": 0.00003},
+        extra={"bar_hours": 1.0, **vol},
+    )
+    v4 = MarketView(  # same per-hour rates, scaled by bar_hours=4 as data.py does
+        ts_ms=HOUR, mids={"HOT": 100.0, "COLD": 50.0, "MEH": 10.0},
+        funding={"HOT": 0.0008, "COLD": -0.0008, "MEH": 0.00012},
+        extra={"bar_hours": 4.0, **vol},
+    )
+    e1 = _entries(XFundCarryAgent(config={}, conn=init_db(":memory:")).decide(v1))
+    e4 = _entries(XFundCarryAgent(config={}, conn=init_db(":memory:")).decide(v4))
+    assert e1 == {"HOT": "A", "COLD": "B"}      # short the +funding, long the -funding
+    assert e4 == e1                              # interval-invariant: MEH skipped at 4h too
+
+
+def test_rebalance_cooldown_gates_entries_but_not_derisk_exits():
+    # With rebalance_hours=4, a book change at T should freeze new entries and
+    # rank-rotation churn within 4h, while still allowing a risk-reducing exit
+    # (funding flipped to the wrong side). After 4h, the agent rebalances again.
+    from hl_bot.backtest.engine import frozen_clock
+
+    cfg = {"rebalance_hours": 4.0}
+    base_t = 1_000 * HOUR
+
+    def _decide_at(hours_after: float, view: MarketView):
+        conn = init_db(":memory:")
+        with frozen_clock((base_t) / 1000.0):
+            _seed_short(conn, "xfund_carry_v1", "OLD", 0.25, 100.0)  # held SHORT @ T
+        with frozen_clock((base_t + hours_after * HOUR) / 1000.0):
+            return XFundCarryAgent(config=cfg, conn=conn).decide(view)
+
+    # OLD's funding flipped negative (wrong side -> must de-risk); NEW carries
+    # strong +funding (a candidate new short).
+    view = MarketView(
+        ts_ms=base_t,
+        mids={"OLD": 100.0, "NEW": 100.0},
+        funding={"OLD": -0.0009, "NEW": 0.0009},
+        extra={"bar_hours": 1.0, "day_ntl_vlm": {"OLD": 5e7, "NEW": 5e7}},
+    )
+
+    within = _decide_at(1.0, view)   # 1h after the seed -> inside the 4h cooldown
+    assert any(d.action == "flatten" and d.coin == "OLD" for d in within)  # de-risk fires
+    assert not any(d.action == "place" for d in within)                    # entries frozen
+
+    after = _decide_at(5.0, view)    # 5h after the seed -> cooldown elapsed
+    assert any(d.action == "flatten" and d.coin == "OLD" for d in after)
+    assert any(d.action == "place" and d.coin == "NEW" for d in after)     # rebalanced

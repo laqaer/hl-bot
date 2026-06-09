@@ -18,6 +18,7 @@ rank rotated) or its funding flips sign.
 from __future__ import annotations
 
 import sqlite3
+import time
 from dataclasses import dataclass
 from typing import Any
 
@@ -81,6 +82,15 @@ class XFundCarryConfig:
     beta_lookback: int = 48         # bars of trailing closes for the regression
     beta_floor: float = 0.3         # clamp |beta| from below (avoid huge upsizing)
     beta_cap: float = 3.0           # clamp |beta| from above
+    # Minimum hours between book rebalances (0 = rebalance every tick). The carry
+    # edge only survives costs at a *coarse* cadence: on real history this book is
+    # net-negative at a 1h rebalance (churn pays the spread ~4x faster than carry
+    # accrues) but clears the G0 gate at 4h. The live loop ticks every ~5 min, so
+    # without this gate a deployed xfund book would rotate every tick and bleed.
+    # When >0, within the cooldown window the agent makes no NEW entries and skips
+    # rank-rotation exits, but STILL takes risk-reducing exits (funding flipped to
+    # the wrong side / normalized) so de-risking is never delayed.
+    rebalance_hours: float = 0.0
 
 
 class XFundCarryAgent(Agent):
@@ -106,6 +116,7 @@ class XFundCarryAgent(Agent):
             beta_lookback=int(c.get("beta_lookback", 48)),
             beta_floor=float(c.get("beta_floor", 0.3)),
             beta_cap=float(c.get("beta_cap", 3.0)),
+            rebalance_hours=float(c.get("rebalance_hours", 0.0)),
         )
         self.conn = conn
 
@@ -161,11 +172,44 @@ class XFundCarryAgent(Agent):
                 open_by_coin.pop(coin, None)
         return open_by_coin
 
+    def _last_rebalance_ts(self) -> int | None:
+        """Timestamp (ms) of this agent's most recent book change, or None.
+
+        Counts both entries and exits so the rebalance clock advances on any book
+        change, even a tick that only flattened legs."""
+        if self.conn is None:
+            return None
+        row = self.conn.execute(
+            """SELECT MAX(ts_ms) AS t FROM agent_decisions
+               WHERE agent=? AND coin IS NOT NULL AND action IN ('place','flatten')""",
+            (self.name,),
+        ).fetchone()
+        t = row["t"] if row else None
+        return int(t) if t is not None else None
+
     def decide(self, view: MarketView) -> list[Decision]:
         out: list[Decision] = []
         funding = view.funding or {}
+        # The enter/exit thresholds and APR display are PER-HOUR, but the backtest
+        # data layer scales Frame.funding by the bar length (4h bar → 4× the hourly
+        # rate). Normalize back to a per-hour rate so one config behaves identically
+        # across bar intervals. Live HL funding is already hourly (bar_hours=1), so
+        # this is a no-op live. Without it, a 4h backtest silently runs a 4×-looser
+        # entry filter and overstates the carry edge.
+        bar_hours = float(view.extra.get("bar_hours", 1.0) or 1.0)
+        if bar_hours != 1.0:
+            funding = {c: f / bar_hours for c, f in funding.items()}
         vol = view.extra.get("day_ntl_vlm", {}) or {}
         open_pos = self._open_positions()
+
+        # Cadence gate: within the rebalance cooldown, hold the book steady (no
+        # new entries, no rank-rotation churn) but still allow risk-reducing exits.
+        within_cooldown = False
+        if self.cfg.rebalance_hours > 0:
+            last = self._last_rebalance_ts()
+            if last is not None:
+                now_ms = int(time.time() * 1000)
+                within_cooldown = (now_ms - last) < self.cfg.rebalance_hours * 3_600_000
 
         eligible = [
             (c, f) for c, f in funding.items()
@@ -189,7 +233,7 @@ class XFundCarryAgent(Agent):
                 reason = f"FUNDING-NORMALIZED ({f*100:+.4f}%/hr)"
             elif f is not None and self._funding_side(f) != pos["side"]:
                 reason = "FUNDING FLIPPED — wrong side now"
-            elif want is None and not self.cfg.hold_while_eligible:
+            elif want is None and not self.cfg.hold_while_eligible and not within_cooldown:
                 reason = "DROPPED from carry set (rank rotated / funding eased)"
             if reason:
                 out.append(Decision(
@@ -212,7 +256,7 @@ class XFundCarryAgent(Agent):
         beta_scales = self._beta_scales(list(desired), view)
 
         for coin, side in desired.items():
-            if room <= 0 or room_notional < 5.0:
+            if within_cooldown or room <= 0 or room_notional < 5.0:
                 break
             if coin in active_after:
                 continue

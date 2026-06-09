@@ -258,7 +258,7 @@ def build_frames(
             funding[coin] = funding_rate_at(funding_by_coin.get(coin, []), ts) * bar_hours
         if mids:
             frames.append(Frame(
-                ts_ms=ts, mids=mids, funding=funding,
+                ts_ms=ts, mids=mids, funding=funding, bar_hours=bar_hours,
                 day_ntl_vlm=vol, candles_1h=candles_1h, closes=closes_window,
             ))
     return frames

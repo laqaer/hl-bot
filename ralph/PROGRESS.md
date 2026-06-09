@@ -1067,3 +1067,79 @@ at that cadence (network-gated). If lower cadence + beta-neutral still doesn't c
 zero, xfund carry on liquid alts is likely structurally negative net-of-cost and the
 hunt should pivot (e.g. funding-decile spot-vs-perp basis, or a different signal).
 Then resume B12 consolidation.
+
+---
+
+## Iteration 25 — 2026-06-08 — B1c: lower-cadence lever exposed a funding-scale bug; pruned. B1c closed.
+
+**Context.** Network up (HL `meta` → 200). B1c's last un-pruned lever was **(c) a
+lower cadence (4h/1d)** where funding accrual per bar was hypothesised to outweigh
+per-bar price noise. Fetched fresh 10- and 20-coin 4h/90d caches and ran it.
+
+**The trap (and why honesty mattered).** The first 4h run looked like a *breakthrough*:
+xfund_carry_v1 baseline went strongly **positive** — maker **+26.2bps** / OOS
+**+16.0bps** (10-coin) and maker **+11.6bps** / OOS **+28.3bps** (20-coin), `confirm`
+**PASS** on both, robust to 3× taker slippage. Before promoting, I cross-checked it
+the way the mission demands and it **fell apart**:
+- A cadence gate (`rebalance_hours=4`) applied to the *1h* cache (funding correctly
+  per-hour) gave maker **−22bps**, not positive — coarse cadence alone does NOT help.
+- Re-running the 4h backtest with thresholds ×4 (restoring the true per-hour entry
+  filter) collapsed the edge to **−10.9bps**.
+
+**Root cause — a real measurement bug.** The agent compares its **per-hour**
+thresholds (`enter/exit_funding_per_hr`) directly against `view.funding`, but the
+backtest data layer **scales `Frame.funding` by `bar_hours`** (4× on a 4h bar;
+`data.py:258`). So at 4h the entry filter `|f| ≥ 0.0001` was effectively
+`|hourly| ≥ 0.000025` — a 4×-looser filter that scooped up many marginal-funding
+legs that happened to be net-positive in-sample. The APR display was also 4× off.
+**Every non-1h carry backtest ever run was mis-specified.**
+
+**Changed (1 commit).**
+- **`backtest/engine.py`** — `Frame.bar_hours: float = 1.0`; the view now exposes
+  `extra["bar_hours"]`.
+- **`backtest/data.py`** — `build_frames` stamps each `Frame` with its `bar_hours`.
+- **`agents/xfund_carry.py`** — normalize `view.funding` back to a per-hour rate via
+  `extra["bar_hours"]` before any threshold/side/APR use (no-op live: HL funding is
+  hourly → `bar_hours=1`). Also adds a **`rebalance_hours` cadence gate** (default 0
+  = off): within the cooldown the book makes no new entries and skips rank-rotation
+  churn, but **still takes risk-reducing exits** (funding flipped/normalized) so the
+  live 5-min loop can't churn a carry book to death.
+- **`agents/funding_carry.py`** — same per-hour normalization (shared bug).
+- **`configs/xfund_carry_v1.yaml`** — reverted a premature "G0 PASSED" claim back to
+  "NOT yet passing", recording the artifact + fix.
+- **`tests/test_funding_carry.py`** — +2 tests: thresholds are **interval-invariant**
+  (MEH below the per-hour entry threshold is skipped at both 1h and 4h, where without
+  the fix its 4×-scaled value would wrongly clear the filter); the **cadence gate**
+  freezes entries + rank-rotation within the cooldown but still de-risks a funding
+  flip, and rebalances after it elapses.
+
+**Evidence (tests/lint).** 145 → **147 tests pass**; `ruff check src tests scripts`
+clean. Caches stay gitignored (refetched 4h caches with `--refresh` so they carry
+`bar_hours`).
+
+**B1c result post-fix (xfund_carry_v1, 90d 4h, maker; reproducible via `--config`).**
+- 10-coin default: maker **−12.8bps** / Sharpe −0.78 / 24 trades (taker −18.3).
+- 10-coin beta_neutral: maker **−12.2bps**.
+- 20-coin default: maker **−19.0bps** / Sharpe −1.91 / 68 trades.
+- `confirm` 10-coin 4h: **NOT CONFIRMED** (OOS edge −27.5bps, OOS sharpe −2.35).
+- 1h cache + `rebalance_hours=4` (honest cadence-only test): maker **−22bps**.
+
+**Why it matters (the finding).** Lever (c) is **pruned**, and with it **all of
+B1c is closed**: tighter entry, wider universe, hold-while-eligible, beta-neutral,
+and lower cadence have each been tested and each fails to cross zero. The best
+config in the book remains beta_neutral 10-coin 1h at **−2.3bps maker — negative.**
+**xfund cross-sectional funding carry on liquid alts is structurally negative
+net-of-cost**: the coins with extreme funding are extreme *because* they're volatile,
+so price variance buries the few-bp/hr carry whether you concentrate, diversify,
+beta-neutralise, or slow down. Net of all this, the durable win of the iteration is
+a **fixed measurement bug** that was silently inflating every non-1h carry result —
+exactly the kind of honest-measurement correction (cf. the `fundingHistory` 500-row
+cap in B4-RUN) that keeps the search from chasing ghosts. Nothing promoted; all
+paper/gated. The `rebalance_hours` lever is kept (default off, tested) so it composes
+with future strategies without re-exploration.
+
+**What's next (loop).** New backlog item **B1d — pivot the edge hunt** off
+cross-sectional funding carry to a different signal class: spot-vs-perp **basis** at
+funding deciles (carry without alt price-variance), a slower **trend/regime** overlay
+on majors at maker cost, or FEMR as a pure hold-to-collect maker on the *moderate*
+(not extreme) funding band. Pick one, backtest, confirm. Then resume B12 consolidation.
