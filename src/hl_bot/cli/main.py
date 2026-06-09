@@ -336,7 +336,7 @@ def _enrich_view(view, api_url: str, vol: dict[str, float]) -> None:
     view.extra["liquidations"] = liquidations
 
 
-@app.command()
+@app.command("femr_tick")
 def femr_tick(live: bool = False, execution: str = "taker"):
     """Run FEMR (Funding Extremes Mean Reversion) one tick.
 
