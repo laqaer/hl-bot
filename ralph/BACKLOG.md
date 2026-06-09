@@ -448,6 +448,20 @@ Keep it ruthlessly prioritized: the top item should always be the highest-levera
 
 ## P3 — capital formation (Path C)
 
+- [x] **B-edge-summary — Edge-search summary report (the negative-result finding as a publishable
+  artifact). DONE (Iteration 40).** With all ten structurally-different theses pruned and fine-cadence
+  research retention-blocked (Iter 39), the honest next-unblocked move named by Iter 38/39 was to turn the
+  negative-edge finding into a clean Path-C deliverable. New pure `reports/edge_search.py`: a frozen,
+  auditable `THESES` record (the 1→10 enumeration — TWAP-MR, funding carry, x-sect momentum, regime-gated
+  momentum, ts-momentum, majors-1d momentum, pairs, session-timing, maker execution, perp/spot basis), each
+  row citing its backlog id + PROGRESS iteration + universe + durability bar + recorded net-of-cost headline
+  + prune reason, plus the Iter-39 retention boundary (why the search is exhausted, not paused).
+  `build_edge_search`/`to_markdown`/`export` → edge_search.{json,md}; wired as `hlbot edge-search`. +7 tests
+  (1→N numbering no gaps, unique backlog keys, class breakdown = 8 directional + 1 execution + 1 cross-market
+  matching the Iter-38 narrative, all-pruned invariant, markdown renders every row, JSON/MD export round-trip).
+  Pure data + rendering, no network/DB; an allocator or the go-live gate can now read *what was searched, on
+  what universe, over what windows, and why each was rejected* in one command. No live change. Numbers in
+  PROGRESS Iter 40.
 - [x] **B15 — Public-grade track-record export.** Done: `reports/track_record.py`
   + `hlbot track-record` → track_record.{json,md} (equity curve, Sharpe/DD/edge,
   per-agent). Chart export still TODO. (Iteration 2.)

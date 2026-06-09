@@ -2428,3 +2428,47 @@ window, net-of-cost number, prune reason) generated from the recorded results, a
 track-record export (B15) into something public-grade. The only route back to (a) is sourcing an external
 fine-cadence archive (forward-record WS now, or a 3rd-party feed) — a standalone infra bet, not a one-shot
 iteration.
+
+## Iteration 40 — 2026-06-08 — B-edge-summary: the ten-thesis negative-edge search as a publishable Path-C artifact (`hlbot edge-search`)
+
+**Context.** Ten structurally-different theses are pruned (Iter 16→38) and fine-cadence durability research
+is structurally retention-blocked on HL candles (Iter 39). Iter 38/39 both named the same honest
+next-unblocked move: stop searching directions HL data can't support and turn the negative-edge result into
+a clean **Path C** deliverable. An allocator (or the supervisor's own go-live gate) needs to know *what was
+searched, on what universe, over what windows, and why each was rejected* — not just "no edge yet". The
+search verdict is itself the product.
+
+**What I built (pure, tested).** New `src/hl_bot/reports/edge_search.py` — the canonical, auditable record
+of the whole search, as fixed data + rendering (no network, no DB; the search is over fixed history and the
+verdicts are final). A frozen `Thesis` dataclass + `THESES` tuple encodes the **1→10 enumeration** exactly as
+PROGRESS numbered it (the Iter-23 list fixes #1–5 = TWAP-MR, funding carry, x-sect momentum, regime-gated
+momentum, ts-momentum; then #6 majors-1d momentum (Iter 27 "sixth"), #7 pairs (Iter 29 "seventh"), #8
+session-timing (Iter 34 "eighth"), #9 maker execution (Iter 36 "ninth"), #10 perp/spot basis (Iter 38
+"tenth")). Each row carries its **backlog id, PROGRESS iteration(s), universe, durability bar, recorded
+net-of-cost headline, and prune reason**, so every number is checkable against this log. A `SEARCH_BOUNDARY`
+string records the Iter-39 retention finding (why the search is *exhausted*, not merely paused).
+`build_edge_search()` → machine-readable dict with a summary (n_theses, n_pruned, by-class breakdown,
+verdict); `to_markdown()` renders the allocator-grade table; `export()` writes `edge_search.{json,md}`. Wired
+as `hlbot edge-search` (mirrors the `track-record` command shape; read-only, no DB touch).
+
+**Faithfulness gate (why this is honest, not spin).** The class breakdown is asserted in a test to equal the
+Iter-38 narrative — **8 directional + 1 execution + 1 cross-market** — and the numbering is asserted gap-free
+1→N with unique backlog keys, so the artifact cannot silently drift from the recorded search. Every headline
+is transcribed from its cited iteration (e.g. carry alts oos −16.8/−33.2bps; regime-momentum +8.4→−7.8bps
+out-of-time; pairs 3-basket +5.3/+8.2 only-PASS; maker symmetric −2.6..−3.3bps/fill; basis +1.6/+11.1 lone
+knife-edge). The summary verdict is the literal search result: **0 of 10 deployable — every candidate
+net-negative after costs or non-durable (regime-/window-/param-specific) on HL majors+alts.**
+
+**Evidence (gate).** `uv run pytest -q` → **230 passed** (+7 edge-search: 1→N numbering no gaps; unique
+backlog keys; class breakdown = 8/1/1; all-pruned invariant; markdown renders every row; JSON/MD export
+round-trip; non-empty headline+reason on every row). `ruff check src tests scripts` → clean. `hlbot
+edge-search` runs and writes both files. No `data/` writes committed; no strategy/roster/live-mode change —
+pure reporting over the recorded results.
+
+**What's next (loop).** Path C is now the live track. Two honest follow-ons: (a) fold the edge-search
+summary into the public track-record bundle (one `track-record`-style command that emits chassis evidence +
+the negative-edge finding together — the complete allocator packet), and/or harden B15's track-record with
+the chart export it still TODOs. The only route back to *finding* an edge is sourcing an external
+fine-cadence archive (forward-record WS now, or a 3rd-party feed) — a standalone infra bet (B-exec-tickmark /
+direction (a)), not a one-shot iteration. This iteration makes the search's negative verdict a first-class,
+reproducible deliverable rather than prose buried in this log.

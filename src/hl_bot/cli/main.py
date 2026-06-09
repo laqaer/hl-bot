@@ -1192,6 +1192,21 @@ def track_record(out: Path = Path("data/track_record")):
 
 
 @app.command()
+def edge_search(out: Path = Path("data/edge_search")):
+    """Export the edge-search summary (every thesis searched + why it was pruned).
+
+    Writes edge_search.{json,md}: the canonical, auditable record of the ten-thesis
+    backtest search (all pruned) — the Path-C negative-result deliverable. Pure data,
+    no network or DB.
+    """
+    from ..reports.edge_search import export
+
+    jp, mp = export(out)
+    console.print(mp.read_text())
+    console.print(f"[green]✓[/green] wrote {jp} and {mp}")
+
+
+@app.command()
 def report(send: bool = False):
     """Build daily report; optionally send to Telegram."""
     conn, s = _conn()
