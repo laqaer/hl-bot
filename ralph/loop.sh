@@ -30,6 +30,12 @@ CLAUDE_FLAGS="${CLAUDE_FLAGS:---permission-mode acceptEdits}"
 BRANCH="$(git rev-parse --abbrev-ref HEAD)"
 PROMPT_FILE="$ROOT/ralph/PROMPT.md"
 
+# Use the Claude subscription (OAuth) instead of a metered API key: strip API-key
+# env vars so Claude Code falls back to its stored OAuth login. Set CLAUDE_USE_OAUTH=1.
+if [ "${CLAUDE_USE_OAUTH:-0}" = "1" ]; then
+  unset ANTHROPIC_API_KEY ANTHROPIC_AUTH_TOKEN ANTHROPIC_BASE_URL
+fi
+
 log() { printf '\n\033[1;36m[ralph %s]\033[0m %s\n' "$(date -u +%H:%M:%S)" "$*"; }
 
 verify() {
