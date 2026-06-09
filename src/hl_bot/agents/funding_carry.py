@@ -28,6 +28,13 @@ from .decisions import Decision
 @dataclass
 class FundingCarryConfig:
     enter_funding_per_hr: float = 0.00015
+    # Optional UPPER funding bound (per-hour). 0 = off (no cap, original
+    # behavior). When >0, only enter coins whose |funding| sits in the
+    # *moderate* band [enter, max_enter]. Rationale (B1c finding): coins with
+    # the most extreme funding are extreme *because* they are the most volatile,
+    # so price variance buries the carry. Capping the band skips those names.
+    # Tightening-only: it can only remove candidates, never add them.
+    max_enter_funding_per_hr: float = 0.0
     exit_funding_per_hr: float = 0.00005
     min_daily_volume_usd: float = 10_000_000.0
     stop_loss_pct: float = 0.03                 # wide: we're holding for carry
@@ -48,6 +55,7 @@ class FundingCarryAgent(Agent):
         c = config or {}
         self.cfg = FundingCarryConfig(
             enter_funding_per_hr=float(c.get("enter_funding_per_hr", 0.00015)),
+            max_enter_funding_per_hr=float(c.get("max_enter_funding_per_hr", 0.0)),
             exit_funding_per_hr=float(c.get("exit_funding_per_hr", 0.00005)),
             min_daily_volume_usd=float(c.get("min_daily_volume_usd", 10_000_000.0)),
             stop_loss_pct=float(c.get("stop_loss_pct", 0.03)),
@@ -126,9 +134,11 @@ class FundingCarryAgent(Agent):
         )
         room_notional = self.cfg.max_total_notional - active_notional
 
+        max_enter = self.cfg.max_enter_funding_per_hr
         candidates = [
             (c, f) for c, f in funding.items()
             if c not in active_after and abs(f) >= self.cfg.enter_funding_per_hr
+            and (max_enter <= 0.0 or abs(f) <= max_enter)
             and vol.get(c, 0) >= self.cfg.min_daily_volume_usd and (view.mids.get(c) or 0) > 0
         ]
         candidates.sort(key=lambda kv: abs(kv[1]), reverse=True)

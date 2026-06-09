@@ -1143,3 +1143,61 @@ cross-sectional funding carry to a different signal class: spot-vs-perp **basis*
 funding deciles (carry without alt price-variance), a slower **trend/regime** overlay
 on majors at maker cost, or FEMR as a pure hold-to-collect maker on the *moderate*
 (not extreme) funding band. Pick one, backtest, confirm. Then resume B12 consolidation.
+
+---
+
+## Iteration 26 — 2026-06-08 — B1d(iii): moderate-band funding carry — works directionally, never crosses zero. Pruned.
+
+**Context.** Network up (HL `meta` → 200). B1c closed (xfund cross-sectional carry
+structurally negative on liquid alts across every lever). B1d is the pivot to a new
+signal class. Took the smallest slice of candidate **(iii)**: revisit single-name
+`funding_carry_v1` as a pure hold-to-collect maker restricted to a **moderate** funding
+band — directly testing the B1c root cause that *the extreme-funding names are extreme
+because they're the most volatile*, so price variance buries the carry. If true, skipping
+the extreme tail of the funding distribution should help.
+
+**Changed (1 commit).**
+- **`agents/funding_carry.py`** — new optional `max_enter_funding_per_hr` config
+  (default 0.0 = off → original behavior, CI/behavior unchanged). When >0 the entry
+  candidate filter requires `|funding| <= max_enter`, i.e. only the *moderate* band
+  `[enter, max_enter]`. **Tightening-only**: it can only remove entry candidates, never
+  add them (respects the risk-tighten-only rule).
+- **`tests/test_funding_carry.py`** — +1 test: with the cap set, the agent enters the
+  MODERATE coin and skips the EXTREME one (|funding| above the cap); with the cap off
+  (default) both are eligible. (147 → **148 tests pass**.)
+
+**Evidence (tests/lint).** 148 tests pass; `ruff check src tests scripts` clean. Caches
+stay gitignored. Baseline reproduced first: funding_carry_v1 10-coin 90d 1h maker
+**−111.1bps** / 20 trades / 30% win.
+
+**B1d(iii) result (funding_carry_v1, 90d 1h, maker, 10-coin ADA,AVAX,BTC,DOGE,ETH,HYPE,
+LINK,SOL,TRX,ZEC; reproducible via `--config`).** The alts' |funding| caps ~2.7bp/hr
+so only caps in (1.5bp floor, 2.7bp] bind. Sweeping the cap (all vs baseline −111bps):
+- `max_enter=0.00025` → maker **−77.7bps** / 20 trades / 40% win
+- `max_enter=0.00022` → maker **−65.5bps** / 18 trades / 44% win
+- `max_enter=0.00020` → maker **−34.5bps** / 16 trades / 50% win
+- `max_enter=0.00017` → maker **−18.3bps** / 12 trades / **67% win**
+- widest moderate *window* (floor 0.0001 / cap 0.0002) → maker **−14.0bps** / 54 trades / 48% win (best edge)
+- `confirm --prefer maker --config '{"max_enter_funding_per_hr":0.00017}'`: **NOT
+  CONFIRMED** — in-sample maker +49.8bps but **OOS −52.5bps / sharpe −5.26 / 12 trades**
+  (classic overfit, no robust edge).
+
+**Why it matters (the finding).** The lever **works exactly in the hypothesised
+direction and monotonically** — tightening the band lifts edge −111 → −18bps and win
+rate 30% → 67% — which **independently re-confirms the B1c root cause**: the extreme-
+funding alts are the volatile ones whose price variance buries the carry; drop them and
+the bleed shrinks. BUT it **never crosses positive**: it just approaches zero from below
+by trading fewer / calmer names, and the one config with a real trade count (54) is the
+best edge at **−14bps maker — still negative**, with `confirm` failing OOS. **Single-name
+funding carry on liquid alts is structurally negative net-of-cost even restricted to the
+moderate band.** Combined with B1c, the entire *carry* signal class on liquid alts is now
+thoroughly pruned (cross-sectional: entry tightness/universe/churn/beta-neutral/cadence;
+single-name: moderate band). Nothing promoted; all paper/gated. Lever kept (default off,
+tested) so the dead end isn't re-explored and it composes with future work.
+
+**What's next (loop).** B1d remaining candidates are now down to **(i) spot-vs-perp basis
+at funding deciles** and **(ii) a slower trend/regime overlay on majors at maker cost**.
+Given carry-on-alts is exhausted, the next slice should be a *non-carry* signal — lean
+toward **(ii) trend/regime on majors** (BTC/ETH/SOL/HYPE cache already exists; the
+`twap_mr_regime_v1` regime machinery is reusable, but as a *trend-follow* rather than a
+*fade* this time). Backtest, confirm. Then resume B12 consolidation.

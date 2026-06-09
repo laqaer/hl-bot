@@ -93,14 +93,30 @@ Keep it ruthlessly prioritized: the top item should always be the highest-levera
   book remains beta_neutral 10-coin 1h at −2.3bps maker — negative. xfund carry on
   liquid alts is structurally negative net-of-cost; the hunt must PIVOT** (e.g.
   funding-decile spot-vs-perp basis, or a different signal class). B1c is closed.
-- [ ] **B1d — Pivot the edge hunt off cross-sectional funding carry.** B1c
+- [~] **B1d — Pivot the edge hunt off cross-sectional funding carry.** B1c
   exhausted xfund_carry's lever space (entry tightness, universe width, churn,
   beta-neutralisation, cadence) — all negative net-of-cost on liquid alts. Next
   candidate signal classes to backtest: (i) spot-vs-perp **basis** at funding
   deciles (carry without the alt price-variance), (ii) a slower **trend/regime**
   overlay on majors at maker cost, (iii) revisit FEMR as a pure hold-to-collect
   maker on the *lower*-|funding| band (extreme funding = extreme vol). Pick one,
-  backtest, confirm.
+  backtest, confirm. **Candidate (iii) PRUNED (Iter 26):** added a moderate-band
+  lever to `funding_carry_v1` (`max_enter_funding_per_hr`, default 0=off,
+  tightening-only, tested) so single-name carry can *skip the extreme-funding
+  (=extreme-vol) names*. On the 10-coin alt cache it **works in the hypothesised
+  direction and monotonically** — capping the band lifts maker edge from baseline
+  −111bps → −77.7 (cap 0.00025) → −34.5 (0.0002) → **−18.3bps** (0.00017), win
+  rate 30%→67% — directly **confirming the B1c root cause** that extreme funding =
+  extreme vol buries the carry. BUT it never crosses positive: it just approaches
+  zero from below by trading fewer/calmer names; widest moderate window (floor
+  0.0001/cap 0.0002, 54 trades) is the best edge at **−14.0bps maker**, still
+  negative, and `confirm` FAILs (in-sample +49.8 → OOS −52.5bps → overfit, no
+  robust edge). **Single-name funding carry is structurally negative on liquid
+  alts even restricted to the moderate band.** Lever kept (default off, tested).
+  **Remaining B1d candidates: (i) spot-vs-perp basis at funding deciles, (ii)
+  slower trend/regime overlay on majors.** Carry-class signals on liquid alts are
+  now thoroughly pruned (xfund all levers + single-name band) → next slice should
+  be a *non-carry* signal: lean toward (ii) trend/regime on majors.
 
 ## P1 — honest measurement (so the supervisor can trust itself)
 

@@ -179,6 +179,25 @@ def test_carry_skips_calm_funding():
     assert res.scorecard.n_trades == 0
 
 
+def test_moderate_band_skips_extreme_funding_coins():
+    # Two coins both above the entry floor, but EXTREME carries |funding| far
+    # above the moderate-band cap. With max_enter_funding_per_hr set, the agent
+    # should enter MODERATE and skip EXTREME (it's volatile *because* funding is
+    # extreme). Default (cap off) would enter both, preferring EXTREME first.
+    view = MarketView(
+        ts_ms=HOUR,
+        mids={"MODERATE": 100.0, "EXTREME": 100.0},
+        funding={"MODERATE": 0.0003, "EXTREME": 0.0030},
+        extra={"bar_hours": 1.0, "day_ntl_vlm": {"MODERATE": 5e7, "EXTREME": 5e7}},
+    )
+    capped = _entries(FundingCarryAgent(
+        config={"max_enter_funding_per_hr": 0.0005}, conn=init_db(":memory:")).decide(view))
+    assert capped == {"MODERATE": "A"}          # short the +funding moderate coin only
+    uncapped = _entries(FundingCarryAgent(
+        config={}, conn=init_db(":memory:")).decide(view))
+    assert set(uncapped) == {"MODERATE", "EXTREME"}   # cap off -> both eligible
+
+
 def _entries(out) -> dict[str, str]:
     return {d.coin: d.side for d in out if d.action == "place"}
 
