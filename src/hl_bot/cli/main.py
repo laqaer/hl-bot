@@ -17,7 +17,6 @@ from ..agents.femr import FemrAgent
 from ..agents.funding_arb import FundingArbAgent
 from ..agents.funding_carry import FundingCarryAgent
 from ..agents.liq_cascade import LiqCascadeAgent
-from ..agents.meta_allocator import MetaAllocator, MetaAllocatorConfig
 from ..agents.runtime import run_tick
 from ..agents.twap_mr import TwapMrAgent
 from ..agents.twap_mr_regime import TwapMrRegimeAgent
@@ -33,7 +32,6 @@ from ..research.strategy_health import (
     build_proposal_document,
     propose_overrides,
 )
-from ..risk.allocation import resolve_agent_caps
 from ..risk.scaling import compute_notional_cap, spot_usdc_from_state, unified_portfolio_value
 from ..scoring.metrics import score_all
 from ..scoring.positions import rebuild_positions
@@ -356,6 +354,7 @@ def femr_tick(live: bool = False, execution: str = "taker"):
           Bot only touches positions it itself opened (cloid-tagged).
     """
     from ..agents.runtime import (
+        apply_allocator_caps,
         fetch_market_view,
         gather_decisions,
         positions_from_clearinghouse,
@@ -450,35 +449,10 @@ def femr_tick(live: bool = False, execution: str = "taker"):
     # resolve_agent_caps applies the final rule: explicit (sub-legacy) configured
     # caps win, legacy broad $1000 ceilings are replaced by the dynamic 1x cap,
     # and configured per-trade sizes are preserved (never raised).
-    allocator = MetaAllocator(
-        [a.name for a in agents],
-        MetaAllocatorConfig(
-            total_capital=risk_cap.max_total_notional,
-            max_alloc=risk_cap.max_per_position_notional,
-        ),
-    )
-    allocs = allocator.allocate(conn)
-    configured_caps_in = {
-        a.name: {
-            "max_total_notional": float(getattr(a.cfg, "max_total_notional", float("inf"))),
-            "max_notional_per_trade": float(getattr(a.cfg, "max_notional_per_trade", float("inf"))),
-        }
-        for a in agents if hasattr(a, "cfg")
-    }
-    resolved = resolve_agent_caps(allocs, risk_cap, configured_caps_in)
-    effective_caps: dict[str, float] = {}
-    effective_order_caps: dict[str, float] = {}
-    for a in agents:
-        cap = resolved.get(a.name)
-        if cap is None:
-            effective_caps[a.name] = allocs.get(a.name, 0.0)
-            continue
-        effective_caps[a.name] = cap.max_total_notional
-        if hasattr(a, "cfg") and hasattr(a.cfg, "max_total_notional"):
-            a.cfg.max_total_notional = cap.max_total_notional
-            if hasattr(a.cfg, "max_notional_per_trade"):
-                a.cfg.max_notional_per_trade = cap.max_notional_per_trade
-                effective_order_caps[a.name] = cap.max_notional_per_trade
+    caps = apply_allocator_caps(conn, agents, risk_cap)
+    allocs = caps.allocs
+    effective_caps = caps.effective_caps
+    effective_order_caps = caps.effective_order_caps
     console.print("[bold]allocator caps[/bold]: " +
                   ", ".join(
                       f"{n}=total ${effective_caps.get(n, v):.0f}/pos ${effective_order_caps.get(n, 0):.0f}"

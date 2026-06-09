@@ -110,6 +110,77 @@ def reconcile_agents(
     return reconciled
 
 
+@dataclass
+class AllocatorCaps:
+    """Result of resolving + applying per-agent notional caps for one tick.
+
+    ``allocs`` is the raw MetaAllocator split; ``effective_caps`` /
+    ``effective_order_caps`` are the binding total / per-trade numbers actually
+    written onto each agent's ``cfg`` (the function mutates the agents in place,
+    preserving the prior inlined behavior). Returned so the CLI can print them.
+    """
+
+    allocs: dict[str, float]
+    effective_caps: dict[str, float]
+    effective_order_caps: dict[str, float]
+
+
+def apply_allocator_caps(
+    conn: sqlite3.Connection,
+    agents: list[Agent],
+    risk_cap,
+) -> AllocatorCaps:
+    """Allocate the 7d-performance split, resolve the layered risk rule, and
+    write the binding caps onto each agent's ``cfg``.
+
+    Extracted verbatim from the ``femr_tick`` preamble (REVIEW M3 / B12) so the
+    live cap-application path is importable and unit-tested with fake agents
+    instead of buried in the CLI. The layered rule is unchanged: the
+    MetaAllocator suggests a split bounded by the 5x-total / 1x-per-position
+    live caps, ``resolve_agent_caps`` applies "explicit configured cap wins,
+    legacy blanket ceilings replaced by the dynamic 1x cap, configured per-trade
+    sizes never raised", and the result is written onto each agent before its
+    turn. Agents without a ``cfg`` keep their raw alloc and are left untouched.
+    """
+    from ..agents.meta_allocator import MetaAllocator, MetaAllocatorConfig
+    from ..risk.allocation import resolve_agent_caps
+
+    allocator = MetaAllocator(
+        [a.name for a in agents],
+        MetaAllocatorConfig(
+            total_capital=risk_cap.max_total_notional,
+            max_alloc=risk_cap.max_per_position_notional,
+        ),
+    )
+    allocs = allocator.allocate(conn)
+    configured_caps_in = {
+        a.name: {
+            "max_total_notional": float(getattr(a.cfg, "max_total_notional", float("inf"))),
+            "max_notional_per_trade": float(getattr(a.cfg, "max_notional_per_trade", float("inf"))),
+        }
+        for a in agents if hasattr(a, "cfg")
+    }
+    resolved = resolve_agent_caps(allocs, risk_cap, configured_caps_in)
+    effective_caps: dict[str, float] = {}
+    effective_order_caps: dict[str, float] = {}
+    for a in agents:
+        cap = resolved.get(a.name)
+        if cap is None:
+            effective_caps[a.name] = allocs.get(a.name, 0.0)
+            continue
+        effective_caps[a.name] = cap.max_total_notional
+        if hasattr(a, "cfg") and hasattr(a.cfg, "max_total_notional"):
+            a.cfg.max_total_notional = cap.max_total_notional
+            if hasattr(a.cfg, "max_notional_per_trade"):
+                a.cfg.max_notional_per_trade = cap.max_notional_per_trade
+                effective_order_caps[a.name] = cap.max_notional_per_trade
+    return AllocatorCaps(
+        allocs=allocs,
+        effective_caps=effective_caps,
+        effective_order_caps=effective_order_caps,
+    )
+
+
 def _agent_mode(conn: sqlite3.Connection, agent: str) -> tuple[str, bool]:
     row = conn.execute(
         "SELECT mode, enabled FROM agent_state WHERE agent=?", (agent,)

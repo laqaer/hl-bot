@@ -89,9 +89,13 @@ Keep it ruthlessly prioritized: the top item should always be the highest-levera
   (c) the inlined clearinghouse parse + per-agent reconcile loop are extracted into
   tested `runtime.positions_from_clearinghouse` + `runtime.reconcile_agents`,
   removing ~25 lines of untested CLI code. (Iteration 15.)
+  (d) the allocator cap resolution loop (MetaAllocator → resolve_agent_caps →
+  per-agent cfg mutation) is extracted into tested `runtime.apply_allocator_caps`
+  returning `AllocatorCaps`, removing ~30 lines + 2 now-dead imports from the CLI.
+  (Iteration 16.)
   **Remaining:** fold the rest of the `femr_tick` preamble (clearinghouse fetch →
-  risk-cap → allocator caps → view enrich/WS overlay) into a reusable harness so
-  `run_tick` and `femr_tick` share one path end-to-end.
+  risk-cap → view enrich/WS overlay) into a reusable harness so `run_tick` and
+  `femr_tick` share one path end-to-end.
 - [x] **B13 — Move hardcoded trader address to config.** Done (Iter 6, M6):
   `exec/orders.py` and `scripts/daily_scorecard.py` both resolve the trader address
   from `HL_TRADER_ADDRESS`/`HL_ADDRESS` env, legacy default only as fallback.

@@ -596,3 +596,52 @@ not an edge claim.
 clearinghouse fetch → risk-cap → allocator caps → view enrich/WS overlay — into a
 reusable harness), userFills WS for instant maker-fill detection, B4-RUN (confirm
 carry on real history — network-gated), B16 (HL vault eval for AUM).
+
+---
+
+## Iteration 16 — 2026-06-08 — extract + test the allocator cap resolution (B12 / M3 / D2)
+
+**Context.** Structure/devops leverage, continuing B12. Iters 13–15 pulled the
+order-placement (`execute_decisions`), decision-gathering (`gather_decisions`),
+and clearinghouse-parse/reconcile (`positions_from_clearinghouse`/`reconcile_agents`)
+loops out of `cli.femr_tick` into tested `runtime` functions. The next inlined,
+untested preamble block was the **allocator cap resolution**: build a
+`MetaAllocator` from the 5x/1x risk caps, `allocate()` the 7d-performance split,
+`resolve_agent_caps()` the layered rule, then mutate each agent's `cfg` with the
+binding total/per-trade caps. ~30 lines of risk-critical logic with zero direct
+coverage (REVIEW M3 "two paths; the safe wrapper is dead code for live" + D2 "no
+coverage of the live path") — and "evidence before capital" means the code that
+decides how much each agent may risk must be tested before it gates real orders.
+
+**Changed (1 commit).**
+- **`agents/runtime.py`** — new `apply_allocator_caps(conn, agents, risk_cap) ->
+  AllocatorCaps`: a verbatim move of the inlined allocator→resolve→apply loop.
+  Returns `AllocatorCaps(allocs, effective_caps, effective_order_caps)` and
+  mutates each agent's `cfg` in place exactly as before (the layered rule is
+  unchanged: configured sub-legacy cap wins, legacy blanket ceilings replaced by
+  the dynamic 1x cap, configured per-trade sizes never raised; agents without a
+  `cfg` keep their raw alloc and are untouched). `MetaAllocator`/`resolve_agent_caps`
+  are imported locally inside the fn (same pattern the other runtime helpers use).
+- **`cli/main.py` `femr_tick`** — the ~30-line inlined block is replaced by
+  `caps = apply_allocator_caps(conn, agents, risk_cap)` + unpacking; the console
+  print of caps is unchanged. Added `apply_allocator_caps` to the runtime import;
+  dropped the now-dead module-level `MetaAllocator`/`MetaAllocatorConfig` and
+  `resolve_agent_caps` imports (ruff-verified unused).
+
+**Evidence.** 124 → **127 tests pass** (3 new in `test_tick_harness.py`: explicit
+sub-legacy cfg cap honored + per-trade preserved + cfg mutated in place; no
+configured cap → dynamic 1x per-position ceiling binds; agent without a `cfg`
+keeps its raw alloc and is left untouched); `ruff check src tests scripts` clean;
+`from hl_bot.cli.main import app, femr_tick` imports OK.
+
+**Why it matters.** The risk-sizing path — how much notional each agent is
+allowed — now lives in one importable, unit-tested function instead of buried
+untested CLI code, another prerequisite for trusting the live path with capital
+and the next slice of B12 toward `run_tick == femr_tick` end-to-end. Tightening-
+only by construction (no caps raised); safety/structure plumbing, not an edge claim.
+
+**What's next (loop).** Finish B12 (fold the remaining femr_tick preamble —
+clearinghouse fetch → risk-cap → view enrich/WS overlay — into a reusable harness
+so `run_tick` == live path end-to-end), userFills WS for instant maker-fill
+detection, B4-RUN (confirm carry on real history — network-gated), B16 (HL vault
+eval for AUM).
