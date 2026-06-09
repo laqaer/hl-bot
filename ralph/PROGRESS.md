@@ -1421,3 +1421,89 @@ only when a trend regime is detected, hold cash otherwise) judged vs a buy-and-h
 cash benchmark, rather than the symmetric two-half G0 that penalises correct
 sit-out-in-chop behaviour; (2) the remaining untried B1d candidate **(i) spot-vs-perp
 basis at funding deciles** — carry without the alt price-variance. Pick one next slice.
+
+---
+
+## Iteration 30 — 2026-06-08 — B1d-trend: G0 CLEARED via cross-sectional BREADTH — trend_breakout_v1 is the first confirmed edge. Shipped its paper goals config (live still human-gated).
+
+**Context.** `trend_breakout_v1` was the only positive net-of-cost signal in the
+whole hunt (Iter 27) but kept FAILing G0: on the 4 majors (BTC/ETH/SOL/HYPE) its
+older/in-sample half is range-bound chop where a pure trend-follower structurally
+loses. Iters 28–29 pruned the obvious fixes (trailing-ER regime gate; faster/slower
+Donchian lookbacks) — none bought time-stability because the chop is a macro
+multi-week reversal invisible at ≤60 bars. **Untried lever this iteration:
+cross-sectional BREADTH.** Classic trend-following smooths its equity curve across
+many uncorrelated markets — the choppy *majors* half need not be choppy for all 20
+liquid names, since different coins trend at different times. The 10- and 20-coin
+caches already existed offline (built during the carry hunt), so this needed no code
+change to test, just a wider `--coins`.
+
+**Result — breadth tips trend_breakout over the G0 line (90d 1h, `hlbot confirm`):**
+| universe | in-sample(maker) | oos(maker) | full maker | taker-3x | verdict |
+|---|---|---|---|---|---|
+| 4 majors (Iter 27) | +1.1bps | +35.6bps | +11.2 | +1.7 | ❌ in-sample flat |
+| 10-coin | **−5.2bps** | +50.0bps | +12.2 | +2.7 | ❌ in-sample −5.2 |
+| **20-coin** | **+9.7bps** /+1.64sh | **+41.1bps** /+4.47sh | **+19.2** /+2.67sh | **+9.7** | ✅ **CONFIRMED** |
+
+The in-sample (older, choppy-on-majors) half goes monotonically positive as breadth
+rises (majors +1.1 → 10-coin −5.2 is noisy but → 20-coin +9.7 clears it). **20-coin
+is CONFIRMED under BOTH maker AND taker** preference (taker: in-sample +4.2bps, oos
++35.6bps/+3.89sh), and cost-robust the whole ladder maker +19.2 → taker-1x +13.7 →
+taker-2x +11.7 → **taker-3x +9.7bps**, robust-to-2x True. This is the FIRST strategy
+to pass G0 in the entire research program.
+
+**Robustness — not a single-coin artifact.** Per-coin PnL on the 20-coin maker run
+(offline, from the fills table): **11/20 coins positive**; top contributor HYPE is
+only **25%** of the +$116.60 net; **net ex-top is still +$87.77**. PnL is spread
+across HYPE/INJ/ZEC/ARB/WIF/SUI/ADA/SEI/BTC… — exactly the diversified breadth effect,
+not one lucky meme. (The carry hunt's OOS sign-flips were driven by 1–2 names; this
+is not.)
+
+**Pruned en route (negative result, recorded so it isn't re-tried):** the
+"complementary regime" thesis — run mean-reversion in chop, trend in trends — does
+NOT trivially clear G0, because the existing TWAP fade is itself negative *even in the
+choppy in-sample half*: `confirm twap_mr_v1`/`twap_mr_regime_v1` maker in-sample
+**−3.1bps** (regime filter inert on majors at 1h, identical numbers). So there's no
+free positive-chop leg to bolt on; breadth, not regime-switching, is what works.
+
+**Honest blocker found — paper deployment is NOT wired yet, by design.** The live
+`cli/main.py::_enrich_view` populates `view.extra['closes']` with **60 × 1-MINUTE**
+candles (it's the VWAP/sigma feed), but the backtested trend signal consumes
+**1-HOUR bars** (`entry_lookback=24` = 24 *hours*). Adding `TrendBreakoutAgent` to the
+live roster as-is would deploy a *different* (24-*minute* breakout) strategy than the
+one that passed G0 — a violation of "evidence before capital." So I did **not** wire
+it into the roster this iteration. Wiring is gated on a live-view fix (new backlog
+item B1d-trend-deploy).
+
+**Changed (1 commit).**
+- **`configs/trend_breakout_v1.yaml`** (new) — supervisor goals/guardrail/promotion
+  config for the now-G0-confirmed strategy, mirroring `twap_mr_regime_v1.yaml`:
+  `mode: paper`; primary goal edge_bps>=0; guardrails pause@-$30/24h,
+  demote@-10bps/7d; promotion **paper→live_small ONLY** behind the G1 paper gate
+  (edge>=+5bps, net>=$50, **n_trades>=150** over 30d). Never auto-promotes to full
+  live — enabling live stays a human action (docs/GO_LIVE.md).
+- **`tests/test_supervisor_configs.py`** (+1) —
+  `test_trend_breakout_config_loads_and_is_paper_only`: the config loads, agent name
+  matches, `mode==paper`, promotion `to_mode==live_small`, and the n_trades gate is
+  >=150 (the G1 trade-count floor). (155 → **156 tests pass**.)
+
+**Evidence (tests/lint).** 156 pass; `ruff check src tests scripts` clean. G0 numbers
+above are from `hlbot confirm` on the gitignored 20-coin 1h 90d cache (reproducible
+with `backtest-fetch` where HL is reachable).
+
+**Why it matters.** The mission's whole premise (REVIEW: "a well-built chassis with no
+engine") now has a candidate engine: a strategy with **durable, cost-robust, breadth-
+diversified positive edge that survives walk-forward + 3x cost stress**. G0 is the
+first of four gates; this is the first time any agent has cleared it. The edge is a
+breadth phenomenon, so its deployment REQUIRES the wide (~20-name) universe — a
+deployment fact now captured in the config's description.
+
+**What's next (loop).** B1d-trend-deploy (new, top of P0 now): make the live
+`_enrich_view` emit a **1h close series** (>= entry_lookback+1, ideally 240 to match
+the backtest `closes_window`) so the paper deployment runs the SAME signal that
+passed G0; then add `TrendBreakoutAgent` to the paper roster on the 20-coin universe.
+That starts the G1 paper track record (>=30d, edge>=+5bps, >=150 trades). Do the
+live-view fix as its own tested slice (refactor the 1h-candle build into a pure,
+mockable function — it touches network code). Secondary: a longer-history (>90d, more
+regime cycles) confirm to check G0 stability across more than one chop→trend
+transition.

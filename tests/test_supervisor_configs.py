@@ -47,6 +47,22 @@ def test_twap_and_femr_configs_load():
         assert goals[0].promotion.to_mode == "live_small"
 
 
+def test_trend_breakout_config_loads_and_is_paper_only():
+    """The first G0-confirmed strategy ships a paper config that never auto-
+    promotes past live_small (live stays a human action)."""
+    goals = load_goals(CONFIG_DIR / "trend_breakout_v1.yaml")
+    g = goals[0]
+    assert g.agent == "trend_breakout_v1"
+    assert g.mode == "paper"
+    assert g.promotion is not None
+    assert g.promotion.to_mode == "live_small"
+    # G1 paper gate: promotion requires >=150 trades on a real sample.
+    n_trades_conds = [
+        c for c in g.promotion.conditions if c.metric == "n_trades"
+    ]
+    assert n_trades_conds and n_trades_conds[0].threshold >= 150
+
+
 def test_bleeding_twap_is_paused_by_supervisor(conn):
     now = int(time.time() * 1000)
     # Simulate a previously promoted agent: pause must force it back to paper,

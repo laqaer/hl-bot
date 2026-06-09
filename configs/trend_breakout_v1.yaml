@@ -1,0 +1,41 @@
+agent: trend_breakout_v1
+description: >-
+  Donchian-channel trend-follow on a broad liquid universe (maker). The FIRST
+  strategy to clear the G0 confirmation gate: on a 20-coin liquid universe (90d
+  1h) it is walk-forward positive in BOTH halves and cost-robust to 3x taker.
+  Its edge is a cross-sectional breadth effect — different coins trend at
+  different times — so it MUST be run on a wide universe (~20 names), not the
+  4 majors (where the older/choppy half goes negative).
+mode: paper
+
+# Per-agent metrics only (sharpe/max_drawdown are account-level). G1 paper gate
+# (roadmap §4): >=30d paper, edge >= +5bps, >=150 trades, no guardrail breach.
+# This agent earned paper deployment by passing G0 in the backtester; it must now
+# reproduce that edge on a real paper sample before it earns any live size.
+goals:
+  primary:
+    metric: edge_bps
+    window: 7d
+    op: ">="
+    threshold: 0
+  secondary:
+    - {metric: net_pnl, window: 30d, op: ">=", threshold: 0}
+    - {metric: win_rate, window: 30d, op: ">=", threshold: 0.40}
+
+guardrails:
+  - {metric: net_pnl,  window: 24h, op: ">=", threshold: -30,
+     action: pause,  reason: "24h realized loss > $30"}
+  - {metric: edge_bps, window: 7d,  op: ">=", threshold: -10,
+     action: demote, reason: "7d realized edge < -10 bps after costs"}
+  - {metric: edge_bps, window: 24h, op: ">=", threshold: -40,
+     action: alert,  reason: "24h edge < -40 bps"}
+
+# paper -> live_small ONLY, behind the G1 paper gate. Never auto-promotes to full
+# live. Enabling live is a human action (see docs/GO_LIVE.md).
+promotion:
+  from: paper
+  to: live_small
+  conditions:
+    - {metric: edge_bps, window: 30d, op: ">=", threshold: 5}
+    - {metric: net_pnl,  window: 30d, op: ">=", threshold: 50}
+    - {metric: n_trades, window: 30d, op: ">=", threshold: 150}

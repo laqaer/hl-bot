@@ -7,6 +7,29 @@ Keep it ruthlessly prioritized: the top item should always be the highest-levera
 
 ## P0 — find an edge (the whole point)
 
+- [x] **B1d-trend — G0 CLEARED.** `trend_breakout_v1` is the FIRST strategy to pass
+  the G0 confirmation gate. The lever that worked was **cross-sectional BREADTH**
+  (not a regime filter): on a **20-coin liquid universe** (90d 1h) `hlbot confirm`
+  is ✅ CONFIRMED under BOTH maker and taker — in-sample(maker) +9.7bps/+1.64sh,
+  oos +41.1bps/+4.47sh, cost-robust the full ladder to taker-3x +9.7bps. The
+  choppy *majors* half isn't choppy for all 20 names (different coins trend at
+  different times). Robust: 11/20 coins positive, top coin only 25% of net, net
+  ex-top still +$87.77 — not a single-name artifact. (Iteration 30, numbers in
+  PROGRESS.) The 4-major and 10-coin universes do NOT clear it (in-sample +1.1 /
+  −5.2bps) — the edge REQUIRES the wide universe.
+- [ ] **B1d-trend-deploy — Wire trend_breakout to PAPER on the 20-coin universe.**
+  G0→paper is the next gate. **BLOCKER (honest):** live `cli/main.py::_enrich_view`
+  fills `view.extra['closes']` with **60×1-MINUTE** candles (the VWAP feed), but the
+  backtested trend signal consumes **1-HOUR bars** (`entry_lookback=24` = 24 *hours*).
+  Wiring the agent as-is would deploy a *different* (24-minute) strategy than the one
+  that passed G0 — forbidden by "evidence before capital." **Slice 1:** refactor the
+  1h-candle build in `_enrich_view` into a pure, mockable function that emits a 1h
+  close series (>=entry_lookback+1, ideally 240 = backtest `closes_window`); unit-test
+  it offline. **Slice 2:** add `TrendBreakoutAgent` (with `configs/trend_breakout_v1.yaml`,
+  done Iter 30) to the paper roster over ~20 liquid coins; verify it produces the same
+  signal as the backtest. Live stays human-gated. Then the G1 paper clock starts
+  (>=30d, edge>=+5bps, >=150 trades).
+
 - [x] **B1 — Quantify the taker tax on every agent.** Done (Iteration 20, network
   reachable on this host). 90d 1h, BTC/ETH/SOL/HYPE: twap_mr_v1 taker −10.0bps →
   maker −4.6bps (tax ≈5.4bps); twap_mr_regime_v1 −9.8→−4.5 (regime filter nearly
@@ -127,9 +150,13 @@ Keep it ruthlessly prioritized: the top item should always be the highest-levera
   cost-robust but **regime-concentrated in the recent trend**, not yet time-stable.
   **Not promoted, not tuned-to-gate** (tuning params to pass G0 = overfitting the
   gate). Numbers in PROGRESS.
-- [~] **B1d-trend — Make trend_breakout's edge time-stable enough to clear G0.**
+- [x] **B1d-trend — Make trend_breakout's edge time-stable enough to clear G0.**
+  RESOLVED Iter 30 (see the `B1d-trend — G0 CLEARED` entry at the top of P0): the
+  answer was cross-sectional breadth (20-coin universe), not a regime filter. The
+  param/gate hypotheses below (a, b) were correctly pruned — they couldn't fix
+  time-stability because they operated on the 4-major universe.
   The signal is positive net-of-cost & cost-robust but its in-sample (older) half
-  is flat. **Hypothesis (a) — older period genuinely range-bound — MEASURED TRUE
+  is flat *on the 4 majors*. **Hypothesis (a) — older period genuinely range-bound — MEASURED TRUE
   but the implied fix FAILED (Iter 28).** Whole-window efficiency ratio (|net move|
   /path length) confirms the regime split cleanly: in-sample(older 63d) ER
   0.017–0.036 (choppy grind, +10→+16% net) vs oos(recent 27d) ER 0.117–0.123
