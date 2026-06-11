@@ -76,7 +76,15 @@ for i in $(seq 1 "$ITERS"); do
   fi
 
   if [ "$PUSH" = "1" ] && [ "$before" != "$after" ]; then
-    git push -u origin "$BRANCH" >/dev/null 2>&1 && log "pushed to $BRANCH" || log "push failed (will retry next green)"
+    # The branch is shared (a human pushes here too), so an advanced remote would
+    # reject a plain push. Rebase our new commit(s) onto origin first, then push.
+    git fetch origin "$BRANCH" -q 2>/dev/null
+    if git rebase "origin/$BRANCH" >/dev/null 2>&1; then
+      git push -u origin "$BRANCH" >/dev/null 2>&1 && log "pushed to $BRANCH" || log "push failed (will retry next green)"
+    else
+      git rebase --abort >/dev/null 2>&1
+      log "rebase onto origin/$BRANCH conflicted; keeping local commit, will retry next green"
+    fi
   fi
 done
 
