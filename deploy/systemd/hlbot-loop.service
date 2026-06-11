@@ -1,24 +1,27 @@
 [Unit]
-Description=hl-bot Ralph self-improvement loop (research/backtest/propose only)
+Description=hl-bot Ralph self-improvement loop (separate clone; research/propose only)
 After=network-online.target
 Wants=network-online.target
 
-# NOT enabled by install.sh. Start deliberately once `claude` CLI is authed and HL
-# history is reachable:  systemctl enable --now hlbot-loop
-# The loop never enables live trading (see ralph/PROMPT.md); it only improves the
-# repo and commits on green. RALPH_PUSH=1 pushes to the dev branch.
+# Runs in a SEPARATE clone (/opt/hl-bot-loop), NOT the live trading dir, so the
+# autonomous agent never touches the running bot's files — the live box only ever
+# receives clean, test-passed commits via auto-deploy. Set up with deploy/setup-loop.sh.
+# The loop never enables live trading (ralph/PROMPT.md); it improves the repo + pushes.
 
 [Service]
 Type=simple
 User=hlbot
-WorkingDirectory=/opt/hl-bot
-EnvironmentFile=/etc/hl-bot/env
-Environment=RALPH_ITERS=1000
-# Push green commits so improvements are backed up to GitHub and the box's
-# auto-update timer + history stay on one linear branch (no on-box divergence).
+WorkingDirectory=/opt/hl-bot-loop
+# Optional overrides (e.g. CLAUDE_FLAGS); the '-' means don't fail if absent.
+EnvironmentFile=-/etc/hl-bot/loop.env
+Environment=RALPH_ITERS=100000
 Environment=RALPH_PUSH=1
-ExecStart=/opt/hl-bot/ralph/loop.sh
-Restart=on-failure
+Environment=CLAUDE_USE_OAUTH=1
+Environment=CLAUDE_BIN=/home/hlbot/.local/bin/claude
+Environment="CLAUDE_FLAGS=--dangerously-skip-permissions --effort xhigh"
+Environment=PATH=/home/hlbot/.local/bin:/usr/local/bin:/usr/bin:/bin
+ExecStart=/opt/hl-bot-loop/ralph/loop.sh
+Restart=always
 RestartSec=30
 NoNewPrivileges=true
 

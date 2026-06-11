@@ -26,7 +26,23 @@ Re-run any time to update to the latest branch HEAD. What it does:
 | `hlbot-tick.timer` → `.service` | every 5 min | `deploy/run-tick.sh`: ingest → agents (paper unless `HLBOT_TICK_ARGS`) → supervisor → health |
 | `hlbot-report.timer` → `.service` | daily 13:00 UTC | Telegram report + `track-record` export |
 | `hlbot-ws.service` | continuous | WebSocket feed → snapshot the tick overlays (sub-second mids, L2, live liquidations); REST fallback when stale |
-| `hlbot-loop.service` | continuous | the Ralph self-improvement loop — **not auto-enabled**; `systemctl enable --now hlbot-loop` once `claude` is authed |
+| `hlbot-loop.service` | continuous | the Ralph self-improvement loop, in a **separate clone** (`/opt/hl-bot-loop`) — set up with `deploy/setup-loop.sh` (below), not auto-enabled |
+
+### Self-improvement loop (always-on, off the live dir)
+
+Run the loop on this box (or any VPS) so it improves the bot 24/7 without your Mac.
+It lives in a **separate clone** so the autonomous agent never touches the live
+trading files — the live bot only auto-deploys the clean commits it pushes.
+
+```bash
+sudo GITHUB_TOKEN=ghp_xxx \
+     REPO_URL=https://github.com/laqaer/hl-bot.git \
+     BRANCH=claude/gracious-fermat-g1QZ4 \
+     bash deploy/setup-loop.sh
+# then follow its two prompts: `claude setup-token` (OAuth) + `systemctl enable --now hlbot-loop`
+```
+`GITHUB_TOKEN` = a fine-grained PAT with **Contents: Read+Write** on the repo (so the
+loop can push). The loop uses your Claude **subscription** (OAuth, no API billing).
 
 ## Operate
 

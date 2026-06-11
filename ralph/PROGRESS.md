@@ -1053,3 +1053,26 @@ Carry is pruned, so `twap_mr_v1` is the one proven engine — review centers on 
 
 **What's next (loop).** B-REGIME / B-SIZE / B-EXIT — A/B the new twap_mr levers + sweep
 exits on real history; B-EDGE2 — hunt a second low-correlation edge (carry is out).
+
+---
+
+## Iteration 26 — 2026-06-09 — run the loop on an always-on box (off the Mac)
+
+**Context.** User's Mac isn't always online; move the self-improvement loop to the
+AWS box / a VPS, isolated from the live trading dir.
+
+**Changed (1 commit).**
+- **deploy/setup-loop.sh** — one-command setup: clones a SEPARATE workspace
+  (/opt/hl-bot-loop, chmod 700), installs uv + Claude Code CLI, configures a
+  token-auth push remote, syncs deps, installs the unit, runs a baseline check, and
+  prints the two manual steps (claude setup-token OAuth + enable). The agent never
+  touches the live /opt/hl-bot; the live bot only auto-deploys the clean commits it pushes.
+- **hlbot-loop.service** — repointed to /opt/hl-bot-loop with CLAUDE_USE_OAUTH=1,
+  CLAUDE_BIN, an explicit PATH (so the service finds claude/uv), --effort xhigh,
+  Restart=always.
+- **deploy/README** — "Self-improvement loop (always-on)" section.
+
+**Evidence.** 148 tests pass; ruff clean; shell scripts `bash -n` clean.
+
+**Note.** The loop pushes to GitHub; review its work via the branch + this journal in
+any session (no standing SSH needed — the loop IS Claude running autonomously there).
