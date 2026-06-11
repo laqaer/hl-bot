@@ -15,11 +15,14 @@ from hl_bot.supervisor.goals import load_goals
 CONFIGS = Path(__file__).resolve().parents[1] / "configs"
 
 # Documented minima (docs/GO_LIVE.md): looser than this is not allowed.
+# 2026-06-11: owner decision — compressed gates (paper soak floor 3d, live_small
+# floor 10d). Compression trades statistical confidence for speed; the trade-
+# count and edge floors below are what keep it from being promotion-on-noise.
 MIN_EDGE_BPS = 3.0
 MIN_PAPER_TRADES = 40
 MIN_LIVE_TRADES = 20
-MIN_DAYS_PAPER = 7.0
-MIN_DAYS_LIVE_SMALL = 14.0
+MIN_DAYS_PAPER = 3.0
+MIN_DAYS_LIVE_SMALL = 10.0
 
 # Agents allowed to skip the G0 confirmation for paper->live_small (must be
 # justified in the config comment; currently only the WS-liquidation strategy,

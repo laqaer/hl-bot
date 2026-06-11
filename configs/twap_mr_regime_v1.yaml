@@ -38,14 +38,14 @@ sizing:
 promotion_ladder:
   - from: paper
     to: live_small
-    min_days_in_mode: 10
+    min_days_in_mode: 5
     require_g0: true
     conditions:
       - {metric: edge_bps, window: 30d, op: ">=", threshold: 3, source: paper}
       - {metric: n_trades, window: 30d, op: ">=", threshold: 150, source: paper}
   - from: live_small
     to: live
-    min_days_in_mode: 21
+    min_days_in_mode: 14
     conditions:
       - {metric: edge_bps, window: 30d, op: ">=", threshold: 3}
       - {metric: net_pnl,  window: 30d, op: ">=", threshold: 0}

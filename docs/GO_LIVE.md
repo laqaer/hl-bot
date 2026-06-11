@@ -35,7 +35,7 @@ uv run hlbot confirm --agent funding_carry_v1 --prefer maker --days 180 --record
 #    If NOT CONFIRMED: do not go live; the nightly sweep + research pipeline
 #    (docs/STRATEGY_PIPELINE.md) is the path forward, not a smaller gate.
 
-# 3. Paper soak: hlbot-run is already running paper. Give it ≥10 days; verify
+# 3. Paper soak: hlbot-run is already running paper. Give it ≥5 days (compressed gates; min_days floor is 3); verify
 uv run hlbot score          # paper agents show n_trades, edge, non-None sharpe
 uv run hlbot report         # funding_pnl visible per agent
 journalctl -u hlbot-run -n 50   # cycles ticking, supervisor evaluating
@@ -106,7 +106,7 @@ Live trading signs with an API wallet — **never the funded key**:
 ## Current readiness (2026-06-11, post-overhaul)
 
 Code-ready, **evidence-pending**: the engine, measurement, auto-promotion,
-safeguards and sleeve are built and tested (151 tests). The remaining blockers
+safeguards and sleeve are built and tested (160 tests). The remaining blockers
 are host-side facts, not code: run step 2 above (first-ever real-history
 confirmation of the carry class), then the paper soak. If carry confirms, the
 system takes itself live and scales as gates pass; if it doesn't, the research
