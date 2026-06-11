@@ -56,8 +56,15 @@ class Scorecard:
         return asdict(self)
 
 
-def _fills_df(conn: sqlite3.Connection, agent: str, since_ms: int | None) -> pd.DataFrame:
-    q = "SELECT time_ms, coin, side, px, sz, closed_pnl, fee FROM fills WHERE agent = ?"
+Source = Literal["live", "paper"]
+_FILLS_TABLE = {"live": "fills", "paper": "paper_fills"}
+
+
+def _fills_df(
+    conn: sqlite3.Connection, agent: str, since_ms: int | None, source: Source = "live"
+) -> pd.DataFrame:
+    table = _FILLS_TABLE[source]
+    q = f"SELECT time_ms, coin, side, px, sz, closed_pnl, fee FROM {table} WHERE agent = ?"
     params: list = [agent]
     if since_ms is not None:
         q += " AND time_ms >= ?"
@@ -67,15 +74,32 @@ def _fills_df(conn: sqlite3.Connection, agent: str, since_ms: int | None) -> pd.
 
 
 def _funding_total(conn: sqlite3.Connection, since_ms: int | None) -> float:
-    # Funding isn't attributable to a specific agent unless we track positions
-    # per agent over time. For now we report account-level funding under the
-    # "_account" pseudo-agent and 0 for everyone else.
+    """Account-level funding truth (exchange payments, all agents + manual)."""
     q = "SELECT COALESCE(SUM(usdc), 0) FROM funding_payments"
     params: list = []
     if since_ms is not None:
         q += " WHERE time_ms >= ?"
         params.append(since_ms)
     return float(conn.execute(q, params).fetchone()[0])
+
+
+def _agent_funding(
+    conn: sqlite3.Connection, agent: str, since_ms: int | None, source: Source = "live"
+) -> pd.DataFrame:
+    """Per-agent funding rows (time_ms, usdc). Live rows come from the
+    funding_attribution replay (B6); paper rows from the simulator's accrual."""
+    table = "funding_attribution" if source == "live" else "paper_funding"
+    q = f"SELECT time_ms, usdc FROM {table} WHERE agent = ?"
+    params: list = [agent]
+    if since_ms is not None:
+        q += " AND time_ms >= ?"
+        params.append(since_ms)
+    q += " ORDER BY time_ms ASC"
+    try:
+        return pd.read_sql_query(q, conn, params=params)
+    except pd.errors.DatabaseError:
+        # Pre-migration DB (table missing): funding simply unattributed.
+        return pd.DataFrame({"time_ms": [], "usdc": []})
 
 
 def _equity_curve(conn: sqlite3.Connection, since_ms: int | None) -> pd.DataFrame:
@@ -102,16 +126,24 @@ def _max_dd(equity: pd.Series) -> float | None:
     return float(dd.min()) if not dd.empty else None
 
 
-def score_agent(conn: sqlite3.Connection, agent: str, window: Window) -> Scorecard:
+def score_agent(
+    conn: sqlite3.Connection, agent: str, window: Window, source: Source = "live"
+) -> Scorecard:
     now_ms = int(time.time() * 1000)
     w = WINDOW_MS[window]
     since = now_ms - w if w else None
 
-    fills = _fills_df(conn, agent, since)
+    fills = _fills_df(conn, agent, since, source)
     n_trades = int(len(fills))
     realized = float(fills["closed_pnl"].sum()) if n_trades else 0.0
     fees = float(fills["fee"].sum()) if n_trades else 0.0
-    funding = _funding_total(conn, since) if agent == "_account" else 0.0
+    if agent == "_account":
+        # Account row keeps the exchange total (includes residual + manual).
+        funding_df = pd.DataFrame({"time_ms": [], "usdc": []})
+        funding = _funding_total(conn, since) if source == "live" else 0.0
+    else:
+        funding_df = _agent_funding(conn, agent, since, source)
+        funding = float(funding_df["usdc"].sum()) if len(funding_df) else 0.0
     net = realized + funding - fees
 
     # Per-trade win stats (close events only)
@@ -127,7 +159,10 @@ def score_agent(conn: sqlite3.Connection, agent: str, window: Window) -> Scoreca
     notional = float((fills["px"] * fills["sz"]).abs().sum()) if n_trades else 0.0
     edge_bps = float(net / notional * 10_000) if notional > 0 else None
 
-    # Sharpe / DD: account-level only (we need an equity curve)
+    # Sharpe / DD. Account-level uses the real equity-snapshot curve; per-agent
+    # uses a synthetic curve (B7): capital base + cumulative net PnL, where the
+    # base is the agent's peak open notional in the window — its capital at
+    # risk — so relative drawdown/Sharpe mean what the promotion gates assume.
     sharpe = dd = calmar = None
     if agent == "_account":
         eq = _equity_curve(conn, since)
@@ -140,6 +175,27 @@ def score_agent(conn: sqlite3.Connection, agent: str, window: Window) -> Scoreca
             if dd is not None and dd < 0:
                 ann_ret = (1 + rets.mean()) ** 365 - 1 if not rets.empty else 0
                 calmar = float(ann_ret / abs(dd)) if dd != 0 else None
+    elif n_trades or len(funding_df):
+        from .positions import peak_gross_notional
+        events = pd.concat([
+            fills[["time_ms"]].assign(pnl=fills["closed_pnl"] - fills["fee"]),
+            funding_df.rename(columns={"usdc": "pnl"})[["time_ms", "pnl"]],
+        ], ignore_index=True)
+        if len(events) >= 3:
+            base = max(
+                peak_gross_notional(conn, agent, since, table=_FILLS_TABLE[source]),
+                50.0,
+            )
+            ts = pd.to_datetime(events["time_ms"], unit="ms")
+            daily_pnl = events.set_index(ts)["pnl"].resample("1D").sum()
+            eq_curve = base + daily_pnl.cumsum()
+            if len(eq_curve) >= 3:
+                rets = eq_curve.pct_change().dropna()
+                sharpe = _sharpe(rets, 365)
+                dd = _max_dd(eq_curve)
+                if dd is not None and dd < 0 and not rets.empty:
+                    ann_ret = (1 + rets.mean()) ** 365 - 1
+                    calmar = float(ann_ret / abs(dd)) if dd != 0 else None
 
     return Scorecard(
         agent=agent, window=window, n_trades=n_trades,

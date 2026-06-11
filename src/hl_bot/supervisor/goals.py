@@ -42,7 +42,7 @@ from typing import Any, Literal
 import yaml
 from pydantic import BaseModel, Field
 
-from ..scoring.metrics import Scorecard, Window, score_agent
+from ..scoring.metrics import Scorecard, Source, Window, score_agent
 
 OPS = {
     ">": op.gt, ">=": op.ge, "<": op.lt, "<=": op.le,
@@ -55,6 +55,10 @@ class Condition(BaseModel):
     window: Window = "30d"
     op: str
     threshold: float
+    # Which fills the metric is computed from: 'live' = real exchange fills,
+    # 'paper' = the simulator's fills. Promotion INTO live must gate on real
+    # fills; promotion OUT of paper can only ever gate on paper ones.
+    source: Source = "live"
 
     def evaluate(self, sc: Scorecard) -> tuple[bool | None, float | None]:
         """Returns (passed, value). passed=None means the metric was N/A
@@ -119,24 +123,26 @@ def evaluate(conn: sqlite3.Connection, g: AgentGoals) -> list[Evaluation]:
     """
     out: list[Evaluation] = []
 
-    # Pre-compute scorecards for all referenced windows.
-    windows: set[Window] = set()
+    # Pre-compute scorecards for all referenced (window, source) pairs.
+    keys: set[tuple[Window, Source]] = set()
     for gr in g.guardrails:
-        windows.add(gr.window)
+        keys.add((gr.window, gr.source))
     if g.promotion:
         for c in g.promotion.conditions:
-            windows.add(c.window)
+            keys.add((c.window, c.source))
     if g.demotion:
         for c in g.demotion.conditions:
-            windows.add(c.window)
+            keys.add((c.window, c.source))
     primary = g.goals.get("primary")
     if isinstance(primary, dict):
-        windows.add(primary.get("window", "30d"))
+        keys.add((primary.get("window", "30d"), primary.get("source", "live")))
     secondary = g.goals.get("secondary", [])
     for s in secondary if isinstance(secondary, list) else []:
-        windows.add(s.get("window", "30d"))
+        keys.add((s.get("window", "30d"), s.get("source", "live")))
 
-    cards: dict[Window, Scorecard] = {w: score_agent(conn, g.agent, w) for w in windows}
+    cards: dict[tuple[Window, Source], Scorecard] = {
+        (w, src): score_agent(conn, g.agent, w, src) for w, src in keys
+    }
 
     # Primary / secondary goals -> informational pass/fail (no action).
     def _status(ok: bool | None) -> str:
@@ -144,7 +150,7 @@ def evaluate(conn: sqlite3.Connection, g: AgentGoals) -> list[Evaluation]:
 
     if isinstance(primary, dict):
         c = Condition.model_validate(primary)
-        ok, v = c.evaluate(cards[c.window])
+        ok, v = c.evaluate(cards[(c.window, c.source)])
         out.append(Evaluation(
             agent=g.agent, goal_name="primary",
             metric_value=v, threshold=c.threshold,
@@ -153,7 +159,7 @@ def evaluate(conn: sqlite3.Connection, g: AgentGoals) -> list[Evaluation]:
         ))
     for i, s in enumerate(secondary if isinstance(secondary, list) else []):
         c = Condition.model_validate(s)
-        ok, v = c.evaluate(cards[c.window])
+        ok, v = c.evaluate(cards[(c.window, c.source)])
         out.append(Evaluation(
             agent=g.agent, goal_name=f"secondary[{i}]",
             metric_value=v, threshold=c.threshold,
@@ -166,7 +172,7 @@ def evaluate(conn: sqlite3.Connection, g: AgentGoals) -> list[Evaluation]:
     # metric — e.g. no trades yet) NEVER triggers an action.
     guardrail_failed = False
     for gr in g.guardrails:
-        ok, v = gr.evaluate(cards[gr.window])
+        ok, v = gr.evaluate(cards[(gr.window, gr.source)])
         status = _status(ok)
         if status == "fail":
             guardrail_failed = True
@@ -182,7 +188,7 @@ def evaluate(conn: sqlite3.Connection, g: AgentGoals) -> list[Evaluation]:
     # no guardrail may be failing. Risk controls dominate growth controls: an
     # agent cannot be paused/demoted/alerting and promoted in the same run.
     if g.promotion and g.mode == g.promotion.from_mode and not guardrail_failed:
-        results = [c.evaluate(cards[c.window]) for c in g.promotion.conditions]
+        results = [c.evaluate(cards[(c.window, c.source)]) for c in g.promotion.conditions]
         if results and all(ok is True for ok, _ in results):
             out.append(Evaluation(
                 agent=g.agent, goal_name="promotion",

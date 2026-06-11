@@ -87,7 +87,12 @@ def ingest(funding_days: int = 7):
     n_fills = ingest_fills(conn, s.hl_address, s.hl_api_url)
     n_fund = ingest_funding(conn, s.hl_address, s.hl_api_url, funding_days)
     snapshot_equity(conn, s.hl_address, s.hl_api_url)
-    console.print(f"[green]✓[/green] fills:{n_fills} funding:{n_fund} +1 equity snapshot")
+    from ..scoring.positions import refresh_attribution
+    n_pos, n_attr = refresh_attribution(conn)
+    console.print(
+        f"[green]✓[/green] fills:{n_fills} funding:{n_fund} +1 equity snapshot · "
+        f"replayed {n_pos} positions, attributed {n_attr} funding rows"
+    )
 
 
 @app.command()
@@ -447,16 +452,28 @@ def femr_tick(live: bool = False, execution: str = "taker"):
         TwapMrRegimeAgent(config=_cfg("twap_mr_regime_v1", {}), conn=conn),
         LiqCascadeAgent(config=_cfg("liq_cascade_v1", {}), conn=conn),
     ]
+    paper_sim_agents: list = []
     if live:
+        full_roster = agents
         agents, skipped_live = _filter_live_agents_by_state(conn, agents)
+        disabled = {
+            r["agent"] for r in
+            conn.execute("SELECT agent FROM agent_state WHERE enabled = 0").fetchall()
+        }
+        live_names = {a.name for a in agents}
+        # Paper-mode (but not paused) agents keep trading in the simulator so
+        # their scorecards accrue the evidence auto-promotion gates on.
+        paper_sim_agents = [
+            a for a in full_roster
+            if a.name not in live_names and a.name not in disabled
+        ]
         if skipped_live:
             console.print(
                 "[yellow]live roster skipped[/yellow]: "
                 + ", ".join(f"{name}({why})" for name, why in skipped_live.items())
             )
         if not agents:
-            console.print("[yellow]LIVE MODE but no agent_state rows are enabled in live_small/live; no orders possible[/yellow]")
-            return
+            console.print("[yellow]LIVE MODE but no agent_state rows are enabled in live_small/live; paper simulation only[/yellow]")
 
     # Allocator: rebalance per-agent caps from rolling 7d performance.
     # The approved live risk rule is dynamic but layered:
@@ -566,15 +583,16 @@ def femr_tick(live: bool = False, execution: str = "taker"):
         f"bot-owned: {sorted(owned_all) or '∅'} · manual: {manual_coins or '∅'}[/dim]"
     )
 
+    paper_names = {a.name for a in paper_sim_agents}
     all_decisions = []
-    for agent in agents:
+    for agent in [*agents, *paper_sim_agents]:
         decisions = agent.decide(view)
         for d in decisions:
-            d.is_paper = not live
+            d.is_paper = (not live) or (agent.name in paper_names)
             # Only log non-place/flatten actions immediately (holds skipped, rejected later).
             # `place` and `flatten` are logged ONLY after exchange acceptance in the execution
-            # loop below — otherwise the cooldown check would see our own intent rows and
-            # block subsequent ticks forever.
+            # loop below (or after a simulated fill in the paper simulator) — otherwise the
+            # cooldown check would see our own intent rows and block subsequent ticks forever.
             if d.action not in ("hold", "place", "flatten"):
                 log_decision(conn, d)
             all_decisions.append(d)
@@ -585,9 +603,29 @@ def femr_tick(live: bool = False, execution: str = "taker"):
         end = "" if d.action != "hold" else "[/dim]"
         console.print(f"  {tag}{d.agent} {d.action} {d.coin or ''} :: {d.reasoning}{end}")
 
+    from ..sim.paper import simulate_cycle
+
     if not live:
-        console.print("[yellow]PAPER MODE[/yellow]")
+        # Every decision is paper: simulate fills so paper performance is
+        # scoreable (n_trades/edge/sharpe gates can actually fire).
+        sim = simulate_cycle(
+            conn, view,
+            [d for d in all_decisions if d.action in ("place", "flatten")],
+            maker_entries=(execution == "maker"),
+        )
+        console.print(f"[yellow]PAPER MODE[/yellow] — {sim.summary()}")
         return
+
+    paper_decisions = [
+        d for d in all_decisions
+        if d.agent in paper_names and d.action in ("place", "flatten")
+    ]
+    if paper_names:
+        sim = simulate_cycle(conn, view, paper_decisions,
+                             maker_entries=(execution == "maker"))
+        console.print(f"[dim]{sim.summary()}[/dim]")
+    if not agents:
+        return  # nothing enabled for live execution
 
     from ..ops.kill import kill_active
     if kill_active(s.db_path.parent):

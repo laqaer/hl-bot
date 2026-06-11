@@ -116,16 +116,18 @@ def build_exchange(env_path: Path | None = None) -> tuple[Exchange, Info, LocalA
 
 
 def bot_owned_coins(conn: sqlite3.Connection, agent: str = "femr_v1") -> set[str]:
-    """Coins bot believes it owns per its own decision audit log.
+    """Coins bot believes it owns LIVE per its own decision audit log.
 
     NOTE: only counts decisions that were CONFIRMED filled. The new logger
     writes action='place' only after fill verification; rejected attempts
-    write action='rejected' which is excluded here.
+    write action='rejected' which is excluded here. Paper rows (is_paper=1,
+    e.g. from the paper-fill simulator) are never live ownership.
     """
     rows = conn.execute(
         """
         SELECT coin, action FROM agent_decisions
         WHERE agent = ? AND coin IS NOT NULL AND action IN ('place', 'flatten')
+          AND is_paper = 0
         ORDER BY ts_ms ASC
         """, (agent,),
     ).fetchall()
