@@ -67,14 +67,19 @@ cat <<EOF
 
 TWO manual steps remain (one-time):
 
-  1. Authenticate Claude Code with your subscription (OAuth, no API billing):
+  1. Get a long-lived OAuth token from your Claude subscription (no API billing).
+     NOTE: setup-token is NOT an interactive login — it PRINTS a token (shown
+     ONCE) that you save yourself into the loop's env so it runs headless.
        sudo -u ${HLBOT_USER} -H ${CLAUDE_BIN} setup-token
-     Open the printed URL on your laptop, authorize, paste the code back.
-     (Verify:  sudo -u ${HLBOT_USER} -H bash -lc '${CLAUDE_BIN} -p "reply OK"')
+     Open the printed URL, authorize, COPY the token, then store it where the loop
+     reads it (the paste is hidden — not echoed, not in shell history):
+       sudo bash -c 'umask 077; read -rsp "Paste token, then Enter: " T && printf "CLAUDE_CODE_OAUTH_TOKEN=%s\n" "\$T" > /etc/hl-bot/loop.env && chmod 600 /etc/hl-bot/loop.env'
+     Verify:
+       sudo bash -c 'set -a; . /etc/hl-bot/loop.env; set +a; sudo -u ${HLBOT_USER} -H --preserve-env=CLAUDE_CODE_OAUTH_TOKEN ${CLAUDE_BIN} -p "reply OK"'
 
   2. Start it (and on every boot):
        sudo systemctl enable --now hlbot-loop
-       journalctl -u hlbot-loop -f      # watch it work
+       journalctl -u hlbot-loop -f      # watch it work (look for "iteration 1")
 
 The loop now runs 24/7 here, pushing improvements that the live bot auto-deploys.
 It can never enable live trading or raise risk caps (ralph/PROMPT.md).
