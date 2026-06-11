@@ -164,8 +164,24 @@ Keep it ruthlessly prioritized: the top item should always be the highest-levera
   that pass G0 into the live roster.
 - [ ] **B-UNIV — Widen the carry universe** to 50–100 coins so cross-sectional carry
   has more to rank (config + universe fetch).
-- [ ] **B15c — Track-record CHART export.** Extend `reports/track_record.py` to emit a
-  shareable equity-curve chart (PNG/HTML) for vault/SMA pitching.
+- [x] **B15c — Track-record CHART export.** Done: `reports/track_record.to_html`
+  emits a self-contained HTML page with an inline SVG equity curve + per-agent
+  table; `hlbot track-record` → `track_record.html`. Tested. (Strategy-review iter.)
+
+## P0.6 — strategy experiments (validate on REAL data before flipping live)
+
+See `docs/STRATEGY_REVIEW.md`. `twap_mr_v1` levers ship default-OFF; the loop A/Bs
+each on ≥90d real history (`hlbot confirm` / `hlbot backtest --config`) before flip.
+
+- [ ] **B-REGIME — A/B `regime_filter`** on twap_mr (drops fades into trends).
+  Lever shipped; needs real-data validation.
+- [ ] **B-SIZE — A/B `size_by_signal`** (+ a vol-targeting variant). Lever shipped.
+- [ ] **B-EXIT — sweep `sigma_exit`/`stop_loss_pct`/`max_hold_hours`** for best
+  risk-adjusted exits.
+- [ ] **B-FUND — funding-aware fade suppression** (skip/trim fades funding opposes).
+- [ ] **B-WIN — VWAP window study** (1h vs 2–4h vs volume-weighted σ).
+- [ ] **B-EDGE2 — hunt a second, low-correlation edge** (carry is pruned) so the
+  book isn't single-strategy before raising AUM.
 
 ## P3 — capital formation (see docs/CAPITAL.md)
 

@@ -63,6 +63,24 @@ def test_track_record_structure_and_numbers(conn):
 
 def test_export_writes_files(conn, tmp_path):
     _fill(conn, "femr_v1", int(time.time() * 1000), pnl=1.0)
-    jp, mp = export(conn, tmp_path / "tr")
-    assert jp.exists() and mp.exists()
+    jp, mp, hp = export(conn, tmp_path / "tr")
+    assert jp.exists() and mp.exists() and hp.exists()
     assert "track record" in mp.read_text().lower()
+
+
+def test_html_export_has_chart_and_stats(conn, tmp_path):
+    from hl_bot.reports.track_record import build_track_record, to_html
+    now = int(time.time() * 1000)
+    day = 86_400_000
+    for i in range(4):  # a rising equity curve -> SVG polyline
+        conn.execute(
+            """INSERT INTO equity_snapshots(ts_ms, account_value, total_margin,
+               total_ntl_pos, total_raw_usd, withdrawable, cross_leverage, raw_json)
+               VALUES(?,?,?,?,?,?,?,?)""",
+            (now - (3 - i) * day, 1000.0 + i * 50.0, 0, 0, 1000.0, 1000.0, None, "{}"),
+        )
+    _fill(conn, "twap_mr_v1", now, pnl=12.0)
+    html = to_html(build_track_record(conn))
+    assert html.startswith("<!doctype html>")
+    assert "<svg" in html and "polyline" in html      # the equity chart rendered
+    assert "twap_mr_v1" in html                         # per-agent row present

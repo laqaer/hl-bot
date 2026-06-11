@@ -870,9 +870,9 @@ def track_record(out: Path = Path("data/track_record")):
     from ..reports.track_record import export
 
     conn, _ = _conn()
-    jp, mp = export(conn, out)
+    jp, mp, hp = export(conn, out)
     console.print(mp.read_text())
-    console.print(f"[green]✓[/green] wrote {jp} and {mp}")
+    console.print(f"[green]✓[/green] wrote {jp}, {mp}, and {hp} (open the .html to share)")
 
 
 @app.command()

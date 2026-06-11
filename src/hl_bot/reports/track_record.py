@@ -167,13 +167,86 @@ def _money(v: float | None) -> str:
     return "—" if v is None else f"${v:+.2f}"
 
 
-def export(conn: sqlite3.Connection, out_dir: str | Path) -> tuple[Path, Path]:
-    """Write track_record.json + track_record.md; return their paths."""
+def _equity_svg(curve: list[tuple[int, float]], width: int = 820, height: int = 240,
+                pad: int = 30) -> str:
+    """Inline SVG line chart of the equity curve — no external deps, shareable."""
+    vals = [v for _, v in curve]
+    if len(vals) < 2:
+        return '<p class="muted">(equity curve needs ≥2 snapshots)</p>'
+    lo, hi = min(vals), max(vals)
+    rng = (hi - lo) or 1.0
+    n = len(vals)
+
+    def x(i: int) -> float:
+        return pad + (width - 2 * pad) * i / (n - 1)
+
+    def y(v: float) -> float:
+        return pad + (height - 2 * pad) * (1 - (v - lo) / rng)
+
+    pts = " ".join(f"{x(i):.1f},{y(v):.1f}" for i, v in enumerate(vals))
+    color = "#0a8a0a" if vals[-1] >= vals[0] else "#c0392b"
+    return (
+        f'<svg viewBox="0 0 {width} {height}" width="100%" '
+        f'style="border:1px solid #eee;background:#fafafa">'
+        f'<polyline fill="none" stroke="{color}" stroke-width="2" points="{pts}"/>'
+        f'<text x="{pad}" y="{pad-8}" font-size="11" fill="#777">${hi:,.2f}</text>'
+        f'<text x="{pad}" y="{height-pad+16}" font-size="11" fill="#777">${lo:,.2f}</text>'
+        '</svg>'
+    )
+
+
+def to_html(track: dict[str, Any]) -> str:
+    """Self-contained HTML page (inline SVG equity chart + per-agent table).
+
+    The shareable artifact for a vault depositor / allocator — opens in any browser
+    with no dependencies. Built from the same numbers as the JSON/Markdown export.
+    """
+    a = track["account"]
+    svg = _equity_svg(track.get("equity_curve") or [])
+    gen = time.strftime("%Y-%m-%d %H:%M UTC", time.gmtime((track.get("generated_ms") or 0) / 1000))
+    eq = ""
+    if a.get("start_value") is not None:
+        eq = (f"${a['start_value']:,.2f} → ${a['end_value']:,.2f} "
+              f"({_pct(a.get('total_return_pct'))})")
+    rows = "".join(
+        f"<tr><td>{ag['agent']}</td><td>{ag['n_trades']}</td>"
+        f"<td>${ag['net_pnl']:+.2f}</td><td>{_bps(ag['edge_bps'])}</td>"
+        f"<td>{ag['win_rate']*100:.0f}%</td><td>{_num(ag['sharpe_daily'])}</td>"
+        f"<td>{_money(ag['max_drawdown_usd'])}</td></tr>"
+        for ag in track["agents"]
+    )
+    return (
+        "<!doctype html><html><head><meta charset=\"utf-8\">"
+        "<title>hl-bot track record</title><style>"
+        "body{font-family:-apple-system,system-ui,Segoe UI,sans-serif;max-width:880px;"
+        "margin:2rem auto;padding:0 1rem;color:#111}table{border-collapse:collapse;width:100%}"
+        "td,th{padding:.4rem .6rem;border-bottom:1px solid #eee;text-align:right}"
+        "td:first-child,th:first-child{text-align:left}.muted{color:#777;font-size:.9rem}"
+        "h1{font-size:1.4rem;margin-bottom:.2rem}h2{font-size:1.05rem;margin-top:1.6rem}"
+        "</style></head><body>"
+        "<h1>hl-bot track record</h1>"
+        f"<p class=\"muted\">generated {gen}</p>"
+        "<h2>Account equity</h2>"
+        f"<p><b>{eq}</b></p>{svg}"
+        f"<p class=\"muted\">sharpe {_num(a.get('sharpe'))} · max DD "
+        f"{_pct(a.get('max_drawdown_pct'))} · calmar {_num(a.get('calmar'))} · "
+        f"net ${a.get('net_pnl', 0):+.2f} · {a.get('n_snapshots', 0)} snapshots</p>"
+        "<h2>Per-agent</h2><table><thead><tr><th>agent</th><th>trades</th><th>net</th>"
+        "<th>edge</th><th>win</th><th>sharpe(d)</th><th>maxDD$</th></tr></thead><tbody>"
+        f"{rows or '<tr><td colspan=7 class=muted>no agent fills yet</td></tr>'}"
+        "</tbody></table></body></html>"
+    )
+
+
+def export(conn: sqlite3.Connection, out_dir: str | Path) -> tuple[Path, Path, Path]:
+    """Write track_record.{json,md,html}; return their paths."""
     track = build_track_record(conn)
     d = Path(out_dir)
     d.mkdir(parents=True, exist_ok=True)
     jp = d / "track_record.json"
     mp = d / "track_record.md"
+    hp = d / "track_record.html"
     jp.write_text(json.dumps(track, indent=2))
     mp.write_text(to_markdown(track))
-    return jp, mp
+    hp.write_text(to_html(track))
+    return jp, mp, hp

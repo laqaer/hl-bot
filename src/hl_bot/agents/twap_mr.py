@@ -18,11 +18,25 @@ import time
 from dataclasses import dataclass
 from typing import Any
 
+from ..research.candidates import regime_allows_fade
 from .base import Agent, MarketView
 from .cloid import make_cloid
 from .decisions import Decision
 
 log = logging.getLogger(__name__)
+
+
+def _signal_size_mult(z_abs: float, enter: float, floor: float) -> float:
+    """Size multiplier in [floor, 1.0] from signal strength.
+
+    A marginal signal (|z| ≈ enter) gets ``floor`` of full size; a strong one
+    (|z| ≥ 2·enter) gets full size. Dampens capital on weak fades without ever
+    exceeding the configured cap. Linear in between.
+    """
+    if enter <= 0:
+        return 1.0
+    t = (z_abs - enter) / enter  # 0 at enter, 1 at 2·enter
+    return max(floor, min(1.0, floor + (1.0 - floor) * t))
 
 
 @dataclass
@@ -42,6 +56,16 @@ class TwapMrConfig:
     coin_loss_veto_min_fills: int = 2
     coin_loss_veto_usd: float = 5.0
     coin_loss_veto_edge_bps: float = -25.0
+    # --- experimental levers (default OFF; the proven baseline is unchanged) ---
+    # regime_filter: don't fade INTO a strong trend (short a breakout / long a
+    # breakdown) — the #1 structural loss for a fader. Needs view.extra['closes'].
+    regime_filter: bool = False
+    regime_min_move_pct: float = 0.03
+    regime_min_consistency: float = 0.65
+    # size_by_signal: scale per-trade notional by signal strength (weak fades get
+    # less capital). Capped by max_notional_per_trade as before.
+    size_by_signal: bool = False
+    size_floor: float = 0.5
 
 
 class TwapMrAgent(Agent):
@@ -66,6 +90,11 @@ class TwapMrAgent(Agent):
             coin_loss_veto_min_fills=int(c.get("coin_loss_veto_min_fills", 2)),
             coin_loss_veto_usd=float(c.get("coin_loss_veto_usd", 5.0)),
             coin_loss_veto_edge_bps=float(c.get("coin_loss_veto_edge_bps", -25.0)),
+            regime_filter=bool(c.get("regime_filter", False)),
+            regime_min_move_pct=float(c.get("regime_min_move_pct", 0.03)),
+            regime_min_consistency=float(c.get("regime_min_consistency", 0.65)),
+            size_by_signal=bool(c.get("size_by_signal", False)),
+            size_floor=float(c.get("size_floor", 0.5)),
         )
         self.conn = conn
 
@@ -183,10 +212,25 @@ class TwapMrAgent(Agent):
         # rank by extremity
         candidates.sort(key=lambda r: abs(r[1]), reverse=True)
 
+        # Lever: drop fades that lean against a strong local trend (no slot used).
+        if self.cfg.regime_filter:
+            closes_by_coin: dict[str, list[float]] = view.extra.get("closes", {}) or {}
+            candidates = [
+                cand for cand in candidates
+                if regime_allows_fade(
+                    cand[1], closes_by_coin.get(cand[0]) or [],
+                    min_move_pct=self.cfg.regime_min_move_pct,
+                    min_consistency=self.cfg.regime_min_consistency,
+                )[0]
+            ]
+
         for placed, (coin, z, mid, vwap, sigma) in enumerate(candidates):
             if placed >= room or room_notional < 5.0:
                 break
             notional = min(self.cfg.max_notional_per_trade, room_notional)
+            # Lever: scale capital by signal strength (weak fades get less).
+            if self.cfg.size_by_signal:
+                notional *= _signal_size_mult(abs(z), self.cfg.sigma_enter, self.cfg.size_floor)
             sz = round(notional / mid, 5)
             # Fade: if mid > vwap (z>0), short. If mid<vwap (z<0), long.
             side = "A" if z > 0 else "B"

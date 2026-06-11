@@ -1028,3 +1028,28 @@ unlock vault AUM + prop funding; capital, not heroic returns, is the path to $1M
 
 **What's next (loop).** Scale twap_mr_v1 with the risk machinery; keep hunting new edge
 (carry is pruned); B15c track-record chart for vault/SMA pitching.
+
+---
+
+## Iteration 25 — 2026-06-09 — strategy review + improvement levers + track-record chart
+
+**Context.** User asked for a full strategy review + improvements, plus the B15c chart.
+Carry is pruned, so `twap_mr_v1` is the one proven engine — review centers on it.
+
+**Changed (1 commit).**
+- **docs/STRATEGY_REVIEW.md** — full review: why twap_mr works (maker-sensitive MR edge,
+  real but thin), its structural weaknesses (fades trends, flat sizing, eager exit, no
+  funding awareness, short VWAP window), the carry-pruning negative result, the
+  multi-agent posture (run only the proven agent), and a prioritized experiment program.
+- **twap_mr.py — two opt-in levers (default OFF, proven baseline unchanged):**
+  `regime_filter` (drop fades into a strong trend — the #1 structural loss) and
+  `size_by_signal` (scale capital by signal strength). `_signal_size_mult` helper.
+  Tested (`tests/test_twap_levers.py`). These are experiments the loop A/Bs on real data.
+- **reports/track_record.py — `to_html` (B15c):** self-contained HTML page with an inline
+  SVG equity curve + per-agent table; `export` now also writes `track_record.html`;
+  `hlbot track-record` surfaces it. The shareable artifact for vault/SMA due-diligence.
+
+**Evidence.** **148 tests pass**; ruff clean; HTML export smoke-tested (1.3KB page).
+
+**What's next (loop).** B-REGIME / B-SIZE / B-EXIT — A/B the new twap_mr levers + sweep
+exits on real history; B-EDGE2 — hunt a second low-correlation edge (carry is out).
