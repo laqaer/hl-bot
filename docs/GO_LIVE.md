@@ -20,12 +20,19 @@ faster.
   `ralph/PROGRESS.md`.
 - [ ] **G1 — Paper.** ≥30d paper run: edge ≥ +5 bps, ≥150 trades, no guardrail
   breach. The supervisor's promotion gate for the agent's `*.yaml` reflects this.
-- [ ] **Execution is maker-first.** Entries use `place_limit_order` (post-only);
-  taker is reserved for urgent risk-reducing exits. (Without this, G0 won't pass —
-  the spread eats the edge.)
-- [ ] **Measurement is honest.** Funding is attributed per-agent (B6) and the
-  agent's scorecard Sharpe/edge is real (B7); otherwise the gates are measuring
-  an artifact.
+- [x] **Execution is maker-first.** Wired: `femr_tick` defaults to per-agent
+  execution (`--execution auto`) — carry/funding agents post post-only quotes at
+  the live touch (`exec/router.py` + `maker_price`), taker is reserved for
+  momentum entries and all risk-reducing exits. Run `hlbot ws` and set
+  `HLBOT_WS_SNAPSHOT` so maker quotes price off a fresh book instead of REST mid.
+- [x] **Measurement is honest.** Funding is attributed per-agent (B6,
+  `scoring/attribution.py`) and per-agent Sharpe / dollar-drawdown are real (B7);
+  the gates measure the strategy, not an artifact.
+- [ ] **Fee stack is configured (free money — do this before any live order):**
+  - sign up through a **referral code** (−4% fees on the first $25M volume);
+  - stake ≥10 HYPE for the **staking discount** (Wood 5% → Diamond 40% off);
+  - prefer liquid **growth-mode markets** where taker fees are cut ~90%.
+  Details and sources: [`MONETIZATION.md`](MONETIZATION.md).
 - [ ] **Capital is sized for ruin-avoidance.** Live-small notional within the
   `min_bot_capital` / dynamic daily-loss / 5×-1× caps. Never raise a cap to
   recover a loss.
@@ -49,6 +56,25 @@ uv run hlbot ingest        # confirms read access + populates fills/equity
 uv run hlbot score         # confirms accounting looks right
 uv run hlbot femr_tick     # PAPER by default: prints decisions, places nothing
 ```
+
+## Go-live-small: the whole sequence (run on a networked host)
+
+```bash
+uv run hlbot doctor                                   # preflight: env, DB, API wallet, HL reachable
+uv run hlbot backtest-fetch --coins BTC,ETH,SOL,HYPE --days 120
+uv run hlbot backtest --agent xfund_carry_v1 --days 120 --compare   # read the taker→maker gap
+uv run hlbot confirm  --agent xfund_carry_v1 --prefer maker --days 120   # G0: must print PASS
+uv run hlbot femr_tick                                # paper ticks until G1 evidence accrues
+uv run hlbot supervisor                               # promotes on the yaml gates (or do step 2 below)
+uv run hlbot femr_tick --live                         # tiny size, watched; entries post maker
+uv run hlbot ingest && uv run hlbot score             # confirm fills + funding attribution reconcile
+uv run hlbot track-record                             # the shareable artifact starts here
+```
+
+`xfund_carry_v1` is the highest-conviction first candidate: market-neutral
+(long/short legs cancel direction), collects funding, designed for maker entries.
+`funding_carry_v1` is the single-name variant. Neither has passed G0 yet — the
+confirm step is the gate, not a formality.
 
 ## Promote an agent to live (the gated switch)
 
@@ -106,10 +132,16 @@ that pass `_filter_live_agents_by_state`.
 - **May not:** set any agent to `live_small`/`live`, raise a notional cap, run
   `femr_tick --live`, or touch the API-wallet env. Those are human-only.
 
-## Current readiness (2026-06-08)
+## Current readiness (2026-06-11)
 
-**NOT ready for live.** Blockers: no strategy has passed G0 (need real-history
-backtests, blocked by sandbox network — B1), maker execution exists as a
-primitive but the live entry path is still synchronous taker (B2 follow-up), and
-funding attribution (B6) / per-agent Sharpe (B7) aren't wired yet. The regime
-TWAP (B3) is the leading G0 candidate. Path to ready = work the P0/P1 backlog.
+**Code-ready, evidence-pending.** Fixed this iteration: live entries route
+maker-by-default for carry agents through one audited path (`exec/router.py`),
+maker quotes price off the live book, the carry agents (`xfund_carry_v1`,
+`funding_carry_v1`) are finally on the tick roster, and funding attribution (B6)
+/ per-agent Sharpe+DD (B7) / positions replay (B9) make the gates honest.
+
+**Remaining blocker is evidence, not code:** no strategy has passed G0 on real
+history yet — the backtest/confirm runs need a host that can reach
+api.hyperliquid.xyz (B1; CI and sandboxes get 403). Run the go-live-small
+sequence above on such a host. Until `hlbot confirm` prints PASS, everything
+stays paper.

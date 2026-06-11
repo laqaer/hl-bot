@@ -38,6 +38,8 @@ class XFundCarryConfig:
 
 
 class XFundCarryAgent(Agent):
+    default_execution = "maker"  # patient carry entries must not pay the spread
+
     def __init__(
         self,
         name: str = "xfund_carry_v1",

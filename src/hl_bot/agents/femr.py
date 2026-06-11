@@ -68,6 +68,10 @@ class FemrConfig:
 class FemrAgent(Agent):
     """Portfolio-aware funding-extremes mean-reversion agent."""
 
+    # REVIEW C1: FEMR's measured bleed is the taker tax on a funding edge
+    # smaller than the spread — it "belongs as a maker" strategy.
+    default_execution = "maker"
+
     def __init__(
         self,
         name: str = "femr_v1",

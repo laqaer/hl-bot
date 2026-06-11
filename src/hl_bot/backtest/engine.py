@@ -36,6 +36,7 @@ from dataclasses import dataclass, field
 from ..agents.base import Agent, MarketView
 from ..agents.decisions import Decision, log_decision
 from ..db.schema import init_db
+from ..scoring.curves import curve_stats as _curve_stats
 from ..scoring.metrics import Scorecard, score_agent
 
 # ---------------------------------------------------------------------------
@@ -382,39 +383,6 @@ class Backtester:
         )
 
 
-def _curve_stats(
-    curve: list[tuple[int, float]],
-    periods_per_year: float = 365 * 24,
-) -> tuple[float | None, float | None, float | None]:
-    """Sharpe / max-drawdown / Calmar from an equity curve.
-
-    ``periods_per_year`` defaults to hourly bars; pass the right cadence for
-    other intervals. Returns (None, None, None) when there isn't enough data.
-    """
-    if len(curve) < 3:
-        return None, None, None
-    eq = [v for _, v in curve]
-    rets = [
-        (eq[i] - eq[i - 1]) / eq[i - 1]
-        for i in range(1, len(eq))
-        if eq[i - 1] != 0
-    ]
-    sharpe = None
-    if rets:
-        mean = sum(rets) / len(rets)
-        var = sum((r - mean) ** 2 for r in rets) / len(rets)
-        std = var ** 0.5
-        if std > 0:
-            sharpe = mean / std * (periods_per_year ** 0.5)
-    peak = eq[0]
-    max_dd = 0.0
-    for v in eq:
-        peak = max(peak, v)
-        if peak > 0:
-            max_dd = min(max_dd, (v - peak) / peak)
-    dd = max_dd if max_dd < 0 else 0.0
-    calmar = None
-    if dd < 0 and rets:
-        ann_ret = (1 + sum(rets) / len(rets)) ** periods_per_year - 1
-        calmar = ann_ret / abs(dd)
-    return sharpe, dd, calmar
+# _curve_stats now lives in scoring.curves (curve_stats) so live per-agent
+# scoring uses the exact same math; the import above keeps this module's
+# public name stable for existing callers.

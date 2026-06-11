@@ -308,6 +308,28 @@ def _as_cloid(cloid: str | None) -> Cloid | None:
     return Cloid.from_str(cloid) if cloid else None
 
 
+def _builder_info() -> dict | None:
+    """Optional Hyperliquid builder-code attribution for orders we route.
+
+    Off by default. Set HL_BUILDER_ADDRESS (the registered builder wallet) and
+    HL_BUILDER_FEE_TENTH_BPS (fee in tenths of a basis point, e.g. 10 = 1 bp)
+    to attach a builder fee to orders — only meaningful when routing flow for
+    users who approved the builder via ApproveBuilderFee (docs/MONETIZATION.md).
+    Never enable for the bot's own self-traded flow: you'd be paying yourself
+    a fee minus the protocol's cut.
+    """
+    addr = os.environ.get("HL_BUILDER_ADDRESS", "").strip()
+    if not addr:
+        return None
+    try:
+        fee = int(os.environ.get("HL_BUILDER_FEE_TENTH_BPS", "0"))
+    except ValueError:
+        return None
+    if fee <= 0:
+        return None
+    return {"b": addr, "f": fee}
+
+
 def _parse_response(res: dict) -> OrderResult:
     """Extract real fill state from HL response.
 
@@ -382,6 +404,7 @@ def place_market_order(
         res = _retry(lambda: exchange.market_open(
             name=coin, is_buy=is_buy, sz=rounded_sz,
             slippage=slippage_pct, cloid=_as_cloid(cloid),
+            builder=_builder_info(),
         ))
     except Exception as e:  # noqa: BLE001
         log.exception("place_market_order failed")
@@ -391,7 +414,9 @@ def place_market_order(
 
 def close_position(exchange: Exchange, coin: str, cloid: str | None = None) -> OrderResult:
     try:
-        res = _retry(lambda: exchange.market_close(coin=coin, cloid=_as_cloid(cloid)))
+        res = _retry(lambda: exchange.market_close(
+            coin=coin, cloid=_as_cloid(cloid), builder=_builder_info(),
+        ))
     except Exception as e:  # noqa: BLE001
         log.exception("close_position failed")
         return OrderResult(ok=False, status="error", error=str(e))
@@ -465,6 +490,7 @@ def place_limit_order(
             name=coin, is_buy=is_buy, sz=rounded_sz, limit_px=rounded_px,
             order_type={"limit": {"tif": tif}},
             reduce_only=reduce_only, cloid=_as_cloid(cloid),
+            builder=_builder_info(),
         ))
     except Exception as e:  # noqa: BLE001
         log.exception("place_limit_order failed")

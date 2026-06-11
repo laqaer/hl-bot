@@ -23,6 +23,9 @@ from typing import Literal
 import numpy as np
 import pandas as pd
 
+from .attribution import agent_pnl_events, daily_pnl_series, funding_events_for_agent
+from .curves import dollar_max_drawdown
+
 Window = Literal["1h", "24h", "7d", "30d", "all"]
 WINDOW_MS: dict[Window, int | None] = {
     "1h":   3_600_000,
@@ -47,10 +50,11 @@ class Scorecard:
     avg_loss: float
     profit_factor: float
     sharpe: float | None
-    max_drawdown: float | None
+    max_drawdown: float | None          # fraction of equity (account-level only)
     calmar: float | None
     notional_traded: float
     edge_bps: float | None      # net_pnl / notional_traded in basis points
+    max_drawdown_usd: float | None = None  # dollar peak-to-trough (all agents)
 
     def as_dict(self) -> dict:
         return asdict(self)
@@ -67,9 +71,9 @@ def _fills_df(conn: sqlite3.Connection, agent: str, since_ms: int | None) -> pd.
 
 
 def _funding_total(conn: sqlite3.Connection, since_ms: int | None) -> float:
-    # Funding isn't attributable to a specific agent unless we track positions
-    # per agent over time. For now we report account-level funding under the
-    # "_account" pseudo-agent and 0 for everyone else.
+    # Account-level funding: the exact sum of funding_payments, reported under
+    # the "_account" pseudo-agent. Real agents get their share via the fills
+    # position-replay in scoring.attribution (REVIEW C4).
     q = "SELECT COALESCE(SUM(usdc), 0) FROM funding_payments"
     params: list = []
     if since_ms is not None:
@@ -111,7 +115,11 @@ def score_agent(conn: sqlite3.Connection, agent: str, window: Window) -> Scoreca
     n_trades = int(len(fills))
     realized = float(fills["closed_pnl"].sum()) if n_trades else 0.0
     fees = float(fills["fee"].sum()) if n_trades else 0.0
-    funding = _funding_total(conn, since) if agent == "_account" else 0.0
+    if agent == "_account":
+        funding = _funding_total(conn, since)
+    else:
+        # Per-agent share of account funding via fills position replay (C4).
+        funding = float(sum(u for _, u in funding_events_for_agent(conn, agent, since)))
     net = realized + funding - fees
 
     # Per-trade win stats (close events only)
@@ -127,11 +135,17 @@ def score_agent(conn: sqlite3.Connection, agent: str, window: Window) -> Scoreca
     notional = float((fills["px"] * fills["sz"]).abs().sum()) if n_trades else 0.0
     edge_bps = float(net / notional * 10_000) if notional > 0 else None
 
-    # Sharpe / DD: account-level only (we need an equity curve)
+    # Sharpe / DD. The account gets fractional DD from its real equity curve;
+    # real agents get Sharpe from daily net PnL (fills + attributed funding)
+    # plus a dollar drawdown — an agent has no capital base, so a fractional
+    # DD would be an invention (C5/B7).
     sharpe = dd = calmar = None
+    dd_usd: float | None = None
     if agent == "_account":
         eq = _equity_curve(conn, since)
         if len(eq) >= 3:
+            curve = [(int(r.ts_ms), float(r.account_value)) for r in eq.itertuples()]
+            dd_usd = dollar_max_drawdown(curve)
             eq["ts"] = pd.to_datetime(eq["ts_ms"], unit="ms")
             eq = eq.set_index("ts")["account_value"].resample("1D").last().dropna()
             rets = eq.pct_change().dropna()
@@ -140,6 +154,18 @@ def score_agent(conn: sqlite3.Connection, agent: str, window: Window) -> Scoreca
             if dd is not None and dd < 0:
                 ann_ret = (1 + rets.mean()) ** 365 - 1 if not rets.empty else 0
                 calmar = float(ann_ret / abs(dd)) if dd != 0 else None
+    else:
+        events = agent_pnl_events(conn, agent, since)
+        daily = daily_pnl_series(events)
+        if len(daily) >= 3:
+            s = pd.Series(daily)
+            sharpe = _sharpe(s, 365)
+        if events:
+            cum, curve = 0.0, []
+            for ts, delta in events:
+                cum += delta
+                curve.append((ts, cum))
+            dd_usd = dollar_max_drawdown(curve)
 
     return Scorecard(
         agent=agent, window=window, n_trades=n_trades,
@@ -147,6 +173,7 @@ def score_agent(conn: sqlite3.Connection, agent: str, window: Window) -> Scoreca
         win_rate=win_rate, avg_win=avg_win, avg_loss=avg_loss, profit_factor=profit_factor,
         sharpe=sharpe, max_drawdown=dd, calmar=calmar,
         notional_traded=notional, edge_bps=edge_bps,
+        max_drawdown_usd=dd_usd,
     )
 
 
