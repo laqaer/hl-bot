@@ -127,6 +127,14 @@ def simulate_cycle(
         if d.action == "place" and d.sz and d.side in ("B", "A"):
             if maker_entries:
                 limit_px = d.px or mid
+                # One resting quote per (agent, coin) — agents can't see "rest"
+                # audit rows as ownership, so they re-emit the same entry every
+                # cycle; without this the quotes stack and all fill on a cross.
+                # Replacing (rather than skipping) mirrors live maker repricing.
+                conn.execute(
+                    "DELETE FROM paper_orders WHERE agent = ? AND coin = ?",
+                    (d.agent, d.coin),
+                )
                 conn.execute(
                     """INSERT OR REPLACE INTO paper_orders
                        (cloid, agent, coin, side, sz, limit_px, created_ms, reasoning)
@@ -214,7 +222,10 @@ def _accrue_funding(conn: sqlite3.Connection, view: MarketView, ts: int) -> int:
                 "SELECT MAX(time_ms) FROM paper_funding WHERE agent=? AND coin=?",
                 (agent, coin),
             ).fetchone()[0]
-            since = int(last) if last is not None else int(pos["opened_ms"])
+            # Never accrue across a flat gap: a reopened position starts the
+            # clock at its own opened_ms, not the previous position's last
+            # funding row.
+            since = max(int(last or 0), int(pos["opened_ms"]))
             hours = (ts - since) / 3_600_000.0
             if hours < 1.0:
                 continue

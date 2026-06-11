@@ -84,6 +84,46 @@ def test_maker_entry_requires_cross_not_touch(conn):
     assert conn.execute("SELECT COUNT(*) FROM paper_orders").fetchone()[0] == 0
 
 
+def test_maker_reentry_replaces_resting_quote_not_stacks(conn):
+    # Agents re-emit the same entry each cycle while a quote rests (they can't
+    # see "rest" audit rows as ownership). Quotes must replace, not stack.
+    t0 = NOW - 3 * HOUR
+    for i in range(3):
+        d = place("a1", "BTC", "B", 1.0, px=99.0 - i)
+        d.cloid = f"c-{i}"  # fresh cloid every cycle, like make_cloid()
+        simulate_cycle(conn, view(t0 + i, {"BTC": 100.0}), [d],
+                       maker_entries=True, now_ms=t0 + i)
+    assert conn.execute("SELECT COUNT(*) FROM paper_orders").fetchone()[0] == 1
+    # The surviving quote is the latest one (replace == reprice).
+    assert conn.execute("SELECT limit_px FROM paper_orders").fetchone()[0] == 97.0
+
+    # A deep cross fills exactly one order, not three.
+    res = simulate_cycle(conn, view(NOW, {"BTC": 90.0}), [],
+                         maker_entries=True, now_ms=NOW)
+    assert len(res.fills) == 1
+    assert conn.execute("SELECT COUNT(*) FROM paper_fills").fetchone()[0] == 1
+
+
+def test_funding_skips_flat_gap_on_reopen(conn):
+    t0 = NOW - 10 * HOUR
+    simulate_cycle(conn, view(t0, {"BTC": 100.0}), [place("a1", "BTC", "B", 1.0)], now_ms=t0)
+    t1 = t0 + HOUR
+    simulate_cycle(conn, view(t1, {"BTC": 100.0}, {"BTC": 0.0001}), [], now_ms=t1)
+    simulate_cycle(conn, view(t1, {"BTC": 100.0}), [flatten("a1", "BTC")], now_ms=t1)
+
+    # Flat for 6h, then reopen; the next accrual must cover only the time
+    # since the reopen, not the flat gap.
+    t2 = t1 + 6 * HOUR
+    simulate_cycle(conn, view(t2, {"BTC": 100.0}), [place("a1", "BTC", "B", 1.0)], now_ms=t2)
+    t3 = t2 + 2 * HOUR
+    res = simulate_cycle(conn, view(t3, {"BTC": 100.0}, {"BTC": 0.0001}), [], now_ms=t3)
+    assert res.funding_rows == 1
+    usdc = conn.execute(
+        "SELECT usdc FROM paper_funding WHERE agent='a1' ORDER BY time_ms DESC LIMIT 1"
+    ).fetchone()[0]
+    assert usdc == pytest.approx(-1.0 * 100.0 * 0.0001 * 2.0)  # 2h, not 8h
+
+
 def test_funding_accrues_hourly_on_open_position(conn):
     t0 = NOW - 5 * HOUR
     simulate_cycle(conn, view(t0, {"BTC": 100.0}), [place("a1", "BTC", "B", 2.0)], now_ms=t0)
