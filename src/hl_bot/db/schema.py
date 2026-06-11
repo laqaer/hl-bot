@@ -124,6 +124,19 @@ CREATE TABLE IF NOT EXISTS goal_evaluations (
 CREATE INDEX IF NOT EXISTS idx_goal_eval_agent ON goal_evaluations(agent, ts_ms);
 """
 
+# Versioned migrations, applied in order under PRAGMA user_version. Append-only:
+# never edit or reorder an entry that has shipped — existing DBs track how many
+# they have applied by index. Each entry must be idempotent-safe on a fresh DB
+# (fresh DBs run the base SCHEMA and then every migration).
+MIGRATIONS: list[str] = []
+
+
+def _apply_migrations(conn: sqlite3.Connection) -> None:
+    current = int(conn.execute("PRAGMA user_version").fetchone()[0])
+    for version, script in enumerate(MIGRATIONS[current:], start=current + 1):
+        conn.executescript(script)
+        conn.execute(f"PRAGMA user_version = {version}")
+
 
 def connect(db_path: str | Path) -> sqlite3.Connection:
     """Open a SQLite connection with sane defaults."""
@@ -138,7 +151,8 @@ def connect(db_path: str | Path) -> sqlite3.Connection:
 
 
 def init_db(db_path: str | Path) -> sqlite3.Connection:
-    """Initialize the schema. Idempotent."""
+    """Initialize the schema and apply any pending migrations. Idempotent."""
     conn = connect(db_path)
     conn.executescript(SCHEMA)
+    _apply_migrations(conn)
     return conn

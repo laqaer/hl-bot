@@ -1,6 +1,7 @@
 agent: twap_mr_v1
 description: TWAP mean-reversion — fade >2-sigma deviations from 1h VWAP.
 mode: paper
+roster: retired  # consistent post-cost bleeder as taker (-26 bps/7d); superseded by twap_mr_regime_v1
 
 # NOTE: sharpe / max_drawdown are only computed for the synthetic _account agent,
 # so per-agent guardrails below use net_pnl / edge_bps / n_trades, which ARE

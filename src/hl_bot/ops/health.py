@@ -16,6 +16,9 @@ from __future__ import annotations
 import sqlite3
 import time
 from dataclasses import dataclass, field
+from pathlib import Path
+
+from .kill import kill_active
 
 Level = str  # "ok" | "warn" | "crit"
 
@@ -54,10 +57,19 @@ def assess_health(
     max_tick_age_s: int = 900,        # 15 min: ticks should be far more frequent
     max_ingest_age_s: int = 3600,     # 1 h
     daily_loss_floor: float = -1e9,   # set to a negative $ to flag bleeding
+    data_dir: str | Path | None = None,
 ) -> HealthReport:
     now_ms = now_ms or int(time.time() * 1000)
     checks: list[tuple[str, Level, str]] = []
     metrics: dict[str, float | None] = {}
+
+    # --- kill switch (sticky emergency brake) ---
+    if data_dir is not None:
+        kill_reason = kill_active(data_dir)
+        if kill_reason:
+            checks.append(("kill", "crit", f"KILL ACTIVE: {kill_reason}"))
+        else:
+            checks.append(("kill", "ok", "not tripped"))
 
     # --- tick freshness (is the bot alive?) ---
     last_tick = _max_ts(conn, "agent_decisions", "ts_ms")

@@ -6,6 +6,7 @@ description: >-
   capital/AUM-friendly). Must pass the G0 confirmation gate on real history
   before it is wired into the live roster.
 mode: paper
+roster: live
 
 goals:
   primary:

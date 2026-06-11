@@ -1,6 +1,7 @@
 agent: femr_v1
 description: Funding Extremes Mean Reversion — fade extreme 1h funding.
 mode: paper
+roster: live
 
 # Per-agent metrics only (net_pnl / edge_bps / n_trades); FEMR runs at very small
 # notional ($20/trade), so loss limits are tight.

@@ -113,9 +113,33 @@ def score():
 @app.command()
 def supervisor(configs: Path = CONFIG_DIR):
     """Evaluate goals/guardrails for every agent config in ./configs."""
-    conn, _ = _conn()
-    actions = supervise(conn, configs)
+    conn, s = _conn()
+    actions = supervise(conn, configs, data_dir=s.db_path.parent)
     console.print(json.dumps(actions, indent=2) if actions else "[dim]no actions taken[/dim]")
+
+
+@app.command()
+def kill(reason: str = "manual kill"):
+    """Trip the kill switch: halt all NEW orders and promotions until `hlbot resume`.
+
+    Flatten/cancel (risk reduction) stays allowed. Sticky across restarts."""
+    from ..ops.kill import trip_kill
+
+    _, s = _conn()
+    line = trip_kill(s.db_path.parent, reason)
+    console.print(f"[red]KILL tripped[/red]: {line}")
+
+
+@app.command()
+def resume():
+    """Clear the kill switch and allow trading again."""
+    from ..ops.kill import clear_kill
+
+    _, s = _conn()
+    if clear_kill(s.db_path.parent):
+        console.print("[green]kill cleared — trading may resume[/green]")
+    else:
+        console.print("[dim]kill switch was not active[/dim]")
 
 
 @app.command()
@@ -408,6 +432,9 @@ def femr_tick(live: bool = False, execution: str = "taker"):
     # Instantiate the full agent roster. In paper mode, evaluate everything. In
     # live mode, only agents explicitly enabled and promoted to live_small/live
     # in agent_state are allowed into the execution roster.
+    # Roster: confirmed post-cost bleeders (twap_mr_v1 taker, basis_v1) are
+    # retired (configs/*.yaml roster: retired) so they stop consuming
+    # MetaAllocator weight; the maker-designed carry strategies are in.
     agents = [
         FemrAgent(config=_cfg("femr_v1", {
             "max_notional_per_trade": 20.0,
@@ -415,10 +442,10 @@ def femr_tick(live: bool = False, execution: str = "taker"):
             "funding_enter_per_hr": 0.00015,
             "funding_exit_per_hr": 0.00005,
         }), conn=conn),
-        TwapMrAgent(config=_cfg("twap_mr_v1", {}), conn=conn),
+        XFundCarryAgent(config=_cfg("xfund_carry_v1", {}), conn=conn),
+        FundingCarryAgent(config=_cfg("funding_carry_v1", {}), conn=conn),
         TwapMrRegimeAgent(config=_cfg("twap_mr_regime_v1", {}), conn=conn),
         LiqCascadeAgent(config=_cfg("liq_cascade_v1", {}), conn=conn),
-        BasisAgent(config=_cfg("basis_v1", {}), conn=conn),
     ]
     if live:
         agents, skipped_live = _filter_live_agents_by_state(conn, agents)
@@ -562,6 +589,13 @@ def femr_tick(live: bool = False, execution: str = "taker"):
         console.print("[yellow]PAPER MODE[/yellow]")
         return
 
+    from ..ops.kill import kill_active
+    if kill_active(s.db_path.parent):
+        console.print(
+            f"[red]KILL ACTIVE[/red]: {kill_active(s.db_path.parent)} — "
+            "new entries blocked; flatten/cancel still allowed (`hlbot resume` to clear)"
+        )
+
     try:
         exchange, info, _ = build_exchange()
     except Exception as e:  # noqa: BLE001
@@ -618,6 +652,12 @@ def femr_tick(live: bool = False, execution: str = "taker"):
             continue
 
         if d.action == "place" and d.sz and d.side:
+            # Re-checked per order (not just at tick start) so a kill tripped
+            # mid-cycle still stops the remaining placements.
+            kill_reason = kill_active(s.db_path.parent)
+            if kill_reason:
+                console.print(f"[red]SKIP {d.agent} {d.coin}: KILL active — {kill_reason}[/red]")
+                continue
             if not ok:
                 console.print(f"[dim]SKIP {d.agent} {d.coin}: guardrail blocks new entries[/dim]")
                 continue
@@ -869,7 +909,7 @@ def health(max_tick_age_s: int = 900, heartbeat: bool = True):
     from ..ops.health import assess_health, ping_heartbeat
 
     conn, s = _conn()
-    rep = assess_health(conn, max_tick_age_s=max_tick_age_s)
+    rep = assess_health(conn, max_tick_age_s=max_tick_age_s, data_dir=s.db_path.parent)
     console.print(rep.render())
     if heartbeat:
         ping_heartbeat(os.environ.get("HEALTHCHECK_URL"), ok=rep.ok)

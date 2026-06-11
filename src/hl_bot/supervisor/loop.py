@@ -7,6 +7,7 @@ import sqlite3
 import time
 from pathlib import Path
 
+from ..ops.kill import kill_active
 from .goals import AgentGoals, evaluate, load_goals, persist
 
 log = logging.getLogger(__name__)
@@ -51,8 +52,18 @@ def _demote(conn: sqlite3.Connection, agent: str) -> None:
     _set_mode(conn, agent, new, reason="demoted by supervisor")
 
 
-def run_once(conn: sqlite3.Connection, configs: list[AgentGoals]) -> dict[str, list[str]]:
-    """Evaluate all agent configs once. Returns map of agent -> actions taken."""
+def run_once(
+    conn: sqlite3.Connection,
+    configs: list[AgentGoals],
+    *,
+    data_dir: str | Path | None = None,
+) -> dict[str, list[str]]:
+    """Evaluate all agent configs once. Returns map of agent -> actions taken.
+
+    While the kill switch is active, promotions are suppressed; pause/demote
+    (risk-reducing actions) are always processed.
+    """
+    kill_reason = kill_active(data_dir) if data_dir is not None else None
     actions_taken: dict[str, list[str]] = {}
     for g in configs:
         evals = evaluate(conn, g)
@@ -66,6 +77,9 @@ def run_once(conn: sqlite3.Connection, configs: list[AgentGoals]) -> dict[str, l
                 _demote(conn, g.agent)
                 acts.append(f"DEMOTE: {e.detail}")
             elif e.action == "promote" and g.promotion:
+                if kill_reason:
+                    acts.append(f"PROMOTE-SUPPRESSED (kill active: {kill_reason}): {e.detail}")
+                    continue
                 _set_mode(conn, g.agent, g.promotion.to_mode,
                           reason=f"promoted via {e.detail}")
                 acts.append(f"PROMOTE: {e.detail}")
@@ -75,9 +89,14 @@ def run_once(conn: sqlite3.Connection, configs: list[AgentGoals]) -> dict[str, l
     return actions_taken
 
 
-def supervise(conn: sqlite3.Connection, configs_dir: str | Path) -> dict[str, list[str]]:
+def supervise(
+    conn: sqlite3.Connection,
+    configs_dir: str | Path,
+    *,
+    data_dir: str | Path | None = None,
+) -> dict[str, list[str]]:
     """Load every *.yaml in configs_dir and evaluate."""
     configs: list[AgentGoals] = []
     for p in sorted(Path(configs_dir).glob("*.yaml")):
         configs.extend(load_goals(p))
-    return run_once(conn, configs)
+    return run_once(conn, configs, data_dir=data_dir)

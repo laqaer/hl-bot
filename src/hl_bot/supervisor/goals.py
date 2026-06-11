@@ -82,6 +82,10 @@ class AgentGoals(BaseModel):
     agent: str
     description: str = ""
     mode: Literal["paper", "live_small", "live"] = "paper"
+    # Roster membership: 'live' = eligible for the tick roster, 'paper' = runs
+    # paper-only regardless of agent_state, 'retired' = excluded entirely (a
+    # retired agent stops consuming MetaAllocator weight).
+    roster: Literal["live", "paper", "retired"] = "live"
     goals: dict[str, Any] = Field(default_factory=dict)
     guardrails: list[Guardrail] = Field(default_factory=list)
     promotion: Promotion | None = None

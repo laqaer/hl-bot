@@ -5,6 +5,7 @@ description: >-
   wide stop / max-hold. The fixed-economics replacement for taker FEMR. Must pass
   the G0 confirmation gate on real history before live wiring.
 mode: paper
+roster: live
 
 goals:
   primary:
