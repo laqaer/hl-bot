@@ -1,0 +1,15 @@
+# Nightly sweep: cross-sectional funding carry — the highest-conviction class.
+# Question being answered: which entry threshold / breadth / universe clears
+# the G0 gate with maker execution on real history?
+agent: xfund_carry_v1
+interval: 1h
+days: 180
+prefer: maker
+universes:
+  - [BTC, ETH, SOL, HYPE]
+  - [BTC, ETH, SOL, HYPE, DOGE, XRP]
+  - [BTC, ETH, SOL, HYPE, DOGE, XRP, WIF, kPEPE]
+grid:
+  enter_funding_per_hr: [0.00008, 0.0001, 0.00015]
+  exit_funding_per_hr: [0.00002, 0.00003]
+  top_k: [2, 3]

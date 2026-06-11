@@ -70,8 +70,9 @@ systemctl daemon-reload
 # hlbot-run (continuous engine) supersedes the 5-min hlbot-tick timer; the
 # timer unit stays installed as a documented fallback but is disabled.
 systemctl disable --now hlbot-tick.timer 2>/dev/null || true
-systemctl enable --now hlbot-run.service hlbot-report.timer hlbot-ws.service
-log "  -> run engine + report timer + ws feed enabled (PAPER). hlbot-loop NOT enabled (start manually)."
+systemctl enable --now hlbot-run.service hlbot-report.timer hlbot-ws.service hlbot-sweep.timer
+log "  -> run engine + report timer + ws feed + nightly sweep enabled (PAPER)."
+log "  -> hlbot-loop + hlbot-moonshot NOT enabled (start manually, see docs)."
 
 log "8/8 optional Litestream backups"
 # shellcheck disable=SC1090

@@ -1,115 +1,113 @@
 # Go-live runbook & checklist
 
-How hl-bot goes to production **safely**. "Live" is a *human* decision gated on
-evidence — not a flag the autonomous loop flips. This doc is the contract for
-crossing that line. It is deliberately conservative: the strategies have shown
-*negative* edge after costs, so going live before that is fixed just loses money
-faster.
+How hl-bot goes to production. Since the 2026-06 overhaul, **promotion is
+automatic** — the supervisor walks each agent paper → live_small → live as its
+gates pass — but two things stay human: flipping the engine's global live
+switch (`HLBOT_RUN_ARGS`), and clearing the kill switch after a trip. This doc
+is the runbook for both, plus the host-side validation sequence (the "P4"
+steps) that turns the overhaul into live PnL.
 
 ## The one rule
 
-> **Do not enable or scale live trading until a strategy has passed G0→G2 in
-> [`ROADMAP_TO_1M.md`](ROADMAP_TO_1M.md).** No exceptions, no "just a small test
-> to see." A negative-edge system at small size is still a negative-edge system.
+> **Capital follows evidence.** The gates (G0 confirm stamp, paper soak,
+> real-fill live_small window) are encoded in `configs/*.yaml` and their
+> minima are enforced by CI (`tests/test_gate_minima.py`). Don't loosen a
+> gate to get a strategy through it; fix the strategy or the execution.
 
-## Pre-flight gates (all must be true)
+## Host bring-up sequence (do these in order)
 
-- [ ] **G0 — Sim edge.** The strategy backtests **positive net-of-cost edge** and
-  Sharpe > 1 over ≥90d real history (`hlbot backtest --compare`), and survives
-  walk-forward + a 2–3× slippage stress (B5). Record the numbers in
-  `ralph/PROGRESS.md`.
-- [ ] **G1 — Paper.** ≥30d paper run: edge ≥ +5 bps, ≥150 trades, no guardrail
-  breach. The supervisor's promotion gate for the agent's `*.yaml` reflects this.
-- [ ] **Execution is maker-first.** Entries use `place_limit_order` (post-only);
-  taker is reserved for urgent risk-reducing exits. (Without this, G0 won't pass —
-  the spread eats the edge.)
-- [ ] **Measurement is honest.** Funding is attributed per-agent (B6) and the
-  agent's scorecard Sharpe/edge is real (B7); otherwise the gates are measuring
-  an artifact.
-- [ ] **Capital is sized for ruin-avoidance.** Live-small notional within the
-  `min_bot_capital` / dynamic daily-loss / 5×-1× caps. Never raise a cap to
-  recover a loss.
+```bash
+# 0. Deploy (idempotent) — installs hlbot-run/-ws/-report/-sweep units, paper mode
+sudo REPO_URL=https://github.com/<you>/hl-bot.git BRANCH=main bash deploy/install.sh
+uv run hlbot doctor
+
+# 1. WS feed on the trading universe (also starts accruing data/liq_log.jsonl)
+#    /etc/hl-bot/env: HLBOT_WS_COINS=BTC,ETH,SOL,HYPE,DOGE,XRP,WIF,kPEPE
+systemctl restart hlbot-ws
+
+# 2. THE HIGHEST-VALUE STEP — fetch real history and confirm the carry class
+#    (this was blocked for the entire life of the repo; it answers whether the
+#    one plausibly-positive strategy class clears G0 with maker costs):
+uv run hlbot backtest-fetch --coins BTC,ETH,SOL,HYPE,DOGE,XRP --interval 1h --days 180
+uv run hlbot confirm --agent xfund_carry_v1   --prefer maker --days 180 --record
+uv run hlbot confirm --agent funding_carry_v1 --prefer maker --days 180 --record
+#    --record stamps the confirmations table: this is what require_g0 checks.
+#    If NOT CONFIRMED: do not go live; the nightly sweep + research pipeline
+#    (docs/STRATEGY_PIPELINE.md) is the path forward, not a smaller gate.
+
+# 3. Paper soak: hlbot-run is already running paper. Give it ≥10 days; verify
+uv run hlbot score          # paper agents show n_trades, edge, non-None sharpe
+uv run hlbot report         # funding_pnl visible per agent
+journalctl -u hlbot-run -n 50   # cycles ticking, supervisor evaluating
+
+# 4. Flip the global live switch (the human step):
+#    /etc/hl-bot/env -> HLBOT_RUN_ARGS="--live --execution maker"
+systemctl restart hlbot-run
+#    Auto-promotion does the rest: agents whose ladders pass go live_small at
+#    sizing caps (~$75 total / $25 per trade). WATCH THE FIRST FILLS:
+journalctl -u hlbot-run -f      # RESTING/FILLED/REPRICED events
+uv run hlbot ingest && uv run hlbot score
+```
+
+## What auto-promotion will and won't do
+
+- **Will:** flip `agent_state.mode` paper→live_small→live when an agent's
+  ladder passes (paper evidence + fresh G0 stamp for stage 1; **real fills
+  only** for stage 2), respecting `min_days_in_mode`; Telegram-alert every
+  promotion/demotion/pause; demote/pause automatically on guardrail breach.
+- **Won't:** trade an agent the global `--live` switch isn't set for; promote
+  while the kill switch is active; exceed mode sizing caps, the 5×/1× rule,
+  or order-rate limits (20/h per agent, 60/h account).
 
 ## Environment & secrets (live)
 
-Live trading needs an API wallet the bot signs with — **never the main key**:
+Live trading signs with an API wallet — **never the funded key**:
 
-- `~/.config/hermes/hl-bot-api-wallet.env`, perms `0600`, containing:
-  - `HL_BOT_API_PRIVATE_KEY=0x…` (64 hex) — an **API/agent wallet** approved on
-    the trader account, not the funded key.
-  - `HL_BOT_API_WALLET_ADDRESS=0x…` (derived address, must match the key).
-- The trader (funded) account is `HL_TRADER_ADDRESS` in `exec/orders.py`.
-  `build_exchange()` signs with the API wallet but acts on the trader account.
-- `.env`: `HL_ADDRESS` (trader, read-only ops), optional `TG_BOT_TOKEN` /
-  `TG_CHAT_ID` for alerts. `HLBOT_PAPER=1` keeps paper as the global default.
+- `~hlbot/.config/hermes/hl-bot-api-wallet.env`, perms `0600`:
+  `HL_BOT_API_PRIVATE_KEY=0x…` + `HL_BOT_API_WALLET_ADDRESS=0x…`
+- `/etc/hl-bot/env`: `HL_ADDRESS` / `HL_TRADER_ADDRESS` (funded account),
+  `TG_BOT_TOKEN`/`TG_CHAT_ID` (alerts), `HEALTHCHECK_URL` (dead-man),
+  `HLBOT_RUN_ARGS` (the live switch), `HLBOT_WS_*`.
+- Moonshot sleeve: separate sub-account + wallet in `/etc/hl-bot/moonshot.env`
+  — see [`MOONSHOT.md`](MOONSHOT.md).
 
-Sanity before any live tick:
-```bash
-uv run hlbot ingest        # confirms read access + populates fills/equity
-uv run hlbot score         # confirms accounting looks right
-uv run hlbot femr_tick     # PAPER by default: prints decisions, places nothing
-```
+## Kill switch & rollback (know these before going live)
 
-## Promote an agent to live (the gated switch)
+- **Halt everything, sticky:** `uv run hlbot kill "reason"` (or `touch
+  data/KILL` over SSH). New entries and promotions stop; flatten/cancel still
+  run. Trips automatically on: account 24h-loss breach, equity < 75% of 30d
+  high-water-mark. **Only a human runs `hlbot resume`.**
+- **Halt one agent:** the supervisor pauses it on its 24h-loss guardrail; to
+  force: `UPDATE agent_state SET enabled=0, mode='paper',
+  paused_reason='manual halt' WHERE agent='<agent>';`
+- **Flatten everything:** `systemctl stop hlbot-run`, close on HL manually if
+  urgent; reconciliation clears stale DB ownership on restart.
+- **Roll back params:** `configs/agent_overrides.json` is the live-tuning
+  file; revert in git.
+- **Full stop:** `systemctl stop hlbot-run hlbot-ws` — no process, no orders.
 
-Agents are paper until **explicitly** enabled in `agent_state` AND in
-`live_small`/`live` mode. The live tick (`femr_tick --live`) only executes agents
-that pass `_filter_live_agents_by_state`.
+## Monitoring (must be green before and during live)
 
-1. Confirm the gates above. Re-read the agent's latest backtest + paper numbers.
-2. Set the agent live-small (one agent at a time):
-   ```sql
-   -- in the bot DB (HLBOT_DB)
-   INSERT INTO agent_state(agent, mode, enabled) VALUES('<agent>', 'live_small', 1)
-     ON CONFLICT(agent) DO UPDATE SET mode='live_small', enabled=1;
-   ```
-   or let the supervisor promote it once its `*.yaml` promotion conditions pass.
-3. First live tick, watched:
-   ```bash
-   uv run hlbot femr_tick --live      # places real orders for enabled agents only
-   ```
-   Verify the printed guardrail line is green, sizes match the allocator caps, and
-   the first fills reconcile (`hlbot ingest && hlbot score`).
-4. Only after a clean live-small window (G2) do you scale notional — and that
-   happens automatically via the 5×/1× rule as portfolio value grows. Do not
-   hand-raise caps.
+- `hlbot health` (timer/manual): tick freshness, ingest age, kill state,
+  paused agents, 24h PnL; pings `HEALTHCHECK_URL` (dead-man) when ok.
+- Telegram: daily report, guardrail trips, every promotion/demotion, kill
+  trips.
+- Watch in week one of maker execution: **maker fill rate** (target >30%),
+  taker-fallback rate, reprice counts, realized px vs quote (journalctl
+  events; telemetry hardening tracked as backlog E1).
 
-## Monitoring (must be running before live)
+## What the autonomous loop (ralph) may and may not do
 
-- **Cron** (see README): `tick`/`ingest`/`supervisor` every 5 min; daily report.
-- **Daily scorecard** to Telegram (`scripts/daily_scorecard.py`).
-- **Alerts** (`telegram_alert`) on guardrail trips, repeated rejections, big PnL
-  moves — confirm `TG_BOT_TOKEN`/`TG_CHAT_ID` resolve.
-- Watch: 24h realized PnL vs `max_daily_loss`, open notional vs cap, rejection
-  rate, and reconciliation events (stale ownership clears).
+- **May:** research, implement specs, run sweeps/backtests, tighten configs,
+  improve execution quality, keep CI green.
+- **May not:** write `agent_state`, weaken any gate/cap/limit (CI-enforced),
+  touch KILL files, or handle wallet material. See `ralph/PROMPT.md`.
 
-## Kill switch & rollback
+## Current readiness (2026-06-11, post-overhaul)
 
-- **Halt new entries immediately:** the supervisor pauses an agent on its 24h
-  loss guardrail; to force it:
-  ```sql
-  UPDATE agent_state SET enabled=0, mode='paper', paused_reason='manual halt' WHERE agent='<agent>';
-  ```
-  Paused/paper agents place nothing; **flatten/close decisions still run** for
-  risk reduction.
-- **Flatten everything:** stop the cron, then run the live tick once — open
-  positions hit their exit logic; or close manually on HL. Reconciliation will
-  clear stale DB ownership next tick.
-- **Roll back params:** `configs/agent_overrides.json` is the live-tuning file;
-  revert it in git to undo an auto-tuner change.
-- **Full stop:** disable the cron / systemd timer. No process = no orders.
-
-## What the autonomous loop may and may not do
-
-- **May:** research, backtest, write code, paper-simulate, and *propose* config
-  changes (always risk-reducing). It keeps CI green and the backlog moving.
-- **May not:** set any agent to `live_small`/`live`, raise a notional cap, run
-  `femr_tick --live`, or touch the API-wallet env. Those are human-only.
-
-## Current readiness (2026-06-08)
-
-**NOT ready for live.** Blockers: no strategy has passed G0 (need real-history
-backtests, blocked by sandbox network — B1), maker execution exists as a
-primitive but the live entry path is still synchronous taker (B2 follow-up), and
-funding attribution (B6) / per-agent Sharpe (B7) aren't wired yet. The regime
-TWAP (B3) is the leading G0 candidate. Path to ready = work the P0/P1 backlog.
+Code-ready, **evidence-pending**: the engine, measurement, auto-promotion,
+safeguards and sleeve are built and tested (151 tests). The remaining blockers
+are host-side facts, not code: run step 2 above (first-ever real-history
+confirmation of the carry class), then the paper soak. If carry confirms, the
+system takes itself live and scales as gates pass; if it doesn't, the research
+pipeline is the next move and no capital goes live on an unconfirmed strategy.

@@ -920,6 +920,44 @@ def confirm(
 
 
 @app.command()
+def sweep(
+    spec: Path,
+    refresh: bool = False,
+    json_dir: Path = Path("data/sweeps"),
+    md_dir: Path = Path("research/results"),
+):
+    """Run a parameter/universe sweep through the G0 confirmation gate.
+
+    Loads configs/sweeps/<name>.yaml, replays every combo over cached real
+    history, and writes a ranked report to research/results/ (committed by the
+    nightly host job so research sessions start from fresh evidence)."""
+    from ..backtest.data import cached_or_fetch
+    from ..engine.runner import AGENT_FACTORIES
+    from ..research.sweep import SweepSpec, run_sweep, write_outputs
+
+    _, s = _conn()
+    sw = SweepSpec.load(spec)
+    factory = AGENT_FACTORIES.get(sw.agent)
+    if factory is None:
+        console.print(f"[red]unknown agent {sw.agent}[/red]")
+        raise typer.Exit(1)
+    frames_by_universe = {}
+    for universe in sw.universes or [[]]:
+        console.print(f"[dim]loading {sw.days}d {sw.interval} for {universe}…[/dim]")
+        try:
+            frames_by_universe[tuple(universe)] = cached_or_fetch(
+                list(universe), interval=sw.interval, days=sw.days,
+                base_url=s.hl_api_url, refresh=refresh)
+        except Exception as e:  # noqa: BLE001
+            console.print(f"[red]history load failed for {universe}: {e}[/red]")
+            frames_by_universe[tuple(universe)] = []
+    rows = run_sweep(sw, frames_by_universe, factory)
+    jpath, mpath = write_outputs(sw, rows, json_dir=json_dir, md_dir=md_dir)
+    confirmed = sum(1 for r in rows if r.confirmed)
+    console.print(f"[green]✓[/green] {len(rows)} combos, {confirmed} confirmed → {mpath}")
+
+
+@app.command()
 def ws(
     coins: str = "BTC,ETH,SOL,HYPE",
     snapshot: Path = Path("data/ws_snapshot.json"),
