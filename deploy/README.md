@@ -57,6 +57,22 @@ Monitoring: set `HEALTHCHECK_URL` (e.g. Healthchecks.io) in `/etc/hl-bot/env` �
 each tick's `hlbot health` pings it when healthy, so a missed ping pages you;
 `warn`/`down` also Telegram-alerts.
 
+## Host sizing & "I can't SSH in"
+
+`install.sh` adds a swapfile (`deploy/ensure-swap.sh`) and the units bound the
+self-improvement loop's memory + shield the trader/feed from the OOM killer, so a
+runaway process can't wedge the box. If SSH ever fails with
+`kex_exchange_identification: read: Connection reset by peer` (TCP connects, then
+resets), sshd accepted the socket but couldn't serve you — the usual causes, in
+order: **(1)** out of memory (`free -m`; add swap: `sudo bash deploy/ensure-swap.sh`),
+**(2)** full root disk (`df -h /`), **(3)** a broken sshd config or socket-activated
+`ssh.service` that failed (`sudo sshd -t`, `systemctl status ssh ssh.socket`),
+**(4)** fail2ban/firewall banning your IP (`sudo fail2ban-client status sshd`).
+On AWS, **SSM Session Manager** gets you a shell even when sshd is down (attach an
+IAM role with `AmazonSSMManagedInstanceCore`). The bot keeps trading via systemd
+regardless of shell access. Run the loop on its **own** small VPS (or a ≥4GB box)
+so the trader stays light.
+
 ## Going live (gated)
 
 1. Confirm a strategy on real history:

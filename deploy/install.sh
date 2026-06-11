@@ -51,6 +51,9 @@ chmod +x "${HLBOT_HOME}"/deploy/*.sh "${HLBOT_HOME}"/ralph/*.sh 2>/dev/null || t
 # Ignore exec-bit changes (the chmod above) so they never block git pull / auto-deploy.
 sudo -u "$HLBOT_USER" git -C "$HLBOT_HOME" config core.fileMode false 2>/dev/null || true
 
+log "4b/8 ensure swap (headroom so memory pressure never wedges sshd / the trader)"
+bash "${HLBOT_HOME}/deploy/ensure-swap.sh" || log "  swap setup skipped (continuing)"
+
 log "5/8 python deps (uv sync)"
 sudo -u "$HLBOT_USER" sh -c "cd '$HLBOT_HOME' && uv sync --frozen >/dev/null"
 

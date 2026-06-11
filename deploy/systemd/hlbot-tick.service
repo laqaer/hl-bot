@@ -16,3 +16,5 @@ TimeoutStartSec=300
 NoNewPrivileges=true
 ProtectSystem=full
 PrivateTmp=true
+# Shield the live trader from the OOM killer (negative score = sacrificed last).
+OOMScoreAdjust=-700

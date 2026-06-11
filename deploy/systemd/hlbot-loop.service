@@ -25,6 +25,14 @@ ExecStart=/opt/hl-bot-loop/ralph/loop.sh
 Restart=always
 RestartSec=30
 NoNewPrivileges=true
+# The loop is the heaviest process (a full Claude Code agent + uv test runs).
+# Bound it and make it the FIRST thing the kernel sacrifices under memory
+# pressure, so a runaway agent can never starve sshd or the live trader (which
+# would make the box accept-then-reset SSH). It auto-restarts after any OOM kill.
+MemoryHigh=3G
+MemoryMax=4G
+OOMScoreAdjust=500
+CPUWeight=20
 
 [Install]
 WantedBy=multi-user.target

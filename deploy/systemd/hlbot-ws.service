@@ -16,6 +16,9 @@ RestartSec=10
 NoNewPrivileges=true
 ProtectSystem=full
 PrivateTmp=true
+# Shield the data feed from the OOM killer; soft-throttle if it ever leaks.
+OOMScoreAdjust=-700
+MemoryHigh=1G
 
 [Install]
 WantedBy=multi-user.target
