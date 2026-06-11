@@ -25,6 +25,7 @@ from ..agents.veto import VetoAgent
 from ..agents.xfund_carry import XFundCarryAgent
 from ..config import CONFIG_DIR, Settings
 from ..db.schema import init_db
+from ..engine.views import enrich_view as _enrich_view
 from ..ingest.hyperliquid import ingest_fills, ingest_funding, snapshot_equity
 from ..reports.daily import build as build_report
 from ..reports.daily import send_telegram
@@ -237,137 +238,119 @@ def tick(coins: str = "BTC,ETH,SOL,HYPE,ZEC"):
         console.print(f"  {d.agent} {d.action} {d.coin or ''} {tag} :: {d.reasoning}")
 
 
-def _enrich_view(view, api_url: str, vol: dict[str, float]) -> None:
-    """Augment a MarketView with 1h candles (top-vol coins), spot mids, liquidations."""
-    import httpx as _httpx
+@app.command()
+def run(
+    live: bool = False,
+    execution: str = "maker",
+    interval: int = 20,
+    ingest_every_s: int = 300,
+    supervise_every_s: int = 900,
+    enrich_every_s: int = 300,
+    max_cycles: int = 0,
+):
+    """Long-running event-paced engine — replaces the 5-min cron tick.
 
-    # ---- top-20-by-volume universe ----
-    top = sorted(vol.items(), key=lambda kv: kv[1], reverse=True)[:20]
-    top_coins = [c for c, _ in top]
+    Every ``interval`` seconds: build a market view (WS snapshot preferred,
+    REST fallback) and run one consolidated cycle (paper sim + live execution).
+    Every ``ingest_every_s``: ingest fills/funding/equity and refresh
+    attribution; trips the kill switch on an equity-floor breach.
+    Every ``supervise_every_s``: evaluate goals (auto-promotion lives here).
+    ``max_cycles`` > 0 exits after N cycles (for testing/ops checks).
+    """
+    import os
 
-    candles_1h: dict[str, dict] = {}
-    closes_by_coin: dict[str, list[float]] = {}
-    spot_mids: dict[str, float] = {}
-    liquidations: list[dict] = []
+    from ..agents.runtime import fetch_market_view
+    from ..engine.runner import build_roster, run_cycle
+    from ..engine.views import enrich_view, overlay_ws_snapshot
+    from ..ingest.hyperliquid import ingest_fills as _ingest_fills
+    from ..ingest.hyperliquid import ingest_funding as _ingest_funding
+    from ..ingest.hyperliquid import snapshot_equity as _snapshot_equity
+    from ..ops.kill import equity_floor_breached, kill_active, trip_kill
+    from ..scoring.positions import refresh_attribution
 
-    with _httpx.Client(timeout=15) as cli:
-        # 60 × 1m candles -> vwap & sigma per top coin
-        end_ms = int(time.time() * 1000)
-        start_ms = end_ms - 60 * 60_000
-        for coin in top_coins:
-            try:
-                cs = cli.post(api_url + "/info", json={
-                    "type": "candleSnapshot",
-                    "req": {"coin": coin, "interval": "1m",
-                            "startTime": start_ms, "endTime": end_ms},
-                }).json() or []
-                if not isinstance(cs, list) or len(cs) < 10:
-                    continue
-                pxs, vols = [], []
-                for k in cs:
-                    try:
-                        c_px = float(k.get("c", 0))
-                        c_vol = float(k.get("v", 0))
-                        if c_px > 0:
-                            pxs.append(c_px)
-                            vols.append(c_vol)
-                    except (TypeError, ValueError):
-                        continue
-                if len(pxs) < 10:
-                    continue
-                tot_vol = sum(vols)
-                vwap = sum(p * v for p, v in zip(pxs, vols, strict=False)) / tot_vol if tot_vol > 0 else sum(pxs) / len(pxs)
-                mean = sum(pxs) / len(pxs)
-                var = sum((p - mean) ** 2 for p in pxs) / len(pxs)
-                sigma = var ** 0.5
-                candles_1h[coin] = {"vwap": vwap, "sigma": sigma, "n": len(pxs)}
-                closes_by_coin[coin] = pxs
-            except Exception:  # noqa: BLE001
-                continue
+    conn, s = _conn()
+    data_dir = s.db_path.parent
+    heartbeat_path = data_dir / "run_heartbeat"
 
-        # Spot mids for BTC/ETH/SOL. HL spot pairs use wrapped tokens
-        # (UBTC/USDC=@142, UETH/USDC=@151, USOL/USDC=@156) and the midPx is
-        # quoted in scaled native units. We use allMids @N indices and scale
-        # against the perp mid to detect basis: skip pair if it would produce
-        # a clearly nonsensical (>5%) basis (means we don't have a clean spot).
+    exchange = info = None
+    if live:
+        from ..exec.orders import build_exchange, telegram_alert
         try:
-            spot = cli.post(api_url + "/info", json={"type": "spotMetaAndAssetCtxs"}).json()
-            if isinstance(spot, list) and len(spot) == 2:
-                meta = spot[0] or {}
-                ctxs = spot[1] or []
-                universe = meta.get("universe", []) or []
-                tokens = meta.get("tokens", []) or []
-                name_by_token = {t.get("index"): t.get("name") for t in tokens}
-                # token szDecimals required to normalize price
-                wei_by_token = {t.get("index"): int(t.get("weiDecimals", 0) or 0) for t in tokens}
-                for u, c in zip(universe, ctxs, strict=False):
-                    pair_tokens = u.get("tokens", [])
-                    if len(pair_tokens) < 2:
-                        continue
-                    base_idx = pair_tokens[0]
-                    base_name = name_by_token.get(base_idx)
-                    quote_name = name_by_token.get(pair_tokens[1])
-                    if quote_name != "USDC":
-                        continue
-                    norm = None
-                    if base_name in ("UBTC", "UETH", "USOL"):
-                        norm = base_name[1:]   # strip leading 'U'
-                    elif base_name in ("BTC", "ETH", "SOL"):
-                        norm = base_name
-                    if norm not in ("BTC", "ETH", "SOL"):
-                        continue
-                    try:
-                        raw_mid = float(c.get("midPx") or 0)
-                    except (TypeError, ValueError):
-                        raw_mid = 0
-                    if raw_mid <= 0:
-                        continue
-                    # USDC weiDecimals=8 (standard). base wei from token meta.
-                    base_wei = wei_by_token.get(base_idx, 8)
-                    quote_wei = 8  # USDC
-                    scaled_mid = raw_mid * (10 ** (base_wei - quote_wei))
-                    # only adopt if scaled_mid is within 5% of perp mid (sanity)
-                    perp_mid = view.mids.get(norm)
-                    if (
-                        perp_mid and scaled_mid > 0
-                        and 0.5 < scaled_mid / perp_mid < 1.5
-                        and ((base_name or "").startswith("U") or norm not in spot_mids)
-                    ):
-                        # Prefer wrapped (U-prefixed) over plain if both present.
-                        spot_mids[norm] = scaled_mid
-        except Exception:  # noqa: BLE001
-            pass
+            exchange, info, _ = build_exchange()
+        except Exception as e:  # noqa: BLE001
+            console.print(f"[red]FATAL: build_exchange failed: {e}[/red]")
+            telegram_alert(f"🚨 hl-bot run: build_exchange failed: {e}")
+            raise typer.Exit(2) from e
 
-        # recent liquidations (best-effort; endpoint may not exist publicly)
+    overrides_roster = build_roster(conn, CONFIG_DIR)
+    console.print(
+        f"[bold]hlbot run[/bold] live={live} execution={execution} interval={interval}s · "
+        f"roster: {', '.join(e.agent.name for e in overrides_roster)}"
+    )
+
+    last_ingest = 0.0
+    last_supervise = 0.0
+    last_enrich = 0.0
+    cached_extra: dict = {}
+    cycles = 0
+    while True:
+        t0 = time.time()
         try:
-            ev = cli.post(api_url + "/info", json={"type": "liquidations"}).json()
-            if isinstance(ev, list):
-                for e in ev:
-                    try:
-                        coin = e.get("coin")
-                        sz = float(e.get("sz") or 0)
-                        px = float(e.get("px") or 0)
-                        if coin and sz > 0 and px > 0:
-                            liquidations.append({
-                                "coin": coin,
-                                "side": e.get("side"),
-                                "notional_usd": sz * px,
-                                "ts_ms": int(e.get("time") or 0),
-                            })
-                    except (TypeError, ValueError):
-                        continue
-        except Exception:  # noqa: BLE001
-            pass
+            view = fetch_market_view(s.hl_api_url, [])
+            if t0 - last_enrich >= enrich_every_s:
+                enrich_view(view, s.hl_api_url, view.extra.get("day_ntl_vlm", {}))
+                cached_extra = dict(view.extra)
+                last_enrich = t0
+            else:
+                merged = dict(cached_extra)
+                merged.update(view.extra)
+                view.extra = merged
+            overlay_ws_snapshot(view, os.environ.get("HLBOT_WS_SNAPSHOT"))
 
-    view.extra["candles_1h"] = candles_1h
-    view.extra["closes"] = closes_by_coin
-    view.extra["spot_mids"] = spot_mids
-    view.extra["liquidations"] = liquidations
+            res = run_cycle(conn, s, view, live=live, execution=execution,
+                            exchange=exchange, info=info)
+            console.print(f"[dim]{time.strftime('%H:%M:%S')}[/dim] {res.summary()}")
+            for ev in res.events:
+                console.print(f"  {ev}")
+
+            if t0 - last_ingest >= ingest_every_s:
+                last_ingest = t0
+                if s.hl_address:
+                    with contextlib.suppress(Exception):
+                        _ingest_fills(conn, s.hl_address, s.hl_api_url)
+                        _ingest_funding(conn, s.hl_address, s.hl_api_url, 7)
+                        _snapshot_equity(conn, s.hl_address, s.hl_api_url)
+                        refresh_attribution(conn)
+                breached, why = equity_floor_breached(conn)
+                if breached and not kill_active(data_dir):
+                    trip_kill(data_dir, f"EQUITY FLOOR: {why}")
+                    console.print(f"[red]KILL tripped: {why}[/red]")
+
+            if t0 - last_supervise >= supervise_every_s:
+                last_supervise = t0
+                actions = supervise(conn, CONFIG_DIR, data_dir=data_dir)
+                if actions:
+                    console.print(f"[bold]supervisor[/bold]: {json.dumps(actions)}")
+
+            heartbeat_path.touch()
+        except KeyboardInterrupt:
+            console.print("[yellow]run loop interrupted[/yellow]")
+            return
+        except Exception as e:  # noqa: BLE001
+            log_ = logging.getLogger("hlbot.run")
+            log_.exception("cycle failed")
+            console.print(f"[red]cycle error: {e}[/red]")
+
+        cycles += 1
+        if max_cycles and cycles >= max_cycles:
+            return
+        time.sleep(max(0.0, interval - (time.time() - t0)))
 
 
 @app.command()
 def femr_tick(live: bool = False, execution: str = "taker"):
-    """Run FEMR (Funding Extremes Mean Reversion) one tick.
+    """DEPRECATED — one-shot tick kept for manual ops; production runs
+    `hlbot run` (consolidated engine, maker execution, paper simulation).
 
     paper (default): log decisions only, no orders placed.
     live: place real orders on MAIN account, gated by guardrails.

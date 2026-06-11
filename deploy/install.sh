@@ -67,8 +67,11 @@ for f in "${HLBOT_HOME}"/deploy/systemd/*; do
     "/etc/systemd/system/$(basename "$f")"
 done
 systemctl daemon-reload
-systemctl enable --now hlbot-tick.timer hlbot-report.timer hlbot-ws.service
-log "  -> tick + report timers + ws feed enabled (PAPER). hlbot-loop NOT enabled (start manually)."
+# hlbot-run (continuous engine) supersedes the 5-min hlbot-tick timer; the
+# timer unit stays installed as a documented fallback but is disabled.
+systemctl disable --now hlbot-tick.timer 2>/dev/null || true
+systemctl enable --now hlbot-run.service hlbot-report.timer hlbot-ws.service
+log "  -> run engine + report timer + ws feed enabled (PAPER). hlbot-loop NOT enabled (start manually)."
 
 log "8/8 optional Litestream backups"
 # shellcheck disable=SC1090
@@ -99,7 +102,9 @@ sudo -u "$HLBOT_USER" sh -c "cd '$HLBOT_HOME' && set -a && . '$ENV_FILE' && uv r
 cat <<EOF
 
 ✅ hl-bot installed under ${HLBOT_HOME} as user ${HLBOT_USER} (PAPER mode).
-   Edit ${ENV_FILE}, then:  systemctl restart hlbot-tick.timer
-   Status:   systemctl list-timers 'hlbot-*' ; journalctl -u hlbot-tick -f
-   Go live:  see docs/GO_LIVE.md (deliberate, gated).
+   Edit ${ENV_FILE}, then:  systemctl restart hlbot-run.service
+   Status:   systemctl status hlbot-run ; journalctl -u hlbot-run -f
+   Go live:  set HLBOT_RUN_ARGS="--live --execution maker" in ${ENV_FILE}
+             after the gates pass — see docs/GO_LIVE.md.
+   Kill:     uv run hlbot kill "reason"   (sticky; hlbot resume to clear)
 EOF

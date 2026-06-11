@@ -90,6 +90,9 @@ class AgentGoals(BaseModel):
     # paper-only regardless of agent_state, 'retired' = excluded entirely (a
     # retired agent stops consuming MetaAllocator weight).
     roster: Literal["live", "paper", "retired"] = "live"
+    # Per-agent re-entry cooldown per coin (replaces the old global 1h constant;
+    # carry can stay patient while event-driven agents need minutes or less).
+    cooldown_s: int = 3600
     goals: dict[str, Any] = Field(default_factory=dict)
     guardrails: list[Guardrail] = Field(default_factory=list)
     promotion: Promotion | None = None

@@ -185,6 +185,28 @@ MIGRATIONS: list[str] = [
         PRIMARY KEY (time_ms, agent, coin)
     );
     """,
+    # 3: maker order lifecycle state machine (replaces replaying the whole
+    # decision audit log to find working orders).
+    """
+    CREATE TABLE IF NOT EXISTS maker_orders (
+        cloid           TEXT PRIMARY KEY,
+        agent           TEXT NOT NULL,
+        coin            TEXT NOT NULL,
+        side            TEXT NOT NULL,            -- 'B' / 'A'
+        sz              REAL NOT NULL,
+        filled_sz       REAL NOT NULL DEFAULT 0,
+        limit_px        REAL NOT NULL,
+        oid             INTEGER,
+        state           TEXT NOT NULL,            -- quoted/partial/filled/cancelled/expired/taker_fallback
+        urgency         TEXT NOT NULL DEFAULT 'normal',  -- normal/exit/stop
+        reduce_only     INTEGER NOT NULL DEFAULT 0,
+        created_ms      INTEGER NOT NULL,
+        updated_ms      INTEGER NOT NULL,
+        reprice_count   INTEGER NOT NULL DEFAULT 0,
+        parent_cloid    TEXT                      -- set when this quote replaced another
+    );
+    CREATE INDEX IF NOT EXISTS idx_maker_orders_agent ON maker_orders(agent, state);
+    """,
 ]
 
 
