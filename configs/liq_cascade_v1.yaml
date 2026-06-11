@@ -22,9 +22,18 @@ guardrails:
   - {metric: edge_bps, window: 7d,  op: ">=", threshold: -15,
      action: demote, reason: "7d realized edge < -15 bps after costs"}
 
-promotion:
-  from: paper
-  to: live_small
-  conditions:
-    - {metric: edge_bps, window: 30d, op: ">=", threshold: 5, source: paper}
-    - {metric: n_trades, window: 30d, op: ">=", threshold: 40, source: paper}
+# No require_g0: the candle-replay confirm harness can't reproduce the WS
+# liquidation feed yet (sweeps on recorded liq logs are the P5/P6 follow-up),
+# so this agent earns live_small purely on a longer paper soak. Core-account
+# live_small only — high leverage stays in the moonshot sub-account profile.
+sizing:
+  live_small_max_total: 50
+  live_small_max_per_trade: 15
+
+promotion_ladder:
+  - from: paper
+    to: live_small
+    min_days_in_mode: 14
+    conditions:
+      - {metric: edge_bps, window: 30d, op: ">=", threshold: 5, source: paper}
+      - {metric: n_trades, window: 30d, op: ">=", threshold: 40, source: paper}

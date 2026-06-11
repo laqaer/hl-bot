@@ -27,12 +27,27 @@ guardrails:
   - {metric: edge_bps, window: 24h, op: ">=", threshold: -40,
      action: alert,  reason: "24h edge < -40 bps"}
 
-# paper -> live_small ONLY, behind strong sample + edge gates. Never auto-promotes
-# to full live. Enabling live is a human action (see docs/GO_LIVE.md).
-promotion:
-  from: paper
-  to: live_small
-  conditions:
-    - {metric: edge_bps, window: 30d, op: ">=", threshold: 5}
-    - {metric: net_pnl,  window: 30d, op: ">=", threshold: 50}
-    - {metric: n_trades, window: 30d, op: ">=", threshold: 200}
+# Auto-promotion ladder: paper -> live_small on simulated (paper-source)
+# evidence + a fresh G0 confirmation on real history; live_small -> live ONLY
+# on real-fill evidence. The supervisor flips agent_state automatically; the
+# kill switch (`hlbot kill`) suppresses all promotions.
+sizing:
+  live_small_max_total: 75
+  live_small_max_per_trade: 25
+
+promotion_ladder:
+  - from: paper
+    to: live_small
+    min_days_in_mode: 10
+    require_g0: true
+    conditions:
+      - {metric: edge_bps, window: 30d, op: ">=", threshold: 3, source: paper}
+      - {metric: n_trades, window: 30d, op: ">=", threshold: 150, source: paper}
+  - from: live_small
+    to: live
+    min_days_in_mode: 21
+    conditions:
+      - {metric: edge_bps, window: 30d, op: ">=", threshold: 3}
+      - {metric: net_pnl,  window: 30d, op: ">=", threshold: 0}
+      - {metric: sharpe,   window: 30d, op: ">=", threshold: 1.0}
+      - {metric: n_trades, window: 30d, op: ">=", threshold: 40}

@@ -64,9 +64,19 @@ def run_once(
     (risk-reducing actions) are always processed.
     """
     kill_reason = kill_active(data_dir) if data_dir is not None else None
+    state = {
+        r["agent"]: r for r in conn.execute(
+            "SELECT agent, mode, enabled, last_promoted_ms FROM agent_state"
+        ).fetchall()
+    }
     actions_taken: dict[str, list[str]] = {}
     for g in configs:
-        evals = evaluate(conn, g)
+        st = state.get(g.agent)
+        evals = evaluate(
+            conn, g,
+            current_mode=st["mode"] if st else None,
+            last_promoted_ms=st["last_promoted_ms"] if st else None,
+        )
         persist(conn, evals)
         acts: list[str] = []
         for e in evals:
@@ -76,17 +86,26 @@ def run_once(
             elif e.action == "demote":
                 _demote(conn, g.agent)
                 acts.append(f"DEMOTE: {e.detail}")
-            elif e.action == "promote" and g.promotion:
+            elif e.action == "promote" and e.to_mode:
                 if kill_reason:
                     acts.append(f"PROMOTE-SUPPRESSED (kill active: {kill_reason}): {e.detail}")
                     continue
-                _set_mode(conn, g.agent, g.promotion.to_mode,
+                _set_mode(conn, g.agent, e.to_mode,
                           reason=f"promoted via {e.detail}")
                 acts.append(f"PROMOTE: {e.detail}")
         if acts:
             actions_taken[g.agent] = acts
             log.info("supervisor actions for %s: %s", g.agent, acts)
+            _alert(f"🤖 supervisor — {g.agent}: " + " | ".join(acts))
     return actions_taken
+
+
+def _alert(message: str) -> None:
+    try:
+        from ..exec.orders import telegram_alert
+        telegram_alert(message)
+    except Exception:  # noqa: BLE001
+        log.debug("supervisor alert not sent")
 
 
 def supervise(

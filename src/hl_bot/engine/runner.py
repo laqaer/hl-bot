@@ -51,11 +51,12 @@ from ..exec.orders import (
     close_position,
     coin_in_cooldown,
     dynamic_daily_loss_limit,
+    order_rate_ok,
     place_market_order,
     reconcile_positions,
 )
-from ..ops.kill import kill_active
-from ..risk.allocation import resolve_agent_caps
+from ..ops.kill import kill_active, trip_kill
+from ..risk.allocation import apply_mode_sizing, resolve_agent_caps
 from ..risk.scaling import compute_notional_cap, unified_portfolio_value
 from ..sim.paper import PaperCycleResult, simulate_cycle
 from ..supervisor.goals import AgentGoals, load_goals
@@ -83,6 +84,7 @@ AGENT_FACTORIES: dict[str, Callable[[sqlite3.Connection | None, dict], Agent]] =
 class RosterEntry:
     agent: Agent
     goals: AgentGoals
+    mode: str = "paper"        # agent_state truth, set by split_roster
 
 
 @dataclass
@@ -149,6 +151,7 @@ def split_roster(
     paper_entries: list[RosterEntry] = []
     for e in roster:
         mode, enabled = state.get(e.agent.name, ("paper", 1))
+        e.mode = mode
         if not enabled:
             continue
         if live and e.goals.roster == "live" and mode in ("live_small", "live"):
@@ -220,6 +223,8 @@ def run_cycle(
             cap = resolved.get(e.agent.name)
             if cap is None or not hasattr(e.agent, "cfg"):
                 continue
+            # live_small runs deliberately tiny regardless of allocator grant.
+            cap = apply_mode_sizing(cap, e.mode, e.goals.sizing)
             if hasattr(e.agent.cfg, "max_total_notional"):
                 e.agent.cfg.max_total_notional = cap.max_total_notional
             if hasattr(e.agent.cfg, "max_notional_per_trade"):
@@ -284,6 +289,11 @@ def run_cycle(
         if not ok:
             res.halted = res.halted or f"guardrail: {why}"
             res.events.append(f"HALT new entries: {why}")
+            if why.startswith("DAILY_LOSS:") and not kill_active(data_dir):
+                # Account-level daily loss is STICKY: a human must look before
+                # any new entries — `hlbot resume` clears it.
+                trip_kill(data_dir, why)
+                res.events.append("KILL tripped (account daily loss)")
 
     cooldowns = {e.agent.name: e.goals.cooldown_s for e in live_entries}
 
@@ -313,6 +323,10 @@ def run_cycle(
             if coin_in_cooldown(conn, d.coin, agent=d.agent,
                                 cooldown_s=cooldowns.get(d.agent, 3600)):
                 res.events.append(f"SKIP {d.agent} {d.coin}: cooldown")
+                continue
+            rate_ok, rate_why = order_rate_ok(conn, d.agent, now_ms=now_ms)
+            if not rate_ok:
+                res.events.append(f"SKIP {d.agent} {d.coin}: {rate_why}")
                 continue
             if exchange is None:
                 res.events.append(f"SKIP {d.agent} {d.coin}: no exchange")

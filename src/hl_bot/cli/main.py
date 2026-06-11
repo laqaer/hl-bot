@@ -857,16 +857,19 @@ def confirm(
     min_edge_bps: float = 3.0,
     min_sharpe: float = 1.0,
     cache: bool = True,
+    record: bool = False,
 ):
     """Confirm a strategy through the G0 gate: walk-forward + cost stress.
 
     Prints an explicit PASS/FAIL. A strategy must clear this on real history
-    before it is eligible for paper→live promotion (see docs/GO_LIVE.md).
+    before it is eligible for paper→live promotion. With --record the verdict
+    is stamped into the confirmations table, which is what promotion stages
+    with require_g0 check (auto-promotion runs on this evidence).
     """
     from ..backtest.confirm import confirm_strategy
     from ..backtest.data import cached_or_fetch, load_frames
 
-    _, s = _conn()
+    conn, s = _conn()
     coin_list = [c.strip() for c in coins.split(",") if c.strip()]
     factories = {
         "twap_mr_v1": lambda conn: TwapMrAgent(config={}, conn=conn),
@@ -894,6 +897,16 @@ def confirm(
         min_edge_bps=min_edge_bps, min_sharpe=min_sharpe, periods_per_year=per_year,
     )
     console.print(res.summary())
+    if record:
+        conn.execute(
+            """INSERT INTO confirmations(agent, ts_ms, dataset, prefer, confirmed,
+                                         oos_edge_bps, summary)
+               VALUES(?,?,?,?,?,?,?)""",
+            (agent, int(time.time() * 1000), f"{coins}/{interval}/{days}d", prefer,
+             1 if res.confirmed else 0, res.out_of_sample.edge_bps, res.summary()),
+        )
+        conn.commit()
+        console.print(f"[dim]confirmation recorded (confirmed={res.confirmed})[/dim]")
     if not res.confirmed:
         raise typer.Exit(1)
 

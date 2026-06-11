@@ -52,6 +52,7 @@ def _goals_with_promotion(agent: str = "a1") -> AgentGoals:
         "promotion": {
             "from": "paper",
             "to": "live_small",
+            "min_days_in_mode": 0,
             "conditions": [
                 {"metric": "n_trades", "window": "30d", "op": ">=", "threshold": 1},
             ],

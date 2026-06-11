@@ -207,6 +207,21 @@ MIGRATIONS: list[str] = [
     );
     CREATE INDEX IF NOT EXISTS idx_maker_orders_agent ON maker_orders(agent, state);
     """,
+    # 4: G0 confirmation stamps — `hlbot confirm --record` writes one row per
+    # run; promotion stages with require_g0 demand a fresh confirmed=1 row.
+    """
+    CREATE TABLE IF NOT EXISTS confirmations (
+        id              INTEGER PRIMARY KEY AUTOINCREMENT,
+        agent           TEXT NOT NULL,
+        ts_ms           INTEGER NOT NULL,
+        dataset         TEXT,                     -- coins/interval/days fingerprint
+        prefer          TEXT,                     -- taker / maker
+        confirmed       INTEGER NOT NULL,
+        oos_edge_bps    REAL,
+        summary         TEXT
+    );
+    CREATE INDEX IF NOT EXISTS idx_confirmations_agent ON confirmations(agent, ts_ms);
+    """,
 ]
 
 
