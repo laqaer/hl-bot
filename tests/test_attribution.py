@@ -63,8 +63,8 @@ def test_funding_goes_to_the_holder(conn):
     assert events == [(T0 + HOUR, pytest.approx(0.50))]
 
 
-def test_funding_split_proportional_by_size(conn):
-    # two agents hold ETH when funding lands -> proportional |size| split
+def test_funding_split_proportional_same_side(conn):
+    # two agents short ETH when funding lands -> proportional split, same sign
     _fill(conn, "xfund_carry_v1", "ETH", "A", 3.0, 2500, T0)
     _fill(conn, "funding_carry_v1", "ETH", "A", 1.0, 2500, T0)
     _funding(conn, "ETH", 1.00, T0 + HOUR)
@@ -72,6 +72,31 @@ def test_funding_split_proportional_by_size(conn):
     attr = attribute_funding(conn)
     assert attr["xfund_carry_v1"] == pytest.approx(0.75)
     assert attr["funding_carry_v1"] == pytest.approx(0.25)
+
+
+def test_funding_split_is_sign_aware_for_opposite_sides(conn):
+    # femr long 2 BTC, xfund short 1 BTC -> account net long 1 pays funding
+    # (usdc = -3). The short side RECEIVES funding: its share must be positive
+    # (+3 for its 1 unit), the long pays its gross (-6), and the shares sum to
+    # the exchange row exactly. An |size|-proportional split would mis-sign
+    # the carry agent's entire revenue line.
+    _fill(conn, "femr_v1", "BTC", "B", 2.0, 60000, T0)
+    _fill(conn, "xfund_carry_v1", "BTC", "A", 1.0, 60000, T0)
+    _funding(conn, "BTC", -3.00, T0 + HOUR)
+
+    attr = attribute_funding(conn)
+    assert attr["femr_v1"] == pytest.approx(-6.0)
+    assert attr["xfund_carry_v1"] == pytest.approx(+3.0)
+    assert sum(attr.values()) == pytest.approx(-3.0)
+
+
+def test_funding_skipped_when_internally_hedged_net_zero(conn):
+    # perfectly offsetting logical positions -> exchange net is 0, the row is
+    # ~0 anyway, and the split denominator is unstable: attribute nothing
+    _fill(conn, "femr_v1", "BTC", "B", 1.0, 60000, T0)
+    _fill(conn, "xfund_carry_v1", "BTC", "A", 1.0, 60000, T0)
+    _funding(conn, "BTC", 0.001, T0 + HOUR)
+    assert attribute_funding(conn) == {}
 
 
 def test_funding_with_no_replayed_holder_stays_unattributed(conn):

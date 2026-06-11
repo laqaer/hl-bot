@@ -14,13 +14,11 @@ track record can never flatter the live numbers.
 from __future__ import annotations
 
 import json
-import math
 import sqlite3
 import time
 from pathlib import Path
 from typing import Any
 
-from ..scoring.attribution import agent_pnl_events, daily_pnl_series
 from ..scoring.metrics import list_agents, score_agent
 
 
@@ -30,35 +28,6 @@ def _account_equity_curve(conn: sqlite3.Connection) -> list[tuple[int, float]]:
         "WHERE account_value > 0 ORDER BY ts_ms ASC"
     ).fetchall()
     return [(int(r[0]), float(r[1])) for r in rows]
-
-
-def _agent_daily_pnl(conn: sqlite3.Connection, agent: str) -> list[float]:
-    # Fills net of fees PLUS the agent's attributed funding share — same inputs
-    # as the live scorecard, so the public record can't disagree with it.
-    return daily_pnl_series(agent_pnl_events(conn, agent))
-
-
-def _daily_sharpe(daily: list[float]) -> float | None:
-    if len(daily) < 3:
-        return None
-    mean = sum(daily) / len(daily)
-    var = sum((x - mean) ** 2 for x in daily) / len(daily)
-    std = math.sqrt(var)
-    return (mean / std * math.sqrt(365)) if std > 0 else None
-
-
-def _dollar_max_drawdown(daily: list[float]) -> float | None:
-    """Largest peak-to-trough dollar drop of the cumulative PnL curve."""
-    if not daily:
-        return None
-    cum = 0.0
-    peak = 0.0
-    max_dd = 0.0
-    for x in daily:
-        cum += x
-        peak = max(peak, cum)
-        max_dd = min(max_dd, cum - peak)
-    return max_dd
 
 
 def build_track_record(
@@ -91,16 +60,18 @@ def build_track_record(
     ]
     per_agent: list[dict[str, Any]] = []
     for a in agents:
+        # Sharpe/DD come straight off the live scorecard (fills + attributed
+        # funding) — one computation, so this export can never disagree with
+        # what the supervisor sees.
         all_sc = score_agent(conn, a, "all")
-        daily = _agent_daily_pnl(conn, a)
         per_agent.append({
             "agent": a,
             "n_trades": all_sc.n_trades,
             "net_pnl": all_sc.net_pnl,
             "edge_bps": all_sc.edge_bps,
             "win_rate": all_sc.win_rate,
-            "sharpe_daily": _daily_sharpe(daily),
-            "max_drawdown_usd": _dollar_max_drawdown(daily),
+            "sharpe_daily": all_sc.sharpe,
+            "max_drawdown_usd": all_sc.max_drawdown_usd,
             "windows": {
                 w: score_agent(conn, a, w).as_dict()  # type: ignore[arg-type]
                 for w in ("24h", "7d", "30d")

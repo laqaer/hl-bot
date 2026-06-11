@@ -117,9 +117,12 @@ def score_agent(conn: sqlite3.Connection, agent: str, window: Window) -> Scoreca
     fees = float(fills["fee"].sum()) if n_trades else 0.0
     if agent == "_account":
         funding = _funding_total(conn, since)
+        funding_events = []
     else:
         # Per-agent share of account funding via fills position replay (C4).
-        funding = float(sum(u for _, u in funding_events_for_agent(conn, agent, since)))
+        # Computed once here; reused below for the agent's equity curve.
+        funding_events = funding_events_for_agent(conn, agent, since)
+        funding = float(sum(u for _, u in funding_events))
     net = realized + funding - fees
 
     # Per-trade win stats (close events only)
@@ -155,13 +158,15 @@ def score_agent(conn: sqlite3.Connection, agent: str, window: Window) -> Scoreca
                 ann_ret = (1 + rets.mean()) ** 365 - 1 if not rets.empty else 0
                 calmar = float(ann_ret / abs(dd)) if dd != 0 else None
     else:
-        events = agent_pnl_events(conn, agent, since)
+        events = agent_pnl_events(conn, agent, since, funding_events=funding_events)
         daily = daily_pnl_series(events)
         if len(daily) >= 3:
             s = pd.Series(daily)
             sharpe = _sharpe(s, 365)
         if events:
-            cum, curve = 0.0, []
+            # Cumulative PnL starts flat at 0 before the first event, so the
+            # baseline point makes an opening loss count as drawdown.
+            cum, curve = 0.0, [(events[0][0], 0.0)]
             for ts, delta in events:
                 cum += delta
                 curve.append((ts, cum))

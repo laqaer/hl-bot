@@ -413,10 +413,11 @@ def place_market_order(
 
 
 def close_position(exchange: Exchange, coin: str, cloid: str | None = None) -> OrderResult:
+    # NO builder field on closes: a misconfigured/unapproved builder makes HL
+    # reject the order, and a flatten must never fail for a monetization knob —
+    # risk reduction is unconditional. Builder attribution is entries-only.
     try:
-        res = _retry(lambda: exchange.market_close(
-            coin=coin, cloid=_as_cloid(cloid), builder=_builder_info(),
-        ))
+        res = _retry(lambda: exchange.market_close(coin=coin, cloid=_as_cloid(cloid)))
     except Exception as e:  # noqa: BLE001
         log.exception("close_position failed")
         return OrderResult(ok=False, status="error", error=str(e))

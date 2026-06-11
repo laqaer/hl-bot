@@ -56,7 +56,7 @@ A minimal hardened unit (sketch) — see `B14a` to codify these in-repo:
 # /etc/systemd/system/hlbot-tick.service
 [Service]
 WorkingDirectory=/opt/hl-bot
-ExecStart=/usr/bin/uv run hlbot femr_tick --live --execution maker
+ExecStart=/usr/bin/uv run hlbot femr_tick --live   # entries route per-agent (auto)
 EnvironmentFile=/etc/hl-bot/env        # HL_ADDRESS, TG_*, HLBOT_DB
 Restart=on-failure
 # /etc/systemd/system/hlbot-tick.timer → OnUnitActiveSec=60
@@ -103,10 +103,10 @@ feeds — premature until a confirmed edge demonstrably wants them.
 
 ## High-speed **execution** — what to invest in
 
-1. **Maker (post-only) execution — already built (B2/B2b), highest ROI.** Earning
-   the spread instead of paying it is worth more than any latency upgrade at this
-   cadence. Run `--execution maker`. Next: book-aware limit pricing (post at the
-   touch / microprice, not just mid).
+1. **Maker (post-only) execution — built, highest ROI.** Earning the spread
+   instead of paying it is worth more than any latency upgrade at this cadence.
+   The default (`--execution auto`) routes carry agents maker, and quotes are
+   priced at the touch from the WS book (`maker_price`), not a stale mid.
 2. **API/agent wallet (done).** Sign with a dedicated API wallet, never the funded
    key; the bot already does this. Keep the env 0600 / in a secrets manager.
 3. **Rate-limit awareness.** HL uses weight-based REST limits and per-address

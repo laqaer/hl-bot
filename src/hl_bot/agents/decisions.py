@@ -12,7 +12,11 @@ import time
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
-Action = Literal["place", "cancel", "hold", "flatten", "error", "rest", "rejected"]
+Action = Literal[
+    "place", "cancel", "hold", "flatten", "error", "rest",
+    "rejected",      # taker order rejected by HL -> counts toward cooldown
+    "maker_reject",  # post-only would have crossed (touch moved) -> audited, NO cooldown
+]
 
 
 @dataclass

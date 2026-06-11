@@ -64,9 +64,11 @@ Keep it ruthlessly prioritized: the top item should always be the highest-levera
 - [x] **B-book — Book-aware maker pricing.** Done: `exec/maker.py::maker_price`
   joins the touch from the WS book (REST-mid fallback); used by the router for
   every maker entry. (Iteration 7.)
-- [x] **B11 — Retire or feed liq_cascade.** Done: the agent only joins the tick
-  roster when HLBOT_WS_SNAPSHOT is configured (the WS trades feed is its only
-  real signal source). (REVIEW C6; iteration 7.)
+- [x] **B11 — Retire or feed liq_cascade.** Resolved: the agent stays on the
+  roster (so its stops/exits keep managing any held position) but is entry-dead
+  by construction without a WS snapshot — its only real liquidation source. The
+  live tick prints an explicit notice when HLBOT_WS_SNAPSHOT is unset.
+  (REVIEW C6; iteration 7.)
 - [x] **B12 — Consolidate execution paths.** Done: all live order routing goes
   through `exec/router.py::execute_decisions` (per-agent maker/taker entries,
   taker exits, gates, fill-confirmed logging) — unit-tested with a fake

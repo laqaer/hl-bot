@@ -106,13 +106,21 @@ def execute_decisions(
                 elif res.ok:  # filled immediately (rare for post-only)
                     if res.avg_px:
                         d.px = res.avg_px
+                    if res.filled_sz:
+                        d.sz = res.filled_sz
                     log_decision(conn, d)
                     outcomes.append(ExecOutcome(d.agent, d.coin, "place", "filled",
                                                 mode, px=d.px, sz=d.sz))
                 else:
-                    # NOTE: deliberately NOT logged as a 'rejected' decision —
-                    # post-only rejects just mean the touch moved, and a
-                    # rejected row would lock the coin into the 1h cooldown.
+                    # Audited under its own action: a post-only reject just
+                    # means the touch moved, so unlike taker 'rejected' it is
+                    # not in coin_in_cooldown's action set — the agent may
+                    # re-quote next tick.
+                    log_decision(conn, Decision(
+                        agent=d.agent, action="maker_reject", coin=d.coin,
+                        side=d.side, sz=d.sz, px=quote_px,
+                        reasoning=f"post-only reject: {res.error}", is_paper=False,
+                    ))
                     outcomes.append(ExecOutcome(d.agent, d.coin, "place", "rejected",
                                                 mode, detail=f"{res.status}: {res.error}"))
                 conn.commit()

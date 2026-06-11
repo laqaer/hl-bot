@@ -26,6 +26,14 @@ from bisect import bisect_right
 _EXCLUDED = ("_account",)
 
 
+# Single-slot timeline cache. Rebuilding timelines scans the whole fills
+# table; score_all/track_record would otherwise do that once per agent per
+# window. conn.total_changes ticks on every row this connection writes (and
+# the app is single-connection per process), so it is a sound invalidation
+# stamp for reads.
+_TIMELINE_CACHE: tuple[int, int, dict] | None = None
+
+
 def position_timelines(
     conn: sqlite3.Connection,
 ) -> dict[str, dict[str, tuple[list[int], list[float]]]]:
@@ -34,7 +42,13 @@ def position_timelines(
     Built from ALL fills (not window-filtered): a position opened before a
     scoring window still collects funding inside it. Buys add size, sells
     subtract; the running sum is the net position the agent's fills imply.
+    Callers must treat the returned (cached) structure as read-only.
     """
+    global _TIMELINE_CACHE
+    if _TIMELINE_CACHE is not None:
+        cid, stamp, cached = _TIMELINE_CACHE
+        if cid == id(conn) and stamp == conn.total_changes:
+            return cached
     rows = conn.execute(
         """SELECT time_ms, coin, side, sz, agent FROM fills
            WHERE agent IS NOT NULL ORDER BY time_ms ASC"""
@@ -49,6 +63,7 @@ def position_timelines(
         prev = sizes[-1] if sizes else 0.0
         times.append(int(r["time_ms"]))
         sizes.append(prev + delta)
+    _TIMELINE_CACHE = (id(conn), conn.total_changes, out)
     return out
 
 
@@ -59,39 +74,58 @@ def _held_at(timeline: tuple[list[int], list[float]], ts_ms: int) -> float:
     return sizes[i - 1] if i > 0 else 0.0
 
 
+def _funding_splits(
+    conn: sqlite3.Connection,
+    since_ms: int | None,
+    timelines: dict[str, dict[str, tuple[list[int], list[float]]]],
+):
+    """Yield (time_ms, agent, usdc_share) for every funding payment.
+
+    The single source of truth for the attribution rule. The exchange pays
+    funding on the account's NET position: ``usdc = -net_szi * px * rate``. So
+    each agent's true share is **signed**: ``usdc * signed_i / net_signed`` —
+    an agent short while another is long receives funding with the opposite
+    sign of the payer (and shares always sum to the account row exactly).
+    A |size|-proportional split would mis-sign the hedged side, corrupting
+    precisely the carry agents whose whole edge is collecting funding.
+
+    Rows with no replayed position (e.g. predating fill history) or a ~zero
+    net (internally hedged book: the exchange row is ~0 anyway and the
+    denominator is unstable) yield nothing — per-agent numbers never
+    overclaim, and the account-level total stays exact via ``_account``'s
+    direct sum.
+    """
+    q = "SELECT time_ms, coin, usdc FROM funding_payments"
+    params: list = []
+    if since_ms is not None:
+        q += " WHERE time_ms >= ?"
+        params.append(since_ms)
+    for r in conn.execute(q, params):
+        by_agent = timelines.get(r["coin"])
+        if not by_agent:
+            continue
+        ts = int(r["time_ms"])
+        held = {a: _held_at(tl, ts) for a, tl in by_agent.items()}
+        net = sum(held.values())
+        if abs(net) <= 1e-9:
+            continue
+        usdc = float(r["usdc"] or 0)
+        for agent, sz in held.items():
+            if abs(sz) > 1e-12:
+                yield ts, agent, usdc * sz / net
+
+
 def attribute_funding(
     conn: sqlite3.Connection,
     since_ms: int | None = None,
     *,
     timelines: dict[str, dict[str, tuple[list[int], list[float]]]] | None = None,
 ) -> dict[str, float]:
-    """agent -> attributed funding USDC over the window (+received, -paid).
-
-    Each ``funding_payments`` row goes to the agent(s) whose fill-replayed
-    position in that coin was non-zero at payment time, split proportionally by
-    |size|. Rows no replayed position explains (e.g. positions predating fill
-    history) are left unattributed — the account-level total stays exact via
-    ``_account``'s direct sum, and per-agent numbers never overclaim.
-    """
+    """agent -> attributed funding USDC over the window (+received, -paid)."""
     timelines = timelines if timelines is not None else position_timelines(conn)
-    q = "SELECT time_ms, coin, usdc FROM funding_payments"
-    params: list = []
-    if since_ms is not None:
-        q += " WHERE time_ms >= ?"
-        params.append(since_ms)
     out: dict[str, float] = {}
-    for r in conn.execute(q, params):
-        by_agent = timelines.get(r["coin"])
-        if not by_agent:
-            continue
-        held = {a: _held_at(tl, int(r["time_ms"])) for a, tl in by_agent.items()}
-        total = sum(abs(s) for s in held.values() if abs(s) > 1e-12)
-        if total <= 1e-12:
-            continue
-        usdc = float(r["usdc"] or 0)
-        for agent, sz in held.items():
-            if abs(sz) > 1e-12:
-                out[agent] = out.get(agent, 0.0) + usdc * abs(sz) / total
+    for _, agent, share in _funding_splits(conn, since_ms, timelines):
+        out[agent] = out.get(agent, 0.0) + share
     return out
 
 
@@ -105,36 +139,28 @@ def funding_events_for_agent(
     """(time_ms, usdc_share) funding events attributed to ``agent`` — the
     inputs an agent's equity curve needs alongside its fills."""
     timelines = timelines if timelines is not None else position_timelines(conn)
-    q = "SELECT time_ms, coin, usdc FROM funding_payments"
-    params: list = []
-    if since_ms is not None:
-        q += " WHERE time_ms >= ?"
-        params.append(since_ms)
-    events: list[tuple[int, float]] = []
-    for r in conn.execute(q, params):
-        by_agent = timelines.get(r["coin"])
-        if not by_agent or agent not in by_agent:
-            continue
-        ts = int(r["time_ms"])
-        mine = abs(_held_at(by_agent[agent], ts))
-        if mine <= 1e-12:
-            continue
-        total = sum(
-            abs(_held_at(tl, ts)) for tl in by_agent.values()
-        )
-        if total > 1e-12:
-            events.append((ts, float(r["usdc"] or 0) * mine / total))
-    return events
+    return [
+        (ts, share)
+        for ts, a, share in _funding_splits(conn, since_ms, timelines)
+        if a == agent
+    ]
 
 
 def agent_pnl_events(
     conn: sqlite3.Connection,
     agent: str,
     since_ms: int | None = None,
+    *,
+    funding_events: list[tuple[int, float]] | None = None,
 ) -> list[tuple[int, float]]:
     """Merged (time_ms, net_pnl_delta) events for one agent: fill PnL net of
     fees plus attributed funding. Cumulative sum of these is the agent's
-    equity curve (starting at 0)."""
+    equity curve (baseline 0 before the first event).
+
+    Pass ``funding_events`` when the caller already computed them (e.g.
+    ``score_agent`` needs the funding sum anyway) to avoid replaying the
+    fills timeline twice.
+    """
     q = (
         "SELECT time_ms, COALESCE(closed_pnl,0) - COALESCE(fee,0) AS net "
         "FROM fills WHERE agent = ?"
@@ -144,7 +170,11 @@ def agent_pnl_events(
         q += " AND time_ms >= ?"
         params.append(since_ms)
     events = [(int(r["time_ms"]), float(r["net"])) for r in conn.execute(q, params)]
-    events.extend(funding_events_for_agent(conn, agent, since_ms))
+    events.extend(
+        funding_events
+        if funding_events is not None
+        else funding_events_for_agent(conn, agent, since_ms)
+    )
     events.sort(key=lambda e: e[0])
     return events
 

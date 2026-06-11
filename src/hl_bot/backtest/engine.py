@@ -36,7 +36,7 @@ from dataclasses import dataclass, field
 from ..agents.base import Agent, MarketView
 from ..agents.decisions import Decision, log_decision
 from ..db.schema import init_db
-from ..scoring.curves import curve_stats as _curve_stats
+from ..scoring.curves import curve_stats
 from ..scoring.metrics import Scorecard, score_agent
 
 # ---------------------------------------------------------------------------
@@ -369,7 +369,7 @@ class Backtester:
                         ), last)
 
         scorecard = score_agent(self.conn, agent.name, "all")
-        sharpe, dd, calmar = _curve_stats(equity_curve)
+        sharpe, dd, calmar = curve_stats(equity_curve)
         return BacktestResult(
             agent=agent.name,
             scorecard=scorecard,
@@ -383,6 +383,5 @@ class Backtester:
         )
 
 
-# _curve_stats now lives in scoring.curves (curve_stats) so live per-agent
-# scoring uses the exact same math; the import above keeps this module's
-# public name stable for existing callers.
+# The equity-curve math lives in scoring.curves (curve_stats) so live
+# per-agent scoring uses the exact same code as the backtester.

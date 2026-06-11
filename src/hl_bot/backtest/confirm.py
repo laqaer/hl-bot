@@ -23,7 +23,8 @@ from dataclasses import dataclass, field
 
 from ..agents.base import Agent
 from ..db.schema import init_db
-from .engine import Backtester, CostModel, Frame, _curve_stats
+from ..scoring.curves import curve_stats
+from .engine import Backtester, CostModel, Frame
 
 AgentFactory = Callable[[object], Agent]   # conn -> Agent
 
@@ -77,7 +78,7 @@ def _run(
     conn = init_db(":memory:")
     bt = Backtester(cost, conn=conn, starting_capital=starting_capital)
     res = bt.run(factory(conn), frames)
-    sharpe, _, _ = _curve_stats(res.equity_curve, periods_per_year=periods_per_year)
+    sharpe, _, _ = curve_stats(res.equity_curve, periods_per_year=periods_per_year)
     sc = res.scorecard
     return ScenarioResult(name=name, net_pnl=sc.net_pnl, edge_bps=sc.edge_bps,
                           sharpe=sharpe, n_trades=sc.n_trades)

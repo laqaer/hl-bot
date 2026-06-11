@@ -145,9 +145,9 @@ def test_second_maker_quote_on_same_coin_is_skipped(conn):
     out1 = execute_decisions(conn, ex, [d1], exec_modes={"xfund_carry_v1": "maker"},
                              entries_allowed=True)
     assert out1[0].status == "resting"
-    # next tick proposes BTC again while the quote is still working — but the
-    # rest row puts the coin in cooldown AND keeps a working quote; both gates
-    # independently block stacking a duplicate order
+    # next tick proposes BTC again while the quote is still working — the
+    # working-quote gate blocks stacking a duplicate order ('rest' rows are
+    # deliberately not in coin_in_cooldown's action set)
     d2 = _place("xfund_carry_v1", "BTC", cloid="0x" + "22" * 16)
     out2 = execute_decisions(conn, ex, [d2], exec_modes={"xfund_carry_v1": "maker"},
                              entries_allowed=True)
@@ -168,19 +168,24 @@ def test_guardrail_blocks_entries_but_not_exits(conn):
     assert ex.close_calls == [{"coin": "ETH"}]
 
 
-def test_taker_reject_logs_rejected_but_maker_reject_does_not(conn):
-    # taker reject -> 'rejected' row (cooldown); maker post-only reject is just
-    # "the touch moved" and must NOT lock the coin into cooldown
+def test_taker_reject_cools_down_but_maker_reject_only_audits(conn):
+    from hl_bot.exec.orders import coin_in_cooldown
+
+    # taker reject -> 'rejected' row, coin enters cooldown
     ex_t = FakeExchange(market_res=_rejected("oops"))
     execute_decisions(conn, ex_t, [_place("twap_mr_v1", "BTC")],
                       exec_modes={"twap_mr_v1": "taker"}, entries_allowed=True)
+    assert coin_in_cooldown(conn, "BTC", agent="twap_mr_v1")
+    # maker post-only reject ("the touch moved") -> audited under its own
+    # action, but the agent may re-quote next tick (no cooldown)
     ex_m = FakeExchange(limit_res=_rejected())
     execute_decisions(conn, ex_m, [_place("xfund_carry_v1", "ETH")],
                       exec_modes={"xfund_carry_v1": "maker"}, entries_allowed=True)
-    rows = conn.execute(
-        "SELECT agent, action FROM agent_decisions WHERE action='rejected'"
-    ).fetchall()
-    assert [(r["agent"], r["action"]) for r in rows] == [("twap_mr_v1", "rejected")]
+    row = conn.execute(
+        "SELECT action FROM agent_decisions WHERE agent='xfund_carry_v1' AND coin='ETH'"
+    ).fetchone()
+    assert row["action"] == "maker_reject"
+    assert not coin_in_cooldown(conn, "ETH", agent="xfund_carry_v1")
 
 
 def test_agents_off_roster_are_ignored(conn):

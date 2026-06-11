@@ -436,12 +436,14 @@ def femr_tick(live: bool = False, execution: str = "auto"):
         FundingCarryAgent(config=_cfg("funding_carry_v1", {}), conn=conn),
         XFundCarryAgent(config=_cfg("xfund_carry_v1", {}), conn=conn),
         BasisAgent(config=_cfg("basis_v1", {}), conn=conn),
+        # liq_cascade is entry-dead without a WS snapshot (its only real signal
+        # source — REVIEW C6) but MUST stay on the roster: its stop/max-hold
+        # exits and position reconciliation manage anything it already holds.
+        LiqCascadeAgent(config=_cfg("liq_cascade_v1", {}), conn=conn),
     ]
-    # liq_cascade is fed only by the WS trades feed (the REST "liquidations"
-    # endpoint doesn't exist — REVIEW C6); without a WS snapshot it can never
-    # see a signal, so it only joins the roster when one is configured.
-    if ws_path:
-        agents.append(LiqCascadeAgent(config=_cfg("liq_cascade_v1", {}), conn=conn))
+    if live and not ws_path:
+        console.print("[dim]liq_cascade_v1: no HLBOT_WS_SNAPSHOT — no liquidation "
+                      "signal, entries impossible (exits still managed)[/dim]")
     if live:
         agents, skipped_live = _filter_live_agents_by_state(conn, agents)
         if skipped_live:
@@ -617,21 +619,18 @@ def femr_tick(live: bool = False, execution: str = "auto"):
         console.print(f"[green]guardrails[/green]: {why}")
 
     # Maker execution prep: refresh fills, promote filled resting orders to owned,
-    # cancel stale quotes. Maker entries below then rest post-only instead of crossing.
-    if any(m == "maker" for m in exec_modes.values()):
-        from ..exec.maker import (
-            log_cancel,
-            reconcile_maker_fills,
-            stale_working,
-            working_orders,
-        )
+    # cancel stale quotes. Runs when any agent quotes maker this tick OR any
+    # agent still has a working quote from a previous tick — flipping an agent
+    # (or the whole tick) to taker must never orphan a live resting order.
+    from ..exec.maker import working_orders
+    working_by_agent = {a.name: working_orders(conn, a.name) for a in agents}
+    if any(m == "maker" for m in exec_modes.values()) or any(working_by_agent.values()):
+        from ..exec.maker import log_cancel, reconcile_maker_fills, stale_working
         from ..exec.orders import cancel_order
         from ..ingest.hyperliquid import ingest_fills
         ingest_fills(conn, s.hl_address, s.hl_api_url)  # so cloid fills are visible
         for a in agents:
-            if exec_modes.get(a.name) != "maker":
-                continue
-            working = working_orders(conn, a.name)
+            working = working_by_agent[a.name]
             got = reconcile_maker_fills(conn, a.name, working)
             for o in stale_working(working):
                 if o["coin"] in got or o.get("oid") is None:
@@ -757,8 +756,8 @@ def backtest(
                         starting_capital=starting_capital)
         res = bt.run(factories[agent](conn), frames)
         # recompute curve stats at the right cadence
-        from ..backtest.engine import _curve_stats
-        sh, dd, _ = _curve_stats(res.equity_curve, periods_per_year=per_year)
+        from ..scoring.curves import curve_stats
+        sh, dd, _ = curve_stats(res.equity_curve, periods_per_year=per_year)
         sc = res.scorecard
         table.add_row(
             "maker" if is_maker else "taker",
