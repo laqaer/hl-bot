@@ -125,7 +125,7 @@ def supervisor(configs: Path = CONFIG_DIR):
 
 
 @app.command()
-def kill(reason: str = "manual kill"):
+def kill(reason: str = typer.Argument("manual kill")):
     """Trip the kill switch: halt all NEW orders and promotions until `hlbot resume`.
 
     Flatten/cancel (risk reduction) stays allowed. Sticky across restarts."""
