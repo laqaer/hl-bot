@@ -117,11 +117,19 @@ discipline that keeps Path A from becoming Path B by accident.
   optimize for the best risk-adjusted return per deployed dollar so any capital
   that *does* arrive compounds safely.
 
-## 6. Current status (2026-06-08, iteration 0)
+## 6. Current status (2026-06-09)
 
-- Backtest harness: **built** (`src/hl_bot/backtest/`, `hlbot backtest`).
-- CI: **green** (ruff fixed, 47 tests pass).
-- Edge: **not yet found** — agents bleed after costs; quantifying the taker tax
-  with the new harness is the immediate next step (needs network to HL history,
-  which is blocked in this sandbox — see backlog item B1).
-- Capital: small (guardrail floor ~$40). **The dominant variable for the goal.**
+- Backtest harness, confirmation gate (`hlbot confirm`), maker execution, WS feed,
+  ops/health, 24/7 AWS deploy, and the self-improvement loop: **all built and live.**
+- **Edge: one small but real edge found.** `twap_mr_v1` shows **+29.5 bps, ~7.9
+  daily-Sharpe, +$159 over 556 live trades** on the account — genuine, tiny in dollars.
+  Carry strategies (`xfund_carry_v1`, `funding_carry_v1`) await real-data confirmation
+  (`hlbot confirm`).
+- **Deployed:** live on AWS (On-Demand), trading `twap_mr_v1` as a maker, guardrailed,
+  self-improving (loop → auto-deploy). The biggest past drag was **manual hand-trading
+  (−$8.5k)**, now being stopped + isolated.
+- **Capital: the dominant variable.** Plan is ~$10k personal to *prove* the edge, then
+  raise via a Hyperliquid **vault (AUM)** + a **prop/funded** account, gated on a
+  60–90d track record. Realistic year-end: **~$350k–$700k under management**; $1M most
+  likely H1-2027. **See [`CAPITAL.md`](CAPITAL.md) for the full capital playbook.**
+

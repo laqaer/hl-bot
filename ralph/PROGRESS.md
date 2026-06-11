@@ -1002,3 +1002,29 @@ alts — likely the real reason price variance buries the carry; needs rolling-b
 sizing, available in backtest via the `closes` series), or (c) a lower cadence
 (4h/1d) where funding accrual outweighs per-bar price noise. Then resume B12
 consolidation.
+
+---
+
+## Iteration 24 — 2026-06-09 — strategic replan: capital formation
+
+**Context.** Bot live + profitable on twap_mr_v1 (+29.5bps, ~7.9 Sharpe). The loop's
+B1/B4-RUN (iters 20–23) confirmed carry strategies on REAL history and **pruned them**
+(no durable edge — xfund/funding carry + the hold-while-eligible lever all failed the
+gate). So twap_mr_v1 remains the one proven engine. User can commit ~$10k personal and
+wants vault-AUM + prop-funded + a moonshot, treating "$1M by year-end" as a direction.
+
+**Changed (docs/planning).**
+- **docs/CAPITAL.md** — capital-formation playbook: required-monthly-return math
+  (capital is the lever), HL vault economics (10% share / ≥5% leader TVL / API-compatible,
+  fees to verify), prop firms (Hypernova/Propr/Velotrade), SMA bar, moonshot sleeve, and
+  sequencing (lead with vault, prop parallel, moonshot tiny).
+- **docs/ROADMAP_TO_1M.md** — status refresh (twap_mr_v1 proven; carry pruned; deployed
+  live; realistic ~$350k–$700k year-end; $1M ~H1-2027; pointer to CAPITAL.md).
+- **ralph/BACKLOG.md** — P0.5 (scale twap_mr_v1, widen universe, track-record chart) +
+  P3 capital items (B16 researched, B16b vault launch, B-PROP eval prep, B17 moonshot).
+
+**The plan in one line.** Build a 60–90d on-chain track record (Sharpe>1.5, DD<10%) →
+unlock vault AUM + prop funding; capital, not heroic returns, is the path to $1M.
+
+**What's next (loop).** Scale twap_mr_v1 with the risk machinery; keep hunting new edge
+(carry is pruned); B15c track-record chart for vault/SMA pitching.

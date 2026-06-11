@@ -154,15 +154,34 @@ Keep it ruthlessly prioritized: the top item should always be the highest-levera
 - [ ] **B14a — Deploy automation.** Codify the EC2/systemd/Hermes cron + DB sync
   (without secrets) so the live loop is reproducible from the repo.
 
-## P3 — capital formation (Path C)
+## P0.5 — prove the edge at scale (now that twap_mr_v1 is live + profitable)
+
+- [ ] **B-SCALE — Scale twap_mr_v1 as it earns.** Let the 5×/1× risk rule +
+  MetaAllocator grow size at each gate; bump caps deliberately, never to chase losses.
+  This builds the track record on meaningful size.
+- [ ] **B4-RUN — Confirm carry strategies on real history.** `hlbot confirm --agent
+  xfund_carry_v1 --prefer maker` (and funding_carry_v1) on the live box; promote any
+  that pass G0 into the live roster.
+- [ ] **B-UNIV — Widen the carry universe** to 50–100 coins so cross-sectional carry
+  has more to rank (config + universe fetch).
+- [ ] **B15c — Track-record CHART export.** Extend `reports/track_record.py` to emit a
+  shareable equity-curve chart (PNG/HTML) for vault/SMA pitching.
+
+## P3 — capital formation (see docs/CAPITAL.md)
 
 - [x] **B15 — Public-grade track-record export.** Done: `reports/track_record.py`
-  + `hlbot track-record` → track_record.{json,md} (equity curve, Sharpe/DD/edge,
-  per-agent). Chart export still TODO. (Iteration 2.)
-- [ ] **B16 — Hyperliquid vault evaluation.** Spike: requirements, fees, risk of
-  running an HL vault; gate behind a real track record (G3).
-- [ ] **B17 — Moonshot sleeve spec.** Design the ring-fenced, loss-bounded Path B
-  sleeve (separate sub-account, hard cap, defined max loss). Spec only; no live.
+  + `hlbot track-record` → track_record.{json,md}. Chart export = B15c above.
+- [x] **B16 — Hyperliquid vault evaluation.** Researched (docs/CAPITAL.md): ~10%
+  profit share, ≥5% leader TVL, ~1d depositor lockup, API-wallet-compatible. **Verify
+  creation fee in current HL docs before launch.** Gate behind G3 track record.
+- [ ] **B16b — Vault launch checklist + bot retargeting.** Steps to point
+  `HL_TRADER_ADDRESS` at a vault sub-account once G3 is met.
+- [ ] **B-PROP — Prop/funded eval prep.** Checklist for Hypernova/Propr/Velotrade
+  (HL-native, API-friendly); run the same guardrailed strategy through an eval for
+  additive $100–200k. (docs/CAPITAL.md Track B.)
+- [ ] **B17 — Moonshot sleeve spec.** Design the ring-fenced, loss-bounded sleeve
+  (separate sub-account, hard cap, defined max loss). Spec only; no live. (CAPITAL.md
+  Track D.)
 
 ## Done
 
