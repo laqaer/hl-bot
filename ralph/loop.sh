@@ -24,7 +24,7 @@ ROOT="$(pwd)"
 ITERS="${RALPH_ITERS:-25}"
 PUSH="${RALPH_PUSH:-0}"
 CLAUDE_BIN="${CLAUDE_BIN:-claude}"
-CLAUDE_MODEL="${CLAUDE_MODEL:-claude-opus-4-8}"
+CLAUDE_MODEL="${CLAUDE_MODEL:-claude-fable-5}"
 # Non-interactive by default. Review before granting broader autonomy.
 CLAUDE_FLAGS="${CLAUDE_FLAGS:---permission-mode acceptEdits}"
 BRANCH="$(git rev-parse --abbrev-ref HEAD)"

@@ -17,6 +17,7 @@ EnvironmentFile=-/etc/hl-bot/loop.env
 Environment=RALPH_ITERS=100000
 Environment=RALPH_PUSH=1
 Environment=CLAUDE_USE_OAUTH=1
+Environment=CLAUDE_MODEL=claude-fable-5
 Environment=CLAUDE_BIN=/home/hlbot/.local/bin/claude
 Environment="CLAUDE_FLAGS=--dangerously-skip-permissions --effort xhigh"
 Environment=PATH=/home/hlbot/.local/bin:/usr/local/bin:/usr/bin:/bin
