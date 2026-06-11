@@ -158,7 +158,9 @@ def test_beta_neutral_shrinks_high_beta_leg_relative_to_low_beta():
         return {d.coin: d.sz * d.px for d in out if d.action == "place"}
 
     plain = _notionals({})
-    assert abs(plain["HIGH"] - plain["LOW"]) < 1e-6  # dollar-neutral: equal
+    # Dollar-neutral: equal up to the agent's 5-decimal size rounding (sz=round(ntl/px,5)),
+    # so the per-leg notional can differ by ~px*1e-5; 1e-2 comfortably covers that.
+    assert abs(plain["HIGH"] - plain["LOW"]) < 1e-2  # dollar-neutral: equal (within size rounding)
 
     bn = _notionals({"beta_neutral": True, "beta_floor": 0.5})
     # high-beta short shrunk to ~floor/2 of base; low-beta long stays at base.
