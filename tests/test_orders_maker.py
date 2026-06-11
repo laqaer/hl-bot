@@ -25,6 +25,28 @@ def test_round_price_to(px, sz_dec, expected):
     assert round_price_to(px, sz_dec) == pytest.approx(expected)
 
 
+@pytest.mark.parametrize("px,sz_dec,direction,expected", [
+    # The crossing scenario: bid 12.3456 / ask 12.3458, 3 decimals allowed.
+    # Nearest would quote a buy at 12.346 (> ask -> Alo reject); floor rests.
+    (12.3456, 3, "down", 12.345),
+    (12.3456, 3, "up", 12.346),
+    (64000.7, 5, "down", 64000.0),   # integer-tick book: buy floors
+    (64000.2, 5, "up", 64001.0),     # sell ceils
+    (0.0123456, 0, "down", 0.012345),
+    (0.0123451, 0, "up", 0.012346),
+    (12.346, 3, "down", 12.346),     # on-tick price unchanged (float repr snap)
+    (12.346, 3, "up", 12.346),
+])
+def test_round_price_to_side_aware(px, sz_dec, direction, expected):
+    assert round_price_to(px, sz_dec, direction=direction) == pytest.approx(expected)
+
+
+def test_buy_quote_rounding_never_crosses_tight_spread():
+    # rounding a buy at the bid must never produce a price above the ask
+    bid, ask = 12.3456, 12.3458
+    assert round_price_to(bid, 3, direction="down") <= ask
+
+
 class _FakeInfo:
     def meta(self):
         return {"universe": [{"name": "TST", "szDecimals": 2}]}
@@ -50,7 +72,7 @@ def test_place_limit_order_is_post_only_and_rounded():
     call = ex.calls[0]
     assert call["order_type"] == {"limit": {"tif": "Alo"}}
     assert call["is_buy"] is True
-    assert call["limit_px"] == pytest.approx(1.2346)   # tick-rounded
+    assert call["limit_px"] == pytest.approx(1.2345)   # tick-rounded DOWN (buy never crosses)
     assert call["sz"] == pytest.approx(12.34)          # szDecimals=2 floor
 
 

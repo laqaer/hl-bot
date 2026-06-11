@@ -38,6 +38,8 @@ class FundingCarryConfig:
 
 
 class FundingCarryAgent(Agent):
+    default_execution = "maker"  # the whole point: collect carry, don't pay spread
+
     def __init__(
         self,
         name: str = "funding_carry_v1",

@@ -308,6 +308,28 @@ def _as_cloid(cloid: str | None) -> Cloid | None:
     return Cloid.from_str(cloid) if cloid else None
 
 
+def _builder_info() -> dict | None:
+    """Optional Hyperliquid builder-code attribution for orders we route.
+
+    Off by default. Set HL_BUILDER_ADDRESS (the registered builder wallet) and
+    HL_BUILDER_FEE_TENTH_BPS (fee in tenths of a basis point, e.g. 10 = 1 bp)
+    to attach a builder fee to orders — only meaningful when routing flow for
+    users who approved the builder via ApproveBuilderFee (docs/MONETIZATION.md).
+    Never enable for the bot's own self-traded flow: you'd be paying yourself
+    a fee minus the protocol's cut.
+    """
+    addr = os.environ.get("HL_BUILDER_ADDRESS", "").strip()
+    if not addr:
+        return None
+    try:
+        fee = int(os.environ.get("HL_BUILDER_FEE_TENTH_BPS", "0"))
+    except ValueError:
+        return None
+    if fee <= 0:
+        return None
+    return {"b": addr, "f": fee}
+
+
 def _parse_response(res: dict) -> OrderResult:
     """Extract real fill state from HL response.
 
@@ -382,6 +404,7 @@ def place_market_order(
         res = _retry(lambda: exchange.market_open(
             name=coin, is_buy=is_buy, sz=rounded_sz,
             slippage=slippage_pct, cloid=_as_cloid(cloid),
+            builder=_builder_info(),
         ))
     except Exception as e:  # noqa: BLE001
         log.exception("place_market_order failed")
@@ -390,6 +413,9 @@ def place_market_order(
 
 
 def close_position(exchange: Exchange, coin: str, cloid: str | None = None) -> OrderResult:
+    # NO builder field on closes: a misconfigured/unapproved builder makes HL
+    # reject the order, and a flatten must never fail for a monetization knob —
+    # risk reduction is unconditional. Builder attribution is entries-only.
     try:
         res = _retry(lambda: exchange.market_close(coin=coin, cloid=_as_cloid(cloid)))
     except Exception as e:  # noqa: BLE001
@@ -410,13 +436,21 @@ def close_position(exchange: Exchange, coin: str, cloid: str | None = None) -> O
 # market path stays the default until that async handling lands.
 
 
-def round_price_to(px: float, sz_decimals: int, max_decimals: int = 6) -> float:
+def round_price_to(
+    px: float, sz_decimals: int, max_decimals: int = 6, *, direction: str = "nearest"
+) -> float:
     """Round a price to Hyperliquid's tick rules.
 
     HL accepts prices with at most 5 significant figures AND at most
     ``max_decimals - sz_decimals`` decimal places (max_decimals is 6 for perps,
     8 for spot); integer prices are always valid. Returns ``px`` unchanged for
     non-positive input.
+
+    ``direction`` controls which way an off-tick price moves: "down" (floor)
+    for buy quotes and "up" (ceil) for sell quotes, so rounding can never push
+    a post-only order through the spread on a book tighter than the tick
+    (nearest-rounding a buy at bid 12.3456 to 12.346 crosses a 12.3458 ask
+    and gets the Alo order rejected). Default "nearest" suits display/taker.
     """
     if px <= 0:
         return px
@@ -427,17 +461,26 @@ def round_price_to(px: float, sz_decimals: int, max_decimals: int = 6) -> float:
     else:
         dec_for_sig = sig + (-math.floor(math.log10(px)) - 1)
     decimals = max(0, min(dec_for_sig, max_decimals - sz_decimals))
-    return round(px, decimals)
+    if direction == "nearest":
+        return round(px, decimals)
+    scale = 10.0 ** decimals
+    # Snap float-representation error (12.346*1000 -> 12345.999…) to the
+    # intended tick before flooring/ceiling, else "down" overshoots a tick.
+    ticks = round(px * scale, 6)
+    ticks = math.floor(ticks) if direction == "down" else math.ceil(ticks)
+    return ticks / scale
 
 
-def _round_price(exchange: Exchange, coin: str, px: float) -> float:
+def _round_price(
+    exchange: Exchange, coin: str, px: float, *, direction: str = "nearest"
+) -> float:
     if coin not in _SZ_DECIMALS_CACHE:
         meta = _retry(lambda: exchange.info.meta()) or {}
         for asset in meta.get("universe", []) or []:
             name = asset.get("name")
             if name:
                 _SZ_DECIMALS_CACHE[str(name)] = int(asset.get("szDecimals", 5) or 0)
-    return round_price_to(px, _SZ_DECIMALS_CACHE.get(coin, 5))
+    return round_price_to(px, _SZ_DECIMALS_CACHE.get(coin, 5), direction=direction)
 
 
 def place_limit_order(
@@ -456,7 +499,9 @@ def place_limit_order(
     rounded_sz = _round_order_size(exchange, coin, sz)
     if rounded_sz <= 0:
         return OrderResult(ok=False, status="error", error=f"rounded size is zero: requested {sz}")
-    rounded_px = _round_price(exchange, coin, limit_px)
+    # Side-aware tick rounding: floor buys / ceil sells so rounding alone can
+    # never cross the spread and bounce a post-only order.
+    rounded_px = _round_price(exchange, coin, limit_px, direction="down" if is_buy else "up")
     if rounded_px <= 0:
         return OrderResult(ok=False, status="error", error=f"bad limit px: {limit_px}")
     tif = "Alo" if post_only else "Gtc"
@@ -465,6 +510,7 @@ def place_limit_order(
             name=coin, is_buy=is_buy, sz=rounded_sz, limit_px=rounded_px,
             order_type={"limit": {"tif": tif}},
             reduce_only=reduce_only, cloid=_as_cloid(cloid),
+            builder=_builder_info(),
         ))
     except Exception as e:  # noqa: BLE001
         log.exception("place_limit_order failed")

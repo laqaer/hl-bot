@@ -47,7 +47,7 @@ each tick's `hlbot health` pings it when healthy, so a missed ping pages you;
    `sudo -u hlbot bash -c 'cd /opt/hl-bot && uv run hlbot backtest-fetch ... && uv run hlbot confirm --agent <a> --prefer maker'`
 2. Place the API wallet at `~hlbot/.config/hermes/hl-bot-api-wallet.env` (chmod 600).
 3. Enable the agent to `live_small` in `agent_state` (see `docs/GO_LIVE.md`).
-4. Set `HLBOT_TICK_ARGS="--live --execution maker"` in `/etc/hl-bot/env`, then
+4. Set `HLBOT_TICK_ARGS="--live"` in `/etc/hl-bot/env`, then
    `systemctl restart hlbot-tick.timer`. Watch the first ticks closely.
 
 ## Kill switch

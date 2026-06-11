@@ -28,6 +28,13 @@ class MarketView:
 class Agent(abc.ABC):
     name: str
 
+    # How this strategy's live ENTRIES should execute by default:
+    # "maker" (post-only, earns the spread — patient carry/passive strategies)
+    # or "taker" (market order, pays the spread — urgency-driven strategies).
+    # Exits always stay taker for risk reduction. Per-agent override via the
+    # "execution" key in agent config / agent_overrides.json; see femr_tick.
+    default_execution: str = "taker"
+
     def __init__(self, name: str, config: dict[str, Any] | None = None) -> None:
         self.name = name
         self.config = config or {}
@@ -36,3 +43,8 @@ class Agent(abc.ABC):
     def decide(self, view: MarketView) -> list[Decision]:
         """Return zero or more decisions for this tick."""
         ...
+
+    def execution_mode(self) -> str:
+        """Resolved entry execution for this agent: config override or default."""
+        mode = str(self.config.get("execution", self.default_execution)).lower()
+        return mode if mode in ("maker", "taker") else self.default_execution

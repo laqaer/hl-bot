@@ -41,17 +41,19 @@ Keep it ruthlessly prioritized: the top item should always be the highest-levera
 
 ## P1 — honest measurement (so the supervisor can trust itself)
 
-- [ ] **B6 — Per-agent funding attribution.** Map `funding_payments` to the agent
-  holding the position at funding time (via cloid→position replay), so
-  `scoring.metrics` includes funding in each agent's net. (REVIEW C4.)
-- [ ] **B7 — Per-agent equity curves + Sharpe/DD.** Reuse the backtest
-  equity-curve math (`engine._curve_stats`) to compute per-agent Sharpe/maxDD
-  from fills, so `funding_arb_v1.yaml`'s sharpe gate can actually evaluate.
-  Then standardize all goal configs. (REVIEW C5.)
+- [x] **B6 — Per-agent funding attribution.** Done: `scoring/attribution.py`
+  replays fills into position timelines and attributes each funding payment to
+  the holder (proportional split); wired into `score_agent` so funding is in
+  each agent's net. (REVIEW C4; iteration 7.)
+- [x] **B7 — Per-agent equity curves + Sharpe/DD.** Done: per-agent Sharpe from
+  daily net PnL (fills + attributed funding) and `max_drawdown_usd` on every
+  Scorecard; curve math shared via `scoring/curves.py` (backtester imports the
+  same code). (REVIEW C5; iteration 7.)
 - [x] **B8 — Record actual fill price.** Done: `femr_tick` now logs the confirmed
   `res.avg_px`/`res.filled_sz` on fill so stops/TPs key off the real entry. (M1.)
-- [ ] **B9 — fills→positions replay.** Populate the unused `positions` table from
-  fills so attribution survives partial fills/manual interference. (REVIEW M2.)
+- [x] **B9 — fills→positions replay.** Done:
+  `attribution.replay_positions_table` rebuilds `positions` from fills
+  (add/reduce/flip), runs on every `hlbot ingest`. (REVIEW M2; iteration 7.)
 
 ## P2 — cadence, structure, devops
 
@@ -59,12 +61,18 @@ Keep it ruthlessly prioritized: the top item should always be the highest-levera
   `hlbot ws` service writes a snapshot; live tick overlays it (HLBOT_WS_SNAPSHOT)
   for sub-second mids, L2 book_top, and a real liquidations feed (fixes C6), with
   REST fallback. Next: userFills WS for instant maker-fill detection. (Iteration 5.)
-- [ ] **B-book — Book-aware maker pricing.** Post at touch/microprice using L2
-  depth (needs B10) instead of mid; raises maker fill rate.
-- [ ] **B11 — Retire or feed liq_cascade.** Source real liquidation data (WS
-  trades liquidation flag) or disable the agent until it can be fed. (REVIEW C6.)
-- [ ] **B12 — Consolidate execution paths.** `runtime.run_tick` vs `femr_tick`
-  duplicate logic; unify so the safe wrapper is what live uses. (REVIEW M3.)
+- [x] **B-book — Book-aware maker pricing.** Done: `exec/maker.py::maker_price`
+  joins the touch from the WS book (REST-mid fallback); used by the router for
+  every maker entry. (Iteration 7.)
+- [x] **B11 — Retire or feed liq_cascade.** Resolved: the agent stays on the
+  roster (so its stops/exits keep managing any held position) but is entry-dead
+  by construction without a WS snapshot — its only real liquidation source. The
+  live tick prints an explicit notice when HLBOT_WS_SNAPSHOT is unset.
+  (REVIEW C6; iteration 7.)
+- [x] **B12 — Consolidate execution paths.** Done: all live order routing goes
+  through `exec/router.py::execute_decisions` (per-agent maker/taker entries,
+  taker exits, gates, fill-confirmed logging) — unit-tested with a fake
+  exchange. (REVIEW M3; iteration 7.)
 - [ ] **B13 — Move hardcoded trader address to config.** (REVIEW M6.)
 - [x] **B14 — Go-live runbook in-repo.** `docs/GO_LIVE.md`: gated checklist,
   secrets/env, promote/kill-switch/rollback, monitoring. (REVIEW D3.)
@@ -74,10 +82,15 @@ Keep it ruthlessly prioritized: the top item should always be the highest-levera
 ## P3 — capital formation (Path C)
 
 - [x] **B15 — Public-grade track-record export.** Done: `reports/track_record.py`
-  + `hlbot track-record` → track_record.{json,md} (equity curve, Sharpe/DD/edge,
-  per-agent). Chart export still TODO. (Iteration 2.)
-- [ ] **B16 — Hyperliquid vault evaluation.** Spike: requirements, fees, risk of
-  running an HL vault; gate behind a real track record (G3).
+  + `hlbot track-record` → track_record.{json,md,svg,html} (equity curve chart,
+  Sharpe/DD/edge, per-agent incl. attributed funding). (Iterations 2, 7.)
+- [x] **B16 — Hyperliquid vault evaluation.** Done as spec:
+  `docs/MONETIZATION.md` — leader earns 10% of depositor profit, ≥5% own stake,
+  10k USDC creation; hard-gated behind G3. Adapter code deferred until G3.
+- [x] **B-MON — Monetization levers doc + builder-code plumbing.** Done:
+  `docs/MONETIZATION.md` (fee stack, airdrop posture, vault, referral) and
+  optional builder field on all orders (`exec/orders.py::_builder_info`,
+  env-gated, off by default). (Iteration 7.)
 - [ ] **B17 — Moonshot sleeve spec.** Design the ring-fenced, loss-bounded Path B
   sleeve (separate sub-account, hard cap, defined max loss). Spec only; no live.
 
