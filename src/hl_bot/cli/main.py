@@ -247,6 +247,7 @@ def run(
     supervise_every_s: int = 900,
     enrich_every_s: int = 300,
     max_cycles: int = 0,
+    profile: str = "",
 ):
     """Long-running event-paced engine — replaces the 5-min cron tick.
 
@@ -256,8 +257,13 @@ def run(
     attribution; trips the kill switch on an equity-floor breach.
     Every ``supervise_every_s``: evaluate goals (auto-promotion lives here).
     ``max_cycles`` > 0 exits after N cycles (for testing/ops checks).
+    ``--profile moonshot`` runs the ring-fenced sleeve: own data dir/DB/KILL,
+    configs/moonshot/ contracts, and (via env) its own sub-account + wallet.
     """
     import os
+
+    if profile:
+        os.environ["HLBOT_PROFILE"] = profile
 
     from ..agents.runtime import fetch_market_view
     from ..engine.runner import build_roster, run_cycle
@@ -276,15 +282,17 @@ def run(
     if live:
         from ..exec.orders import build_exchange, telegram_alert
         try:
-            exchange, info, _ = build_exchange()
+            exchange, info, _ = build_exchange(env_path=s.api_wallet_env)
         except Exception as e:  # noqa: BLE001
             console.print(f"[red]FATAL: build_exchange failed: {e}[/red]")
             telegram_alert(f"🚨 hl-bot run: build_exchange failed: {e}")
             raise typer.Exit(2) from e
 
-    overrides_roster = build_roster(conn, CONFIG_DIR)
+    configs_dir = s.configs_dir
+    overrides_roster = build_roster(conn, configs_dir)
     console.print(
         f"[bold]hlbot run[/bold] live={live} execution={execution} interval={interval}s · "
+        f"profile={s.profile or 'core'} · "
         f"roster: {', '.join(e.agent.name for e in overrides_roster)}"
     )
 
@@ -308,7 +316,7 @@ def run(
             overlay_ws_snapshot(view, os.environ.get("HLBOT_WS_SNAPSHOT"))
 
             res = run_cycle(conn, s, view, live=live, execution=execution,
-                            exchange=exchange, info=info)
+                            exchange=exchange, info=info, configs_dir=configs_dir)
             console.print(f"[dim]{time.strftime('%H:%M:%S')}[/dim] {res.summary()}")
             for ev in res.events:
                 console.print(f"  {ev}")
@@ -328,7 +336,7 @@ def run(
 
             if t0 - last_supervise >= supervise_every_s:
                 last_supervise = t0
-                actions = supervise(conn, CONFIG_DIR, data_dir=data_dir)
+                actions = supervise(conn, configs_dir, data_dir=data_dir)
                 if actions:
                     console.print(f"[bold]supervisor[/bold]: {json.dumps(actions)}")
 

@@ -1,0 +1,45 @@
+# MOONSHOT SLEEVE contract (Path B) — runs ONLY under `hlbot run --profile
+# moonshot` against the ring-fenced HL sub-account. The sleeve is funded with
+# ~5% of capital, can go to zero without touching the core, and is NEVER
+# auto-refilled. Full rules: docs/MOONSHOT.md.
+agent: liq_cascade_v1
+description: >-
+  Liquidation-cascade momentum at high leverage — the convex lottery-ticket
+  sleeve. Defined max loss per bet (isolated margin + stop), hard sleeve-level
+  pause/kill. Negative-to-flat expected value, fat right tail, by design.
+mode: paper          # even the sleeve earns live via its own ladder
+roster: live
+cooldown_s: 60
+
+goals:
+  primary:
+    metric: net_pnl
+    window: 30d
+    op: ">"
+    threshold: 0
+
+guardrails:
+  # Sleeve-level: 24h loss >= ~30% of a $250 sleeve -> pause and stay paused.
+  - {metric: net_pnl, window: 24h, op: ">=", threshold: -75,
+     action: pause, reason: "sleeve 24h loss limit (30% of funded)"}
+  - {metric: net_pnl, window: 7d, op: ">=", threshold: -125,
+     action: demote, reason: "sleeve 7d loss limit (50% of funded)"}
+
+sizing:
+  live_small_max_total: 50
+  live_small_max_per_trade: 25
+
+promotion_ladder:
+  - from: paper
+    to: live_small
+    min_days_in_mode: 14
+    conditions:
+      - {metric: edge_bps, window: 30d, op: ">=", threshold: 5, source: paper}
+      - {metric: n_trades, window: 30d, op: ">=", threshold: 40, source: paper}
+  - from: live_small
+    to: live
+    min_days_in_mode: 14
+    conditions:
+      - {metric: net_pnl,  window: 30d, op: ">=", threshold: 0}
+      - {metric: edge_bps, window: 30d, op: ">=", threshold: 3}
+      - {metric: n_trades, window: 30d, op: ">=", threshold: 20}

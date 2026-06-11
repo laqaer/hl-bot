@@ -45,7 +45,7 @@ else
   [ -n "$REPO_URL" ] || die "REPO_URL required for first install"
   git clone --depth 1 -b "$BRANCH" "$REPO_URL" "$HLBOT_HOME"
 fi
-mkdir -p "${HLBOT_HOME}/data"
+mkdir -p "${HLBOT_HOME}/data" "${HLBOT_HOME}/data/moonshot"
 chown -R "$HLBOT_USER":"$HLBOT_USER" "$HLBOT_HOME"
 chmod +x "${HLBOT_HOME}"/deploy/*.sh "${HLBOT_HOME}"/ralph/*.sh 2>/dev/null || true
 
@@ -107,4 +107,7 @@ cat <<EOF
    Go live:  set HLBOT_RUN_ARGS="--live --execution maker" in ${ENV_FILE}
              after the gates pass — see docs/GO_LIVE.md.
    Kill:     uv run hlbot kill "reason"   (sticky; hlbot resume to clear)
+   Moonshot: ring-fenced sleeve (docs/MOONSHOT.md) — create /etc/hl-bot/moonshot.env
+             with the sub-account address/wallet, then:
+             systemctl enable --now hlbot-moonshot   (NOT enabled by default)
 EOF

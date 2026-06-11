@@ -29,7 +29,7 @@ G0_EXEMPT = {"liq_cascade_v1", "funding_arb_v1"}
 
 def _all_goals():
     out = []
-    for p in sorted(CONFIGS.glob("*.yaml")):
+    for p in sorted([*CONFIGS.glob("*.yaml"), *CONFIGS.glob("moonshot/*.yaml")]):
         out.extend(load_goals(p))
     return out
 
