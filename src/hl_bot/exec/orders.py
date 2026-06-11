@@ -436,13 +436,21 @@ def close_position(exchange: Exchange, coin: str, cloid: str | None = None) -> O
 # market path stays the default until that async handling lands.
 
 
-def round_price_to(px: float, sz_decimals: int, max_decimals: int = 6) -> float:
+def round_price_to(
+    px: float, sz_decimals: int, max_decimals: int = 6, *, direction: str = "nearest"
+) -> float:
     """Round a price to Hyperliquid's tick rules.
 
     HL accepts prices with at most 5 significant figures AND at most
     ``max_decimals - sz_decimals`` decimal places (max_decimals is 6 for perps,
     8 for spot); integer prices are always valid. Returns ``px`` unchanged for
     non-positive input.
+
+    ``direction`` controls which way an off-tick price moves: "down" (floor)
+    for buy quotes and "up" (ceil) for sell quotes, so rounding can never push
+    a post-only order through the spread on a book tighter than the tick
+    (nearest-rounding a buy at bid 12.3456 to 12.346 crosses a 12.3458 ask
+    and gets the Alo order rejected). Default "nearest" suits display/taker.
     """
     if px <= 0:
         return px
@@ -453,17 +461,26 @@ def round_price_to(px: float, sz_decimals: int, max_decimals: int = 6) -> float:
     else:
         dec_for_sig = sig + (-math.floor(math.log10(px)) - 1)
     decimals = max(0, min(dec_for_sig, max_decimals - sz_decimals))
-    return round(px, decimals)
+    if direction == "nearest":
+        return round(px, decimals)
+    scale = 10.0 ** decimals
+    # Snap float-representation error (12.346*1000 -> 12345.999…) to the
+    # intended tick before flooring/ceiling, else "down" overshoots a tick.
+    ticks = round(px * scale, 6)
+    ticks = math.floor(ticks) if direction == "down" else math.ceil(ticks)
+    return ticks / scale
 
 
-def _round_price(exchange: Exchange, coin: str, px: float) -> float:
+def _round_price(
+    exchange: Exchange, coin: str, px: float, *, direction: str = "nearest"
+) -> float:
     if coin not in _SZ_DECIMALS_CACHE:
         meta = _retry(lambda: exchange.info.meta()) or {}
         for asset in meta.get("universe", []) or []:
             name = asset.get("name")
             if name:
                 _SZ_DECIMALS_CACHE[str(name)] = int(asset.get("szDecimals", 5) or 0)
-    return round_price_to(px, _SZ_DECIMALS_CACHE.get(coin, 5))
+    return round_price_to(px, _SZ_DECIMALS_CACHE.get(coin, 5), direction=direction)
 
 
 def place_limit_order(
@@ -482,7 +499,9 @@ def place_limit_order(
     rounded_sz = _round_order_size(exchange, coin, sz)
     if rounded_sz <= 0:
         return OrderResult(ok=False, status="error", error=f"rounded size is zero: requested {sz}")
-    rounded_px = _round_price(exchange, coin, limit_px)
+    # Side-aware tick rounding: floor buys / ceil sells so rounding alone can
+    # never cross the spread and bounce a post-only order.
+    rounded_px = _round_price(exchange, coin, limit_px, direction="down" if is_buy else "up")
     if rounded_px <= 0:
         return OrderResult(ok=False, status="error", error=f"bad limit px: {limit_px}")
     tif = "Alo" if post_only else "Gtc"
