@@ -193,3 +193,29 @@ def test_fills_by_cloid_aggregates(conn):
     out = fills_by_cloid(conn, ["c1"])
     assert out["c1"][0] == pytest.approx(1.0)
     assert out["c1"][1] == pytest.approx(99.12)
+
+
+def test_rejected_entry_is_audited_and_feeds_cooldown(conn):
+    # A post-only reject must leave a 'rejected' audit row — coin_in_cooldown()
+    # and order_rate_ok() count those, so an unlogged reject would be retried
+    # every engine cycle with no cooldown or rate-limit pressure.
+    from hl_bot.agents.decisions import Decision
+    from hl_bot.exec.lifecycle import submit_entry
+    from hl_bot.exec.orders import coin_in_cooldown
+
+    class RejectingExchange(FakeExchange):
+        def order(self, **kw):
+            return {"response": {"data": {"statuses": [
+                {"error": "Post only order would have immediately matched"}]}}}
+
+    d = Decision(agent="a1", action="place", coin="BTC", side="B", sz=1.0,
+                 cloid="c-rej", is_paper=False)
+    event = submit_entry(conn, RejectingExchange(), view(), d, CFG, now_ms=NOW)
+    assert event.startswith("REJECT")
+    row = conn.execute(
+        "SELECT action, is_paper, error FROM agent_decisions WHERE agent='a1'"
+    ).fetchone()
+    assert row["action"] == "rejected"
+    assert row["is_paper"] == 0
+    assert row["error"]
+    assert coin_in_cooldown(conn, "BTC", agent="a1", cooldown_s=3600)

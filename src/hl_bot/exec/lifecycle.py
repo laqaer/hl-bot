@@ -311,4 +311,13 @@ def submit_entry(
             reasoning=f"MAKER immediate fill {d.coin}", is_paper=False,
         ))
         return f"FILLED {d.agent} {d.coin} @ {res.avg_px}"
+    # Audit the rejection: coin_in_cooldown() and order_rate_ok() count
+    # 'rejected' rows, so an unlogged reject would be retried every cycle
+    # with no cooldown and no rate-limit pressure.
+    log_decision(conn, Decision(
+        agent=d.agent, action="rejected", coin=d.coin, side=d.side,
+        sz=d.sz, px=px, cloid=d.cloid,
+        reasoning=f"MAKER entry rejected: {res.status}", error=res.error,
+        is_paper=False,
+    ))
     return f"REJECT {d.agent} {d.coin}: {res.status} — {res.error}"
