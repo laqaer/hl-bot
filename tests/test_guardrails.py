@@ -13,6 +13,7 @@ import time
 
 import pytest
 
+from hl_bot.agents.runtime import AccountState
 from hl_bot.db.schema import init_db
 from hl_bot.exec.orders import (
     GuardrailConfig,
@@ -41,6 +42,34 @@ class FakeInfo:
         if body.get("type") == "spotClearinghouseState":
             return {"balances": [{"coin": "USDC", "total": str(self._spot_usdc)}]}
         return {}
+
+
+class PoisonInfo:
+    """Raises on any use — proves the injected-snapshot path never fetches."""
+
+    def user_state(self, address: str) -> dict:
+        raise AssertionError("user_state fetched despite injected account snapshot")
+
+    def post(self, path: str, body: dict) -> dict:
+        raise AssertionError("spot state fetched despite injected account snapshot")
+
+
+def _account(account_value: float = 1000.0, spot_usdc: float = 0.0,
+             asset_positions: list[dict] | None = None) -> AccountState:
+    """Real AccountState (pins the field names check_guardrails duck-types)."""
+    clearinghouse = {
+        "marginSummary": {"accountValue": str(account_value)},
+        "assetPositions": asset_positions or [],
+    }
+    spot = {"balances": [{"coin": "USDC", "total": str(spot_usdc)}]}
+    return AccountState(
+        clearinghouse=clearinghouse,
+        spot_clearinghouse=spot,
+        account_value=float(account_value),
+        spot_usdc=float(spot_usdc),
+        portfolio_value=float(account_value) + float(spot_usdc),
+        withdrawable=0.0,
+    )
 
 
 @pytest.fixture
@@ -166,6 +195,64 @@ def test_guardrail_ignores_funding_on_manual_coins(conn):
     ok, why = check_guardrails(conn, info, cfg, agents=["femr_v1", "twap_mr_v1"])
 
     assert ok is True
+
+
+def test_guardrail_injected_account_skips_fetch(conn):
+    """With the tick's AccountState injected, the guardrail must not touch the
+    network at all — and the Info client becomes entirely optional."""
+    cfg = GuardrailConfig(min_bot_capital=40.0, max_daily_loss=10.0,
+                          max_total_notional=5000.0)
+    ok, why = check_guardrails(
+        conn, PoisonInfo(), cfg, agents=["femr_v1"], account=_account())
+    assert ok is True
+    ok2, why2 = check_guardrails(
+        conn, None, cfg, agents=["femr_v1"], account=_account())
+    assert (ok2, why2) == (ok, why)
+
+
+def test_guardrail_injected_account_matches_fetched_verdict(conn):
+    """Injected-snapshot and legacy-fetch paths must judge the same numbers
+    identically — incl. the notional check reading assetPositions through the
+    injected payload and the capital floor reading spot + perp."""
+    now = int(time.time() * 1000)
+    conn.execute(
+        """INSERT INTO agent_decisions(ts_ms, agent, action, coin, reasoning, is_paper)
+           VALUES (?, 'femr_v1', 'place', 'BTC', 'test', 0)""", (now,))
+    conn.commit()
+    positions = [{"position": {"coin": "BTC", "positionValue": "120.0"}}]
+
+    # Notional breach: bot-owned BTC at $120 vs a $100 cap.
+    cfg = GuardrailConfig(min_bot_capital=40.0, max_daily_loss=10.0,
+                          max_total_notional=100.0)
+    fetched = check_guardrails(
+        conn, FakeInfo(account_value=1000.0, asset_positions=positions),
+        cfg, agents=["femr_v1"])
+    injected = check_guardrails(
+        conn, None, cfg, agents=["femr_v1"],
+        account=_account(asset_positions=positions))
+    assert injected == fetched
+    assert fetched[0] is False
+    assert "notional" in fetched[1]
+
+    # Capital floor: perp $10 + spot $5 < $40 minimum.
+    cfg = GuardrailConfig(min_bot_capital=40.0, max_daily_loss=10.0,
+                          max_total_notional=5000.0)
+    fetched = check_guardrails(
+        conn, FakeInfo(account_value=10.0, spot_usdc=5.0), cfg, agents=["femr_v1"])
+    injected = check_guardrails(
+        conn, None, cfg, agents=["femr_v1"],
+        account=_account(account_value=10.0, spot_usdc=5.0))
+    assert injected == fetched
+    assert fetched[0] is False
+    assert "capital" in fetched[1]
+
+
+def test_guardrail_no_snapshot_and_no_info_fails_safe(conn):
+    """Neither an injected snapshot nor an Info client: halt new entries
+    (fail safe), never fail open."""
+    ok, why = check_guardrails(conn, None, GuardrailConfig(), agents=["femr_v1"])
+    assert ok is False
+    assert "misconfigured" in why
 
 
 def test_dynamic_daily_loss_limit_scales_with_portfolio():

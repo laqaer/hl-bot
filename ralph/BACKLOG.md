@@ -310,8 +310,22 @@ Keep it ruthlessly prioritized: the top item should always be the highest-levera
   fix: `_coin_holders_over_time` now reads live rows only — the equal-split
   fallback could leak PAPER decision-rows into REAL funding attribution
   (scorecards too, not just the guardrail). Noted, not done: per-agent
-  clamping (stricter than the aggregate clamp) and the duplicate
-  user_state fetch in check_guardrails vs fetch_account_state.
+  clamping (stricter than the aggregate clamp). The duplicate user_state
+  fetch was fixed in Iter 69 (B-GR1 below).
+- [x] **B-GR1 — Guardrails judge the tick-start account snapshot.** Done
+  (Iter 69, the Iter-68 found-(b) follow-up): `check_guardrails(account=)`
+  consumes the `AccountState` femr_tick already fetched instead of
+  re-fetching user_state + spot USDC mid-tick — the halt verdict and the
+  risk caps now judge the SAME truth (previously two reads seconds apart
+  could diverge within one tick), two fewer API calls per live tick, and
+  one fewer mid-tick crash point ahead of the risk-reducing flattens (a
+  retry-exhausted user_state fetch there aborted the whole execution
+  loop). Legacy fetch path kept for snapshot-less callers; no-snapshot +
+  no-Info fails SAFE (halt new entries, never fail open). +3 tests:
+  Poison-Info no-fetch pin, fetched/injected verdict identity (notional
+  breach via injected assetPositions + capital floor via spot+perp),
+  fail-safe arm. The check→placement fill race is documented in-code as
+  pre-existing and bounded by the pre-tick cap layer.
 - [x] **B10 — WebSocket market view.** Done: `ingest/ws.py` MarketState +
   `hlbot ws` service writes a snapshot; live tick overlays it (HLBOT_WS_SNAPSHOT)
   for sub-second mids, L2 book_top, and a real liquidations feed (fixes C6), with

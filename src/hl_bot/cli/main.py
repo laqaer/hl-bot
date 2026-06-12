@@ -568,6 +568,9 @@ def femr_tick(live: bool = False, execution: str = "taker", vwap_window: int = 0
             max_concurrent_positions=4,
         ),
         agents=[a.name for a in agents],
+        # Judge the tick-start snapshot the risk caps were sized from — no
+        # second user_state/spot fetch that could diverge mid-tick.
+        account=account,
     )
     if not ok:
         console.print(f"[red]HALT new entries[/red]: {why}")

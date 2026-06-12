@@ -21,7 +21,7 @@ import sqlite3
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import httpx
 from eth_account import Account
@@ -32,6 +32,9 @@ from hyperliquid.utils import constants
 from hyperliquid.utils.signing import Cloid
 
 from ..config import resolve_vault_address
+
+if TYPE_CHECKING:  # annotation only — agents.runtime imports this module
+    from ..agents.runtime import AccountState
 
 log = logging.getLogger(__name__)
 
@@ -263,16 +266,36 @@ def _spot_usdc(info: Info, address: str) -> float:
 
 def check_guardrails(
     conn: sqlite3.Connection,
-    info: Info,
+    info: Info | None,
     cfg: GuardrailConfig,
     agents: list[str] | None = None,
+    *,
+    account: AccountState | None = None,
 ) -> tuple[bool, str]:
-    state = _retry(lambda: info.user_state(HL_TRADER_ADDRESS))
+    """Hard pre-entry gate: capital floor, 24h loss (fills + clamped funding),
+    and bot-open notional vs cap. False halts NEW entries only — flattens run.
+
+    ``account`` injects the tick's already-fetched exchange snapshot
+    (``agents.runtime.AccountState``): the guardrail then judges the SAME
+    truth the risk caps were sized from, instead of re-fetching user_state +
+    spot USDC seconds later (two reads that can diverge within one tick).
+    Without it, the legacy path fetches via ``info``. Either way a resting
+    quote can fill between this check and order placement — the pre-tick cap
+    layer and per-order caps bound that race, not this snapshot.
+    """
+    if account is not None:
+        state: dict = account.clearinghouse or {}
+        spot_usdc = float(account.spot_usdc or 0.0)
+    elif info is None:
+        # Fail safe (halts new entries), never fail open.
+        return False, "guardrail misconfigured: no account snapshot and no Info client"
+    else:
+        state = _retry(lambda: info.user_state(HL_TRADER_ADDRESS))
+        spot_usdc = _retry(lambda: _spot_usdc(info, HL_TRADER_ADDRESS))
     try:
         perp_val = float((state or {}).get("marginSummary", {}).get("accountValue", 0) or 0)
     except (TypeError, ValueError):
         perp_val = 0.0
-    spot_usdc = _retry(lambda: _spot_usdc(info, HL_TRADER_ADDRESS))
     capital = perp_val + spot_usdc
 
     if capital < cfg.min_bot_capital:

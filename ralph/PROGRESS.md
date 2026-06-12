@@ -3626,3 +3626,63 @@ aggregate check) re-confirmed as second-order; stays parked behind B-SCALE.
 readouts (b_edge2b ~Jun 20 FIRST, then bump its min_span_days after the
 run; b_g014 ~Jun 26). B-EDGE2f at ≥30d paper books (~Jul 8). Idle queue:
 B-SCALE doc once G2 evidence is real.
+
+## Iteration 69 — 2026-06-12 — B-GR1: guardrails judge the tick-start snapshot
+
+**Ripeness checks** (per-iteration readout): b_edge2b NOT RIPE (15m span
+52.1d < 60d, breadth coins binding, ETA ~Jun 20); b_g014 NOT RIPE (1m span
+3.7d < 14d, ETA ~Jun 26). Store healthy (20/20 + 10/10 pairs reporting).
+
+**Why this.** Headline experiments time-blocked; REVIEW swept. Iter 68's
+found-(b) was the top flagged item: `check_guardrails` re-fetched
+user_state + spot USDC although `femr_tick` already holds the tick-start
+`AccountState`.
+
+**Root cause / risk.** Three problems in one seam. (1) Divergent truth:
+the risk caps (`compute_notional_cap`, `dynamic_daily_loss_limit`) are
+sized from the tick-start snapshot, but the halt verdict judged a second
+fetch made seconds later — the two could disagree within one tick.
+(2) Duplicate API calls: one extra user_state + one extra spot read per
+live tick. (3) The sharpest one, found while making the change: the
+mid-tick fetch was a CRASH point — `_retry` exhausting its 3 attempts
+raises out of `check_guardrails`, and the call site has no try/except, so
+a transient API blip between decision gathering and execution aborted the
+tick INCLUDING the risk-reducing flattens (the exact failure mode B-FUNDGR
+guarded against in the funding-attribution arm). With the snapshot
+injected there is no mid-tick fetch to fail.
+
+**Changed.** `check_guardrails` grew a keyword-only `account=` param
+(duck-typed `agents.runtime.AccountState`; TYPE_CHECKING-only import keeps
+the exec→agents dependency out): when provided, capital + assetPositions +
+spot USDC come from the injected snapshot, no fetch; legacy fetch path
+unchanged for snapshot-less callers (only caller is femr_tick, updated).
+No snapshot AND no Info client fails SAFE — (False, "misconfigured")
+halts new entries, never fail-open, never crash. Docstring documents the
+remaining (pre-existing) race: a resting quote can fill between this check
+and order placement; bounded by the pre-tick cap layer + per-order caps,
+unchanged by this commit.
+
+**Evidence.** 447 → **450 tests pass**; `ruff check src tests scripts`
+clean. New in test_guardrails.py: (a) PoisonInfo (raises on any use)
+proves the injected path never touches the network and Info becomes
+optional (None gives the identical verdict); (b) fetched-vs-injected
+verdict identity on the same numbers — a notional breach read through the
+injected payload's assetPositions ($120 BTC vs $100 cap) and a capital-
+floor breach (perp $10 + spot $5 < $40); (c) the fail-safe arm asserts
+halt + "misconfigured". Tests construct the REAL AccountState dataclass so
+the duck-typed field names are pinned by CI. No live-fire: the new path is
+pure given its inputs, the legacy path is byte-identical code under an
+`else`, and the changed call site is live-mode-only (human-gated).
+
+**Found.** (a) `risk/prop.py` references check_guardrails in prose only —
+no second caller to migrate. (b) femr_tick now performs exactly one
+user_state + one spot read per tick, both at tick start; if anyone later
+adds a third consumer of account truth, thread `AccountState` through
+rather than fetching (this is the B12 pattern).
+
+**What's next (loop).** Per-iteration: the two `--check-only` ripeness
+readouts (b_edge2b ~Jun 20 FIRST, then bump its min_span_days after the
+run; b_g014 ~Jun 26). B-EDGE2f at ≥30d paper books (~Jul 8). Idle queue:
+B-SCALE doc once G2 evidence is real; per-agent funding clamp if a
+funding-collecting agent ever shares the live book with a funding-paying
+one.
