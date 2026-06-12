@@ -173,8 +173,25 @@ Keep it ruthlessly prioritized: the top item should always be the highest-levera
 See `docs/STRATEGY_REVIEW.md`. `twap_mr_v1` levers ship default-OFF; the loop A/Bs
 each on ≥90d real history (`hlbot confirm` / `hlbot backtest --config`) before flip.
 
-- [ ] **B-REGIME — A/B `regime_filter`** on twap_mr (drops fades into trends).
-  Lever shipped; needs real-data validation.
+- [x] **B-REGIME — A/B `regime_filter`** on twap_mr. Done at 1h cadence (Iter 27,
+  90d 10-coin, numbers in PROGRESS): clear dose-response — best config
+  (`regime_min_move_pct=0.015, regime_min_consistency=0.55`) improves maker edge
+  −5.0→−3.0bps, halves maxDD (−21.7%→−9.9%), cuts trades 30% — but never flips
+  positive (OOS −6.0bps, G0 FAIL). Defaults (0.03/0.65) are inert at 1h. Verdict:
+  the lever's direction is validated, keep default OFF, do NOT flip live until it
+  A/Bs positive at live-like cadence (B-CAD; blocked on retention → B-HIST).
+- [ ] **B-HIST — Rolling fine-candle accumulator (prereq for B-CAD).** HL retains
+  only ~5000 candles/interval (measured Iter 27: 3.5d @1m, 17.4d @5m, 52d @15m),
+  so live-cadence history must be harvested before it expires: a periodic job
+  (cron/`hlbot ingest`) appending 1m+5m candles to a local store, dedup by t.
+  Every day un-deployed is a day of 1m history lost forever — do this next.
+- [ ] **B-CAD — A/B levers at live-like cadence.** The live strategy fades a 60×1m
+  VWAP; the 1h backtest fades a 60×1h VWAP — a different (slower) strategy, which
+  is also why backtest says −5bps while live prints +29.5bps. Now feasible:
+  build_frames is linear (Iter 27). Needs: expose `--vwap-window` in
+  backtest/confirm/backtest-fetch (window must enter the cache key when ≠60 —
+  cached frames bake the window in), then run 15m/52d (window=4) and 5m/17d
+  (window=12) A/Bs of baseline vs regime_filter vs size_by_signal.
 - [ ] **B-SIZE — A/B `size_by_signal`** (+ a vol-targeting variant). Lever shipped.
 - [ ] **B-EXIT — sweep `sigma_exit`/`stop_loss_pct`/`max_hold_hours`** for best
   risk-adjusted exits.
@@ -235,3 +252,7 @@ each on ≥90d real history (`hlbot confirm` / `hlbot backtest --config`) before
 - [x] **AWS deploy automation** — `deploy/aws/` Terraform (EC2 t4g/Tokyo, IAM-role
   S3 backups, cloud-init boots paper) + Litestream rendering in install.sh.
   (Iteration 6.)
+- [x] **B-PERF — linear-time `build_frames`.** Per-frame prefix scans (bars-so-far,
+  funding sweep, 1440-bar vol sum) made fine-interval backtests quadratic; replaced
+  with per-coin cursors + volume prefix-sums, equivalence-tested against the old
+  logic verbatim. 90d×5m×2-coin build: 0.16s. (Iteration 27.)

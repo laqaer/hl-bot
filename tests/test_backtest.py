@@ -241,3 +241,132 @@ def test_parse_agent_config_and_factory_override():
     # an un-overridden agent keeps its defaults
     default = _backtest_factories({})["xfund_carry_v1"](conn)
     assert default.cfg.enter_funding_per_hr == 0.0001
+
+
+# ---------------------------------------------------------------------------
+# build_frames linear-time rewrite: must match the original per-frame scans
+# ---------------------------------------------------------------------------
+
+
+def _build_frames_naive(candles_by_coin, funding_by_coin=None, *,
+                        vwap_window=60, warmup=60, bar_hours=1.0):
+    """The original O(n²) build_frames logic, kept verbatim as the reference."""
+    from hl_bot.backtest.data import _closes_vols, funding_rate_at
+
+    funding_by_coin = funding_by_coin or {}
+    by_ts, all_ts, series = {}, set(), {}
+    for coin, candles in candles_by_coin.items():
+        ordered = sorted(candles, key=lambda k: int(k.get("t", 0)))
+        by_ts[coin] = {int(k.get("t", 0)): k for k in ordered}
+        series[coin] = _closes_vols(ordered)
+        all_ts.update(by_ts[coin].keys())
+    frames = []
+    for ts in sorted(all_ts):
+        mids, vol, candles_1h, closes_window, funding = {}, {}, {}, {}, {}
+        for coin, idx in by_ts.items():
+            k = idx.get(ts)
+            if not k:
+                continue
+            try:
+                mid = float(k.get("c", 0))
+            except (TypeError, ValueError):
+                continue
+            if mid <= 0:
+                continue
+            mids[coin] = mid
+            closes, vols, tss = series[coin]
+            upto = [i for i, t in enumerate(tss) if t <= ts]
+            if len(upto) < warmup:
+                continue
+            cut = upto[-1] + 1
+            vwap, sigma = rolling_vwap_sigma(closes[:cut], vols[:cut], vwap_window)
+            if vwap is not None and sigma is not None:
+                candles_1h[coin] = {"vwap": vwap, "sigma": sigma, "n": min(cut, vwap_window)}
+            closes_window[coin] = closes[max(0, cut - vwap_window):cut]
+            vol[coin] = sum(vols[max(0, cut - 1440):cut]) * mid
+            funding[coin] = funding_rate_at(funding_by_coin.get(coin, []), ts) * bar_hours
+        if mids:
+            frames.append(Frame(ts_ms=ts, mids=mids, funding=funding, day_ntl_vlm=vol,
+                                candles_1h=candles_1h, closes=closes_window))
+    return frames
+
+
+def _irregular_dataset():
+    """3 coins with missing bars, a zero-close candle, and real-shaped funding."""
+    import random
+
+    rng = random.Random(42)
+    candles_by_coin, funding_by_coin = {}, {}
+    for ci, coin in enumerate(("AAA", "BBB", "CCC")):
+        px = 100.0 * (ci + 1)
+        candles = []
+        for i in range(150):
+            if rng.random() < 0.1 * ci:        # BBB/CCC have gaps
+                continue
+            px *= 1 + rng.uniform(-0.01, 0.01)
+            candles.append({"t": i * HOUR, "c": px, "v": rng.uniform(100, 2000)})
+        candles.append({"t": 40 * HOUR + 1, "c": 0, "v": 50})   # invalid close
+        candles_by_coin[coin] = candles
+        # hourly funding, ascending (the API shape), with one malformed row
+        funding_by_coin[coin] = [
+            {"time": i * HOUR, "fundingRate": rng.uniform(-3e-4, 3e-4)}
+            for i in range(150)
+        ]
+        funding_by_coin[coin].insert(5, {"time": "bogus", "fundingRate": None})
+    return candles_by_coin, funding_by_coin
+
+
+def test_build_frames_matches_naive_reference():
+    """The cursor/prefix-sum rewrite reproduces the original scan exactly."""
+    import pytest
+
+    candles_by_coin, funding_by_coin = _irregular_dataset()
+    kw = {"vwap_window": 24, "warmup": 30, "bar_hours": 0.5}
+    got = build_frames(candles_by_coin, funding_by_coin=funding_by_coin, **kw)
+    want = _build_frames_naive(candles_by_coin, funding_by_coin, **kw)
+
+    assert len(got) == len(want) and got, "same number of frames"
+    for g, w in zip(got, want, strict=True):
+        assert g.ts_ms == w.ts_ms
+        assert g.mids == w.mids
+        assert g.closes == w.closes
+        assert set(g.candles_1h) == set(w.candles_1h)
+        for coin, stats in w.candles_1h.items():
+            assert g.candles_1h[coin]["n"] == stats["n"]
+            assert g.candles_1h[coin]["vwap"] == pytest.approx(stats["vwap"], rel=1e-12)
+            assert g.candles_1h[coin]["sigma"] == pytest.approx(stats["sigma"], rel=1e-12)
+        for coin, v in w.day_ntl_vlm.items():
+            assert g.day_ntl_vlm[coin] == pytest.approx(v, rel=1e-9)
+        for coin, f in w.funding.items():
+            assert g.funding[coin] == pytest.approx(f, rel=1e-12, abs=1e-18)
+
+
+def test_build_frames_sorts_unsorted_funding():
+    """Funding rows arriving out of order still yield 'most recent rate ≤ ts'."""
+    candles = [{"t": i * HOUR, "c": 100.0, "v": 10.0} for i in range(8)]
+    shuffled = [
+        {"time": 4 * HOUR, "fundingRate": 4e-4},
+        {"time": 1 * HOUR, "fundingRate": 1e-4},
+        {"time": 3 * HOUR, "fundingRate": 3e-4},
+    ]
+    frames = build_frames({"TST": candles}, funding_by_coin={"TST": shuffled},
+                          vwap_window=4, warmup=2)
+    by_ts = {f.ts_ms: f.funding.get("TST") for f in frames}
+    assert by_ts[2 * HOUR] == 1e-4      # only the t=1h row is in effect
+    assert by_ts[3 * HOUR] == 3e-4
+    assert by_ts[7 * HOUR] == 4e-4      # latest-by-time, not latest-in-list
+
+
+def test_build_frames_scales_to_fine_intervals():
+    """20k 1m bars × 2 coins must build fast (was quadratic: minutes, not <2s)."""
+    minute = 60_000
+    candles_by_coin = {
+        coin: [{"t": i * minute, "c": 100.0 + (i % 7), "v": 5.0} for i in range(20_000)]
+        for coin in ("AAA", "BBB")
+    }
+    frames = build_frames(candles_by_coin, vwap_window=60, warmup=60, bar_hours=1 / 60)
+    assert len(frames) == 20_000
+    last = frames[-1]
+    assert set(last.mids) == {"AAA", "BBB"}
+    assert last.candles_1h["AAA"]["sigma"] > 0
+    assert last.day_ntl_vlm["AAA"] > 0

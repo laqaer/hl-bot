@@ -215,17 +215,44 @@ def build_frames(
     *per-bar* rate, so we scale by ``bar_hours`` (= bar interval / 1h). 1h bars
     are unchanged; 5m bars get 1/12 of the hourly rate per bar; 4h bars get 4×.
     Without this, carry PnL is over/understated on any non-1h interval.
+
+    Runs in O(total_bars × vwap_window): timestamps are visited in order, so
+    per-coin cursors replace the per-frame prefix scans (bars seen so far,
+    funding rate in effect) and a volume prefix-sum replaces the per-frame
+    1440-bar sum. Fine intervals (5m/1m) over months stay tractable — the
+    previous per-frame scans made those quadratic. ``vwap_window`` must be ≥ 2.
     """
     funding_by_coin = funding_by_coin or {}
     # index each coin's candles by open time
     by_ts: dict[str, dict[int, dict[str, Any]]] = {}
     all_ts: set[int] = set()
     series: dict[str, tuple[list[float], list[float], list[int]]] = {}
+    vol_prefix: dict[str, list[float]] = {}    # coin -> prefix sums of vols
+    bar_cursor: dict[str, int] = {}            # coin -> bars with t <= current ts
+    fund_rows: dict[str, list[tuple[int, float]]] = {}  # coin -> (t, rate) by t
+    fund_cursor: dict[str, int] = {}
+    fund_last: dict[str, float] = {}           # coin -> rate in effect at cursor
     for coin, candles in candles_by_coin.items():
         ordered = sorted(candles, key=lambda k: int(k.get("t", 0)))
         by_ts[coin] = {int(k.get("t", 0)): k for k in ordered}
         series[coin] = _closes_vols(ordered)
         all_ts.update(by_ts[coin].keys())
+        vols = series[coin][1]
+        prefix = [0.0] * (len(vols) + 1)
+        for i, v in enumerate(vols):
+            prefix[i + 1] = prefix[i] + v
+        vol_prefix[coin] = prefix
+        bar_cursor[coin] = 0
+        rows: list[tuple[int, float]] = []
+        for row in funding_by_coin.get(coin, []):
+            try:
+                rows.append((int(row.get("time", 0)), float(row.get("fundingRate", 0) or 0)))
+            except (TypeError, ValueError):
+                continue
+        rows.sort(key=lambda r: r[0])
+        fund_rows[coin] = rows
+        fund_cursor[coin] = 0
+        fund_last[coin] = 0.0
 
     frames: list[Frame] = []
     for ts in sorted(all_ts):
@@ -246,16 +273,27 @@ def build_frames(
                 continue
             mids[coin] = mid
             closes, vols, tss = series[coin]
-            upto = [i for i, t in enumerate(tss) if t <= ts]
-            if len(upto) < warmup:
+            cur = bar_cursor[coin]
+            while cur < len(tss) and tss[cur] <= ts:
+                cur += 1
+            bar_cursor[coin] = cut = cur
+            if cut < warmup:
                 continue
-            cut = upto[-1] + 1
-            vwap, sigma = rolling_vwap_sigma(closes[:cut], vols[:cut], vwap_window)
+            lo = max(0, cut - vwap_window)
+            vwap, sigma = rolling_vwap_sigma(closes[lo:cut], vols[lo:cut], vwap_window)
             if vwap is not None and sigma is not None:
                 candles_1h[coin] = {"vwap": vwap, "sigma": sigma, "n": min(cut, vwap_window)}
-            closes_window[coin] = closes[max(0, cut - vwap_window):cut]
-            vol[coin] = sum(vols[max(0, cut - 1440):cut]) * mid  # ~rolling notional proxy
-            funding[coin] = funding_rate_at(funding_by_coin.get(coin, []), ts) * bar_hours
+            closes_window[coin] = closes[lo:cut]
+            prefix = vol_prefix[coin]
+            # ~rolling notional proxy over the trailing 1440 bars
+            vol[coin] = (prefix[cut] - prefix[max(0, cut - 1440)]) * mid
+            rates = fund_rows[coin]
+            fi = fund_cursor[coin]
+            while fi < len(rates) and rates[fi][0] <= ts:
+                fund_last[coin] = rates[fi][1]
+                fi += 1
+            fund_cursor[coin] = fi
+            funding[coin] = fund_last[coin] * bar_hours
         if mids:
             frames.append(Frame(
                 ts_ms=ts, mids=mids, funding=funding,

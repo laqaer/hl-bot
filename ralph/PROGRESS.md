@@ -1076,3 +1076,61 @@ AWS box / a VPS, isolated from the live trading dir.
 
 **Note.** The loop pushes to GitHub; review its work via the branch + this journal in
 any session (no standing SSH needed — the loop IS Claude running autonomously there).
+
+---
+
+## Iteration 27 — 2026-06-12 — B-REGIME A/B on real data + linear build_frames + HL retention finding
+
+**Context.** B-REGIME was the top unblocked P0.6 item: the `regime_filter` lever
+(Iter 25, default OFF) needed real-data validation. Network up; fresh 90d 1h cache
+for the 10-coin universe (ADA,AVAX,BTC,DOGE,ETH,HYPE,LINK,SOL,TRX,ZEC).
+
+**B-REGIME result (twap_mr_v1, 90d 1h, 10 coins, reproducible via `--config`).**
+
+| config (move/consistency)        | maker edge | trades | maker Sharpe | maxDD  |
+|----------------------------------|-----------:|-------:|-------------:|-------:|
+| baseline (no filter)             |    −5.0bps |   1402 |        −2.50 | −21.7% |
+| defaults 0.03/0.65               |    −4.7bps |   1394 |        −2.37 | −20.6% |
+| 0.03/0.55                        |    −4.4bps |   1084 |        −2.33 | −14.0% |
+| **0.015/0.55 (best)**            | **−3.0bps**|    936 |        −1.37 |  −9.9% |
+| 0.02/0.55                        |    −3.6bps |    980 |        −1.76 | −11.3% |
+| 0.01/0.55                        |    −3.5bps |    902 |        −1.57 | −10.5% |
+| 0.05/0.52                        |    −5.0bps |   1140 |        −2.83 | −15.1% |
+
+Walk-forward (`hlbot confirm`, prefer=maker): baseline OOS −7.3bps / best config
+OOS −6.0bps — both **FAIL G0**. Verdict: clear dose-response (blocking trend-fades
+helps a fader: edge up, DD halved, the peak is interior at 0.015/0.55 so it's not
+"block everything"), the lever's *direction* is validated — but it never flips the
+sign at 1h cadence. Shipped defaults (0.03/0.65) are inert at 1h (65% hourly-step
+consistency almost never fires; only ~8/1390 trades blocked). **Default stays OFF;
+no live change** (live twap_mr is +29.5bps — don't perturb it on a proxy backtest).
+
+**The structural insight.** The 1h backtest fades a 60×1h (60-hour) VWAP; the live
+bot fades a 60×1m (1-hour) VWAP at ~1m cadence. They are different strategies —
+which reconciles "backtest −5bps" with "live +29.5bps". Levers must be validated
+at live-like cadence to inform live config.
+
+**Changed (1 commit).**
+- **`backtest/data.py` — linear-time `build_frames`** (was the blocker for fine
+  cadence): per-frame `upto` prefix scans, full-prefix `closes[:cut]` copies,
+  per-frame full `fundingHistory` sweeps, and the per-frame 1440-bar volume sum
+  made it O(n²); replaced with per-coin bar/funding cursors (timestamps visit in
+  order) + a volume prefix-sum. Funding rows are now sorted by time once
+  (implements the documented "most recent ≤ ts" even for unsorted input).
+- **`tests/test_backtest.py` — 3 new:** equivalence vs the *verbatim* old logic on
+  irregular data (gaps, zero-close candle, malformed funding row, non-default
+  window/warmup/bar_hours); unsorted-funding semantics; 20k×1m×2-coin scale smoke.
+
+**Evidence.** **151 tests pass** (was 148); ruff clean. Real-data timing: 90d 5m
+BTC+ETH → build **0.16s** (previously quadratic, ~minutes).
+
+**New finding (changes the plan): HL candle retention ≈ 5000 bars/interval.**
+Measured: 1m → 3.5d, 5m → 17.4d, 15m → 52.1d, 1h → full 90d. So months of
+live-cadence history **cannot be fetched after the fact** — it must be harvested
+continuously before it expires. Filed **B-HIST** (rolling 1m/5m candle
+accumulator — every day un-deployed is 1m history lost) and **B-CAD** (run the
+lever A/Bs at 15m/52d and 5m/17d now; `--vwap-window` CLI + cache-key fix needed —
+cached frames bake the window in, key must include it when ≠60).
+
+**What's next (loop).** B-HIST (highest leverage: starts the irreplaceable data
+clock), then B-CAD A/Bs of regime_filter + size_by_signal at live-like cadence.
