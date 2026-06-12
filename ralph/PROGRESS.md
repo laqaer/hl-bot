@@ -4169,3 +4169,49 @@ doc on real G2 evidence; per-agent funding clamp if mixed funding-sign
 agents ever share the live book. Possible follow-up if Jun-20 needs it:
 a pocket-aware reading aid in `hlbot experiment` output (the records
 already carry the numbers).
+
+## Iteration 77 — 2026-06-12 — B-FUNDGR2: per-agent funding clamp in the daily-loss guardrail
+
+**Ripeness checks** (per-iteration readout): b_edge2b NOT RIPE (15m 52.4d
+< 60d, ~Jun 20); b_g014 NOT RIPE (1m 4.0d < 14d, ~Jun 26); b_edge3 +
+b_edge2_1h NOT RIPE (1h LIT 171.9d < 200d, ~Jul 10). Store healthy, zero
+missing bars across all universes.
+
+**Why this.** All four pre-registered specs wait on the calendar; the top
+idle-queue item was the B-FUNDGR (Iter 68) noted-not-done follow-up:
+`check_guardrails` clamped 24h funding income to zero on the AGGREGATE —
+`min(0, Σ funding)` — so with mixed funding signs on the book one agent's
+collection masks another's bleed: +$50 carry income vs −$8 femr bleed
+counted $0 funding, and the bleed never tightened the daily-loss halt.
+Today's live book is single-strategy so this is a live no-op, but B-SCALE's
+multi-agent growth (a carry collector beside a funding-paying mean-reverter
+is exactly the intended mix) would have inherited the hole — and risk rails
+get built BEFORE the book needs them, like B-AGG (Iter 67).
+
+**Changed.**
+- `scoring/metrics.py`: new `agents_funding_breakdown(conn, agents,
+  since_ms) -> dict[agent, signed USDC]` — same size-weighted attribution
+  (deduped names, manual coins unattributed), kept per-agent;
+  `agents_funding_since` reimplemented as its sum, so there is exactly one
+  attribution path and the two can never diverge.
+- `exec/orders.py` `check_guardrails`: daily-loss measure now adds
+  `Σ_agent min(0, funding_agent)` instead of `min(0, Σ funding)` —
+  strictly tighter (tightening-only by construction), byte-identical when
+  every agent's funding shares a sign (all existing same-sign tests pass
+  unchanged). Attribution failure still degrades to fills-only with a
+  warning (never aborts ahead of risk-reducing flattens). Breach message
+  shows both the signed total and the counted clamp
+  (`funding $+42.00, counted $-8.00`) so an operator can reconstruct the
+  verdict.
+
+**Evidence.** 492 → **494 tests pass** (+2: guardrail halts on the masked
+mixed-sign book — aggregate clamp would pass it; breakdown per-agent
+values + dedup + sums-to-rollup pin); ruff clean. No live behavior change
+(single funding-sign roster).
+
+**What's next (loop).** Per-iteration: the four `--check-only` readouts
+(b_edge2b ~Jun 20 FIRST — read pocket_share against the 0.69/0.87/2.20
+baseline; b_g014 ~Jun 26; b_edge3 + b_edge2_1h ~Jul 10). B-EDGE2f at ≥30d
+paper books (~Jul 8); xmom paper card ~Jul 12. Idle queue: B-SCALE doc on
+real G2 evidence; possible pocket-aware reading aid in `hlbot experiment`
+output if the Jun-20 read needs it.

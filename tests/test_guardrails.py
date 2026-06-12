@@ -175,6 +175,27 @@ def test_guardrail_funding_income_never_widens_loss_headroom(conn):
     assert ok is False
 
 
+def test_guardrail_funding_clamp_is_per_agent(conn):
+    """One agent's funding income must not mask another's funding bleed: the
+    income clamp applies per agent, not to the aggregate. Here the book nets
+    +$42 funding (femr collects $50, twap pays $8), but only twap's −$8 may
+    count — with the −$5 fills loss that breaches the $10 limit. An aggregate
+    clamp would count $0 funding and pass."""
+    now = int(time.time() * 1000)
+    _insert_fill(conn, "femr_v1", now - 7_200_000, pnl=0.0, fee=0.0, coin="ETH")
+    _insert_fill(conn, "twap_mr_v1", now - 7_200_000, pnl=-5.0, fee=0.0, coin="ADA")
+    _insert_funding(conn, "ETH", now - 3_600_000, 50.0)
+    _insert_funding(conn, "ADA", now - 3_600_000, -8.0)
+
+    info = FakeInfo(account_value=1000.0)
+    cfg = GuardrailConfig(min_bot_capital=40.0, max_daily_loss=10.0,
+                          max_total_notional=5000.0)
+    ok, why = check_guardrails(conn, info, cfg, agents=["femr_v1", "twap_mr_v1"])
+
+    assert ok is False
+    assert "counted $-8.00" in why
+
+
 def test_guardrail_ignores_funding_on_manual_coins(conn):
     """Funding on a coin held only by a manual (unattributed) fill must not
     halt the bot — a human's carry trade is not the bot's loss."""

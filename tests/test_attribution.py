@@ -143,6 +143,28 @@ def test_agents_funding_since_rolls_up_and_dedups(conn):
     assert agents_funding_since(conn, ["xfund_carry_v1"], now - DAY) == pytest.approx(-3.0)
 
 
+def test_agents_funding_breakdown_per_agent_values(conn):
+    """The breakdown carries each agent's signed share separately (the
+    daily-loss guardrail clamps income per agent), dedups repeated names,
+    and sums to agents_funding_since."""
+    from hl_bot.scoring.metrics import agents_funding_breakdown, agents_funding_since
+
+    now = int(time.time() * 1000)
+    _fill(conn, "xfund_carry_v1", "BTC", now - 600_000, pnl=0.0, fee=0.0, sz=3.0)
+    _fill(conn, "funding_carry_v1", "ETH", now - 600_000, pnl=0.0, fee=0.0, sz=1.0)
+    _funding(conn, "BTC", now - 300_000, -3.0)
+    _funding(conn, "ETH", now - 300_000, 2.0)
+
+    bd = agents_funding_breakdown(
+        conn, ["xfund_carry_v1", "funding_carry_v1", "xfund_carry_v1"], now - DAY)
+    assert set(bd) == {"xfund_carry_v1", "funding_carry_v1"}
+    assert bd["xfund_carry_v1"] == pytest.approx(-3.0)
+    assert bd["funding_carry_v1"] == pytest.approx(2.0)
+    assert agents_funding_since(
+        conn, ["xfund_carry_v1", "funding_carry_v1"], now - DAY
+    ) == pytest.approx(sum(bd.values()))
+
+
 def test_funding_not_attributed_outside_holding_window(conn):
     now = int(time.time() * 1000)
     _decision(conn, "funding_carry_v1", "place", "SOL", now - 600_000)

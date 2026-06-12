@@ -206,22 +206,33 @@ def _agent_funding_payments(
     return out
 
 
+def agents_funding_breakdown(
+    conn: sqlite3.Connection, agents: list[str], since_ms: int | None
+) -> dict[str, float]:
+    """Funding attributed to each of ``agents`` since ``since_ms`` (signed USDC).
+
+    Guardrail-tier rollup of :func:`_agent_funding_payments`: size-weighted
+    fills attribution with the live decision-log fallback, totalled per agent
+    (deduplicated, so a repeated roster name cannot double-count a payment).
+    Kept per-agent so callers can apply per-agent semantics — the daily-loss
+    guardrail clamps each agent's funding income to zero BEFORE summing, so
+    one agent's collection cannot mask another's bleed. Coins held only by
+    manual size stay unattributed, exactly as in the scorecards.
+    """
+    return {
+        agent: sum(share for _, share in _agent_funding_payments(conn, agent, since_ms))
+        for agent in dict.fromkeys(agents)
+    }
+
+
 def agents_funding_since(
     conn: sqlite3.Connection, agents: list[str], since_ms: int | None
 ) -> float:
     """Total funding attributed to ``agents`` since ``since_ms`` (signed USDC).
 
-    Guardrail-tier rollup of :func:`_agent_funding_payments`: size-weighted
-    fills attribution with the live decision-log fallback, summed across the
-    given agents (deduplicated, so a repeated roster name cannot double-count
-    a payment). Coins held only by manual size stay unattributed, exactly as
-    in the scorecards.
+    Aggregate of :func:`agents_funding_breakdown` — same attribution, summed.
     """
-    return sum(
-        share
-        for agent in dict.fromkeys(agents)
-        for _, share in _agent_funding_payments(conn, agent, since_ms)
-    )
+    return sum(agents_funding_breakdown(conn, agents, since_ms).values())
 
 
 def _daily_pnl_sharpe(daily: list[float], periods_per_year: float = 365) -> float | None:

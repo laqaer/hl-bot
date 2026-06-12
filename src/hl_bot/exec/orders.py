@@ -313,23 +313,29 @@ def check_guardrails(
     # Funding is realized hourly cash flow on HL, but it lands in
     # funding_payments, not fills — a book parked against extreme funding can
     # bleed past the daily limit without printing a single fill (femr trades
-    # exactly that regime). Net 24h funding INCOME is clamped to zero: a
-    # funding loss tightens the halt, income never widens the loss headroom
-    # (symmetric inclusion would loosen the gate vs fills-only — operator call).
-    from ..scoring.metrics import agents_funding_since
+    # exactly that regime). 24h funding INCOME is clamped to zero PER AGENT:
+    # a funding loss tightens the halt, income never widens the loss headroom
+    # (symmetric inclusion would loosen the gate vs fills-only — operator
+    # call), and with mixed funding signs on the book one agent's collection
+    # must not mask another's bleed (aggregate clamping would count $0 for
+    # +$50 carry against a −$8 bleed). Strictly tighter than clamping the
+    # total; identical when every agent's funding shares a sign.
+    from ..scoring.metrics import agents_funding_breakdown
     try:
-        funding_24h = agents_funding_since(conn, bot_agents, since_ms)
+        funding_by_agent = agents_funding_breakdown(conn, bot_agents, since_ms)
     except Exception as e:  # noqa: BLE001
         # Degrade to the fills-only measure rather than abort the tick: a
         # guardrail crash here would also skip the risk-REDUCING flattens.
         log.warning("funding attribution for guardrail failed: %s", e)
-        funding_24h = 0.0
-    daily_pnl = fills_pnl + min(0.0, funding_24h)
+        funding_by_agent = {}
+    funding_24h = sum(funding_by_agent.values())
+    funding_loss = sum(min(0.0, v) for v in funding_by_agent.values())
+    daily_pnl = fills_pnl + funding_loss
     if daily_pnl < -abs(cfg.max_daily_loss):
         return False, (
             f"24h bot PnL ${daily_pnl:.2f} (fills ${fills_pnl:.2f}, "
-            f"funding ${funding_24h:+.2f}) < -${cfg.max_daily_loss:.2f} "
-            f"(agents={','.join(bot_agents)})"
+            f"funding ${funding_24h:+.2f}, counted ${funding_loss:+.2f}) "
+            f"< -${cfg.max_daily_loss:.2f} (agents={','.join(bot_agents)})"
         )
 
     asset_pos = (state or {}).get("assetPositions", []) or []

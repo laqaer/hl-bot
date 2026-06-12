@@ -356,9 +356,21 @@ Keep it ruthlessly prioritized: the top item should always be the highest-levera
   warning (a crash here would also skip risk-REDUCING flattens). Bundled
   fix: `_coin_holders_over_time` now reads live rows only — the equal-split
   fallback could leak PAPER decision-rows into REAL funding attribution
-  (scorecards too, not just the guardrail). Noted, not done: per-agent
-  clamping (stricter than the aggregate clamp). The duplicate user_state
-  fetch was fixed in Iter 69 (B-GR1 below).
+  (scorecards too, not just the guardrail). Per-agent clamping done Iter 77
+  (B-FUNDGR2 below). The duplicate user_state fetch was fixed in Iter 69
+  (B-GR1 below).
+- [x] **B-FUNDGR2 — Per-agent funding clamp in the daily-loss guardrail.**
+  Done (Iter 77, the B-FUNDGR noted-not-done follow-up): the income clamp
+  was aggregate — `min(0, Σ funding)` — so with mixed funding signs on the
+  book one agent's collection masked another's bleed (+$50 carry vs −$8
+  femr counted $0; the bleed never tightened the halt). Now
+  `scoring.agents_funding_breakdown` (per-agent totals, deduped;
+  `agents_funding_since` is its sum — one attribution path) and the
+  guardrail counts `Σ min(0, per-agent funding)` — strictly tighter,
+  byte-identical verdict when all agents' funding shares a sign (today's
+  single-strategy live book → no live behavior change). Breach message
+  shows total AND counted funding. This is the rail the B-SCALE
+  multi-agent book was missing alongside B-AGG.
 - [x] **B-GR1 — Guardrails judge the tick-start account snapshot.** Done
   (Iter 69, the Iter-68 found-(b) follow-up): `check_guardrails(account=)`
   consumes the `AccountState` femr_tick already fetched instead of
