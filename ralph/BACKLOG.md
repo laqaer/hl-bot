@@ -93,13 +93,16 @@ Keep it ruthlessly prioritized: the top item should always be the highest-levera
   `bot-owned: [TRX, XMR]`, no duplicate entries. Operator doc: deploy/README
   §Paper book (use `HLBOT_DB=data/hlbot_paper.sqlite` for a paper loop beside
   a live one).
-- [ ] **B-PAPER2 — femr paper-EXIT fidelity.** femr evaluates exits only on
-  exchange positions ("adopt" semantics), so a paper femr position never exits
-  — it just holds a capacity slot (entry-side dedup fixed in B-PAPER). Fix:
-  in paper ticks, synthesize `view.extra["live_positions"]` from the paper-book
-  replay (entry_px/sz known; position_value=sz·entry; liq/uPnL approximated)
-  so femr's section-1 exit logic runs on the paper book too. Other agents are
-  unaffected (their exits replay their own log).
+- [x] **B-PAPER2 — femr paper-EXIT fidelity.** Done (Iter 40): paper ticks
+  synthesize `view.extra["live_positions"]` from the paper-book replay
+  (`runtime.synthesize_paper_positions` — same dict shape the backtest engine
+  synthesizes from its own book: szi/entry from the log, value/uPnL marked at
+  the current mid, liq_px=0 disables proximity checks) so femr's section-1
+  exit ladder (stop/TP/max-hold/funding-normalized) runs on the paper book
+  too; the logged paper flatten then closes the book. Live ticks unchanged
+  (exchange-truth view, live book only). Live-fire verified: seeded +2% paper
+  BTC long → FEMR-EXIT TAKE-PROFIT at the real mid, slot rotated into a fresh
+  funding entry, round trip realized in `hlbot score --paper`.
 - [x] **B-PAPER3 — paper-book scorecard.** Done (Iter 39): `scoring/paper.py`
   replays the paper decision book (is_paper=1 place/flatten, same replay
   semantics as the agents' own `_position_state`) into synthetic fills under
@@ -113,8 +116,9 @@ Keep it ruthlessly prioritized: the top item should always be the highest-levera
   funding_pnl=0; a funding strategy (femr) can't be judged on its paper book
   until accrual over each hold is modeled from funding-rate history (the
   store/API already has the rates; accrue rate×held-notional per hour like
-  the backtest engine does). Low priority until femr paper exits exist
-  (B-PAPER2 — without exits there are no holds to score anyway).
+  the backtest engine does). Unblocked by B-PAPER2 (Iter 40): femr paper
+  holds now open AND close, so modeled accrual is the remaining gap before
+  femr's paper book is judgeable.
 - [ ] **B-PAPER3b — surface paper scorecards in track-record/goals.** The
   readout exists (`hlbot score --paper`); wire it into `hlbot track-record`
   as a clearly-labeled paper section, and consider letting goal evaluation

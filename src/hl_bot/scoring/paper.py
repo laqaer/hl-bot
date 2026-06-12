@@ -19,8 +19,10 @@ Honest limits:
 - Realized-only, matching the live scorecard: an entry contributes its fee and
   notional when placed, price PnL only on flatten. Open positions are listed
   separately (``paper_open_positions``), not marked to market.
-- Exit fidelity is the agent's own: a position the agent never flattens (femr
-  paper exits, B-PAPER2) never realizes PnL here either.
+- Exit fidelity is the agent's own: a position the agent never flattens never
+  realizes PnL here either. (femr's paper exits run since B-PAPER2 — paper
+  ticks feed its exit logic a position view synthesized from the paper book,
+  see ``runtime.synthesize_paper_positions``.)
 - Measurement only. Promotion to live stays human-gated; nothing here feeds
   auto-promotion.
 """

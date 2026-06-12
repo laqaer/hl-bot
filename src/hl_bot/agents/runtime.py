@@ -178,6 +178,65 @@ def positions_from_clearinghouse(st: dict) -> list[dict]:
     return out
 
 
+def synthesize_paper_positions(
+    conn: sqlite3.Connection,
+    agent: str,
+    mids: Mapping[str, float],
+) -> list[dict]:
+    """Replay an agent's paper book into the clearinghouse position-dict shape.
+
+    femr evaluates exits only on ``view.extra["live_positions"]`` ("adopt"
+    semantics), and a paper position has no exchange counterpart — so a paper
+    femr position could never exit; it just held a capacity slot forever
+    (B-PAPER2). Paper ticks pass this synthesized view instead, the same way
+    the backtest engine synthesizes ``live_positions`` from its own book
+    (``Backtester._view``), so one exit path runs in all three modes.
+
+    Replay semantics match the agents' own book replays: a ``place`` opens (a
+    re-place on a held coin overwrites), a ``flatten`` always closes. Rows that
+    could never have filled (missing side/sz/px) are skipped like
+    ``replay_paper_fills`` does — a zero entry px would also divide by zero in
+    femr's return math. Approximations, mirroring the backtest view:
+    ``position_value``/``unrealized_pnl`` are marked at the current mid (entry
+    px fallback when the mid is missing), ``liquidation_px`` is 0.0 (femr skips
+    liq-proximity checks at <= 0), and no funding accrues.
+    """
+    rows = conn.execute(
+        """
+        SELECT coin, action, side, sz, px FROM agent_decisions
+        WHERE agent = ? AND coin IS NOT NULL AND action IN ('place', 'flatten')
+          AND is_paper = 1
+        ORDER BY ts_ms ASC
+        """,
+        (agent,),
+    ).fetchall()
+    book: dict[str, dict] = {}
+    for r in rows:
+        coin = r["coin"]
+        if r["action"] == "flatten":
+            book.pop(coin, None)
+            continue
+        side, sz, px = r["side"], float(r["sz"] or 0), float(r["px"] or 0)
+        if side not in ("B", "A") or sz <= 0 or px <= 0:
+            continue
+        book[coin] = {"side": side, "sz": sz, "entry_px": px}
+    out: list[dict] = []
+    for coin, pos in book.items():
+        signed = pos["sz"] if pos["side"] == "B" else -pos["sz"]
+        mid = float(mids.get(coin) or 0) or pos["entry_px"]
+        out.append({
+            "coin": coin,
+            "szi": signed,
+            "entry_px": pos["entry_px"],
+            "position_value": abs(pos["sz"] * mid),
+            "unrealized_pnl": (mid - pos["entry_px"]) * signed,
+            "liquidation_px": 0.0,
+            "leverage": None,
+            "margin_used": 0.0,
+        })
+    return out
+
+
 def reconcile_agents(
     conn: sqlite3.Connection,
     all_positions: list[dict],

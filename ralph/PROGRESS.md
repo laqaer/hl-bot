@@ -1835,3 +1835,57 @@ evidence. (4) Not yet in track-record/goal evaluation (B-PAPER3b).
 currently hold slots forever and show as stale opens in the new table),
 B-PAPER3b (track-record paper section), B12 remainder. B-G014 unblocks
 ~2026-06-26 (store 1m span ≥14d).
+
+## Iteration 40 — 2026-06-12 — B-PAPER2: femr paper positions can finally exit
+
+**What.** femr's exit ladder (section 1: stop-loss / take-profit / max-hold /
+funding-normalized) only evaluates coins present in
+`view.extra["live_positions"]` — exchange truth, "adopt" semantics. A paper
+position has no exchange counterpart, so a paper femr position could NEVER
+exit: it held one of femr's 2 capacity slots forever and showed up as a
+permanently-stale open in the B-PAPER3 table. Fix, exactly as scoped in the
+backlog:
+
+- `runtime.synthesize_paper_positions(conn, agent, mids)` — pure replay of the
+  agent's paper book (is_paper=1 place/flatten, same book semantics as the
+  agents' own replays and `replay_paper_fills`: place opens / re-place
+  overwrites / flatten always closes; unfillable rows skipped — a 0 entry px
+  would divide-by-zero in femr's return math) into the clearinghouse position
+  dict shape, mirroring the backtest engine's own `_view` synthesis: szi/entry
+  from the log, position_value + unrealized_pnl marked at the current mid
+  (entry fallback when no mid), liquidation_px=0.0 (femr skips liq-proximity
+  at ≤0), no funding accrual.
+- `femr_tick` paper mode passes that synthesized list as
+  `view.extra["live_positions"]`; live mode is byte-for-byte the old behavior
+  (exchange positions ∩ live-book ownership). One exit path now runs in all
+  three modes (backtest / paper / live).
+
+**Why.** The paper book is the forward-test evidence pipeline (B-PAPER →
+B-EDGE2a → B-PAPER3). Without exits, femr's paper track could never produce a
+closed round trip — no realized PnL, no edge number, capacity slots leaking
+away — and the B-PAPER3 scorecard for femr was structurally meaningless.
+
+**Evidence.** 239 tests pass (6 new in test_paper_book.py: long/short dict
+shapes incl. uPnL sign + mark-at-mid, flatten-closes + re-place-overwrites,
+unfillable/live rows invisible, mid-missing falls back to entry,
+parametrized end-to-end femr STOP-LOSS and TAKE-PROFIT exits whose logged
+paper flatten closes the book for the next tick). Ruff clean. Live-fire
+(real API, scratch DB): seeded a paper BTC long at mid×0.98 → tick 1 logged
+`FEMR-EXIT BTC: TAKE-PROFIT (+2.04%)` is_paper=1 at the real mid ($63,380.5)
+and rotated the freed slot into a fresh XMR funding short; tick 2 held (no
+phantom re-flatten, no duplicate); `hlbot score --paper` now shows the femr
+round trip realized (+$0.23 net, +50.5bps on the seeded move) instead of a
+stale open. No live change: live ticks still read exchange truth + live book
+only.
+
+**Honest caveats.** (1) Paper exits price at the tick-time mid with modeled
+costs — no queue/latency reality; paper edge stays backtest-grade evidence.
+(2) funding_pnl in paper scorecards is still 0 (B-PAPER3a, now genuinely the
+last gap for judging femr's paper book — holds exist AND close as of this
+iteration). (3) The exit fires at tick cadence, not continuously: a wick that
+breaches the stop intra-tick and retraces is invisible, same as live.
+
+**What's next (loop).** B-PAPER3b (paper section in track-record / goal
+readout), B-PAPER3a (modeled funding accrual over paper holds), B12 remainder
+(fold the femr_tick preamble into a shared harness), B-EDGE2b re-confirm as
+the store grows. B-G014 unblocks ~2026-06-26 (store 1m span ≥14d).

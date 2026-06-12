@@ -419,6 +419,7 @@ def femr_tick(live: bool = False, execution: str = "taker", vwap_window: int = 0
         positions_from_clearinghouse,
         reconcile_agents,
         resolve_vwap_window,
+        synthesize_paper_positions,
     )
     from ..exec.orders import (
         HL_TRADER_ADDRESS,
@@ -562,8 +563,15 @@ def femr_tick(live: bool = False, execution: str = "taker", vwap_window: int = 0
             console.print(f"[yellow]reconciled stale ownership: {reconciled_all}[/yellow]")
 
     # FEMR sees only its own owned coins (adopts handled internally by name match).
-    owned_femr = bot_owned_coins(conn, agent="femr_v1", paper=not live)
-    bot_positions = [p for p in all_positions if p["coin"] in owned_femr]
+    # Paper ticks synthesize that view from the paper-book replay instead — a
+    # paper position has no exchange counterpart, so without this femr's exit
+    # logic (which only evaluates `live_positions`) could never close one; it
+    # held a capacity slot forever (B-PAPER2).
+    if live:
+        owned_femr = bot_owned_coins(conn, agent="femr_v1", paper=False)
+        bot_positions = [p for p in all_positions if p["coin"] in owned_femr]
+    else:
+        bot_positions = synthesize_paper_positions(conn, "femr_v1", view.mids)
     view.extra["live_positions"] = bot_positions
 
     # Partition live positions into bot-owned (any roster agent) vs manual via the
