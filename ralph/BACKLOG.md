@@ -395,7 +395,11 @@ each on ≥90d real history (`hlbot confirm` / `hlbot backtest --config`) before
   passes (taker +18.5, OOS +68.5 — IS sharpe 0.98 marginal). Clean dose-response
   in channel length (4h −7.4 → 96h +36.4 taker). Caveats: one 52d regime sample;
   maker fills optimistic for momentum (use taker numbers); edge lives at 15m
-  cadence / 48–96h horizon, NOT the live 1m loop. Remaining:
+  cadence / 48–96h horizon, NOT the live 1m loop. **Breadth caveat (Iter 48,
+  B-EDGE2d): the edge does NOT generalize cross-sectionally — a 10-coin fresh
+  universe FAILS G0 on the same window (OOS −31.5bps taker). The original-
+  universe PASS is real but regime+universe specific; promotion bar now
+  includes a breadth arm.** Remaining:
   - [x] **B-EDGE2a — paper wiring.** Done (Iter 38): `closes_key` config on
     breakout (default `"closes"`, backtests untouched), `closes_15m` feed in
     `_enrich_view` sized by `runtime.closes_15m_bars(agents)` (0 ⇒ zero extra
@@ -406,7 +410,25 @@ each on ≥90d real history (`hlbot confirm` / `hlbot backtest --config`) before
     XPL short!), tick 2 replayed it and held. Paper G1 evidence now accumulates
     wherever paper ticks run.
   - [ ] **B-EDGE2b — revalidate as the store grows** (15m span 52d→90d+):
-    rerun both confirms each few weeks; momentum is regime-fragile.
+    rerun the confirms each few weeks; momentum is regime-fragile. First rerun
+    done (Iter 48): original universe still PASSES on today's window under the
+    new `min_trades` floor (IS +20.1/226 tr, OOS +70.4/96 tr, taker). **Future
+    reruns are two-armed:** original universe AND the breadth universe
+    (`store.BREADTH_COINS`, now harvested at 15m) — a durable edge claim needs
+    the breadth arm to stop failing as samples lengthen.
+  - [x] **B-EDGE2d — out-of-universe breadth test.** Done (Iter 48): same
+    config (lb=384/ex=96) on 10 fresh liquid coins (CRV,ENA,LIT,NEAR,SUI,TON,
+    WLD,XMR,XPL,XRP — top fresh by 24h volume, full 52d history) **FAILS G0**:
+    full-sample taker +9.8bps but walk-forward IS +37.4 / OOS **−31.5bps**
+    (172 trades, Sharpe −2.91). Same calendar OOS window where the original
+    universe earns +70.4. Per-coin attribution (single-coin runs): original
+    OOS gain is BROAD majors-trend (ADA +154, SOL +118, ETH +112, BTC +100);
+    original IS was carried by ZEC (+156) + HYPE (+55); fresh OOS bleed is
+    broad mid-cap chop (NEAR −110, WLD −97, LIT −83, ENA −83). The 52d "edge"
+    = two regime pockets, not a universal cross-sectional property. breakout_v1
+    stays paper-only; numbers in PROGRESS. Breadth universe now harvested at
+    15m (`harvest extra_pairs`, `--breadth-coins`) so re-tests outgrow the
+    rolling ~52d API retention.
   - [x] **B-EDGE2c — quantify correlation to twap_mr_v1.** Done (Iter 36):
     `backtest/correlate.py` (UTC-day PnL bucketing + Pearson, tested) +
     `hlbot correlate` (two arms, per-arm config/vwap-window, same frames/cost

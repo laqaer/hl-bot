@@ -36,6 +36,18 @@ from .engine import Frame
 # walk-forwards will eventually need.
 DEFAULT_INTERVALS: tuple[str, ...] = ("1m", "5m", "15m")
 
+# Breadth-validation universe (B-EDGE2d): ten liquid coins OUTSIDE the main
+# harvest universe, on which breakout_v1's original-universe G0 PASS failed to
+# generalize (fresh-universe OOS −31.5bps taker on the very window the
+# original universe earned +70.4). Momentum-family breadth re-tests need this
+# history as samples lengthen, and the API's rolling ~52d 15m retention
+# destroys it otherwise. 15m ONLY — tripling these coins across 1m/5m would
+# double the per-run API load the B-G014 1m sample depends on.
+BREADTH_COINS: tuple[str, ...] = (
+    "CRV", "ENA", "LIT", "NEAR", "SUI", "TON", "WLD", "XMR", "XPL", "XRP",
+)
+BREADTH_INTERVALS: tuple[str, ...] = ("15m",)
+
 
 def store_dir(root: str | Path | None = None) -> Path:
     if root is not None:
@@ -261,14 +273,22 @@ def harvest(
     coins: list[str],
     intervals: tuple[str, ...] | list[str] = DEFAULT_INTERVALS,
     *,
+    extra_pairs: tuple[tuple[str, str], ...] | list[tuple[str, str]] = (),
     base_url: str = "https://api.hyperliquid.xyz",
     root: str | Path | None = None,
     now_ms: int | None = None,
     fetch: Callable[..., list[dict[str, Any]]] = fetch_candles,
 ) -> list[HarvestResult]:
-    """Sweep the coin × interval grid; per-pair failures land in ``.error``."""
+    """Sweep the coin × interval grid; per-pair failures land in ``.error``.
+
+    ``extra_pairs`` appends individual (coin, interval) pairs outside the
+    cross-product (e.g. the breadth universe at 15m only), deduped against it.
+    """
+    pairs = [(coin, interval) for coin in coins for interval in intervals]
+    for pair in extra_pairs:
+        if pair not in pairs:
+            pairs.append(pair)
     return [
         harvest_one(coin, interval, base_url=base_url, root=root, now_ms=now_ms, fetch=fetch)
-        for coin in coins
-        for interval in intervals
+        for coin, interval in pairs
     ]

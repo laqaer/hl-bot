@@ -599,6 +599,8 @@ def backtest_fetch(
 def harvest_candles(
     coins: str = "ADA,AVAX,BTC,DOGE,ETH,HYPE,LINK,SOL,TRX,ZEC",
     intervals: str = "1m,5m,15m",
+    breadth_coins: str = "CRV,ENA,LIT,NEAR,SUI,TON,WLD,XMR,XPL,XRP",
+    breadth_intervals: str = "15m",
 ):
     """Append the latest fine-interval candles to the rolling local store (B-HIST).
 
@@ -609,13 +611,23 @@ def harvest_candles(
     data/candle_store/{coin}_{interval}.json.gz (gitignored). Exits non-zero if
     any pair failed so the systemd run shows up red; successful pairs are saved
     regardless.
+
+    --breadth-coins is the out-of-universe validation set (B-EDGE2d), harvested
+    only at --breadth-intervals (default 15m) so breadth re-tests of the
+    momentum family outgrow the API's rolling retention without doubling the
+    1m/5m load. --breadth-coins "" disables it.
     """
     from ..backtest.store import harvest
 
     _, s = _conn()
     coin_list = [c.strip() for c in coins.split(",") if c.strip()]
     interval_list = [i.strip() for i in intervals.split(",") if i.strip()]
-    results = harvest(coin_list, interval_list, base_url=s.hl_api_url)
+    extra = [
+        (c.strip(), i.strip())
+        for c in breadth_coins.split(",") if c.strip()
+        for i in breadth_intervals.split(",") if i.strip()
+    ]
+    results = harvest(coin_list, interval_list, extra_pairs=extra, base_url=s.hl_api_url)
     table = Table(title="Candle harvest")
     for col in ("coin", "interval", "added", "total", "span", "status"):
         table.add_column(col)

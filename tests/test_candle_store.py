@@ -119,6 +119,37 @@ def test_harvest_sweep_isolates_failures(tmp_path):
     assert load_store(store_path("GOOD", "1m", tmp_path)) == [_bar(0)]
 
 
+def test_harvest_extra_pairs_swept_and_deduped(tmp_path):
+    calls: list[tuple[str, str]] = []
+
+    def fake_fetch(coin, interval, start, end, *, base_url):
+        calls.append((coin, interval))
+        return [_bar(0)]
+
+    results = harvest(
+        ["BTC"], ("1m", "15m"),
+        extra_pairs=[("XRP", "15m"), ("BTC", "1m")],  # second one already in the grid
+        root=tmp_path, now_ms=MIN, fetch=fake_fetch,
+    )
+    assert calls == [("BTC", "1m"), ("BTC", "15m"), ("XRP", "15m")]
+    assert [r.error for r in results] == [None, None, None]
+    assert load_store(store_path("XRP", "15m", tmp_path)) == [_bar(0)]
+
+
+def test_breadth_universe_cli_defaults_match_store_constants():
+    # The CLI's literal defaults are what the loop/timer actually harvest;
+    # drifting from the documented constants would silently change coverage.
+    import inspect
+
+    from hl_bot.backtest.store import BREADTH_COINS, BREADTH_INTERVALS
+    from hl_bot.cli.main import harvest_candles
+
+    params = inspect.signature(harvest_candles).parameters
+    assert params["breadth_coins"].default == ",".join(BREADTH_COINS)
+    assert params["breadth_intervals"].default == ",".join(BREADTH_INTERVALS)
+    assert not set(BREADTH_COINS) & set(params["coins"].default.split(","))
+
+
 def test_noop_harvest_adds_nothing(tmp_path):
     path = store_path("BTC", "1m", tmp_path)
     save_store(path, [_bar(0)])

@@ -2344,3 +2344,80 @@ verifying top-ups). Meanwhile: B-EDGE2b breakout re-confirm as the 15m store
 grows (now under the trade floor), B12j vestigial `tick` unification, or B14a
 deploy-automation gaps. P0 edge hunting shifts fully to the momentum/
 mean-reversion families — carry is closed.
+
+## Iteration 48 — 2026-06-12 — B-EDGE2d: breakout_v1 fails out-of-universe — the 52d edge is regime+universe pockets, not a general property
+
+**What.** B-G014 still blocked (1m store ~3.7d, needs ≥14d). Highest-leverage
+unblocked P0: breakout_v1's G0 PASS (Iter 35) was measured only on the 10-coin
+universe inherited from the *carry* hunt — never on coins it wasn't tuned on.
+Ran the breadth test today via the API's ~52d 15m retention: same validated
+config (lb=384/ex=96, w=385, 15m) on 10 fresh liquid coins —
+CRV,ENA,LIT,NEAR,SUI,TON,WLD,XMR,XPL,XRP (top fresh by 24h volume, every one
+verified to carry the full ~52d of 15m history; universe checked before
+results were seen).
+
+**Results (taker = honest arm; maker similar throughout).**
+- Fresh universe full sample: +9.8bps taker / +12.1 maker, 434 trades, win
+  40%, Sharpe +1.36, maxDD −18.5% — positive but far below the original
+  universe's +36.4.
+- Fresh universe walk-forward: **❌ FAIL** — IS +37.4bps (266 tr, sh +4.35),
+  OOS **−31.5bps** (172 tr, sh −2.91). The full-sample positive is entirely
+  the early window. Maker arm fails identically (OOS −33.8).
+- Control: original ADA…ZEC universe re-confirmed from today's store
+  (5018 frames, 52.3d): **✅ PASS** — IS +20.1 (226 tr) / OOS +70.4bps
+  (96 tr), robust to taker-3×. Clears the new min_trades floor → this also
+  completes B-EDGE2b's first scheduled rerun. So the breadth failure is the
+  *universe*, not the window: same recent ~16 calendar days, original coins
+  +70.4 OOS vs fresh coins −31.5.
+
+**Per-coin attribution (single-coin engine runs, taker, same 70/30 split).**
+Original-universe OOS gain is BROAD majors trend — ADA +154, SOL +118,
+ETH +112, BTC +100, DOGE +67, TRX +60, ZEC +46, LINK +49, AVAX +15bps; only
+HYPE −45. But original IS is mostly NEGATIVE per-coin (BTC −17, ETH −20,
+ADA −31…) — IS was carried by ZEC (+156) and HYPE (+55). Fresh-universe OOS
+bleed is broad mid-cap chop: NEAR −110, WLD −97, LIT −83, ENA −83, XMR −33,
+XPL −32; only TON +33 / SUI +8 green.
+
+**Interpretation (the finding).** breakout_v1's 52d evidence decomposes into
+two pockets: (1) an early ZEC/HYPE trending pocket, (2) a recent synchronized
+majors trend. Mid-cap narrative alts chopped with false breaks through the
+same weeks. Donchian momentum on HL is therefore regime+universe dependent —
+NOT a deploy-anywhere edge. The diversification thesis (corr ≈ −0.1 vs
+twap_mr) still holds, and paper forward-testing continues, but the promotion
+bar must now include a breadth arm: an edge that only exists on the coins it
+was discovered on is curve-fitting with extra steps until proven otherwise.
+
+**Changed (code).** Rolling retention destroys the breadth sample (~52d and
+sliding), so future re-tests need their history preserved starting now:
+- `backtest/store.py` — `BREADTH_COINS`/`BREADTH_INTERVALS` constants (the 10
+  fresh coins, 15m only) + `harvest(extra_pairs=…)` sweeps individual
+  (coin, interval) pairs outside the cross-product, deduped against it.
+- `cli/main.py` — `harvest-candles` gains `--breadth-coins`/
+  `--breadth-intervals` (defaults = the constants; `""` disables): breadth
+  coins harvest at 15m ONLY so the per-run API load on the B-G014-critical
+  1m harvest doesn't double. loop.sh/timer pick this up with zero changes.
+- First harvest run: 40/40 pairs ok, breadth coins backfilled 52.1d × 5001
+  bars each.
+
+**Evidence.** 278 → **280 tests pass** (new: extra_pairs swept + deduped with
+order pinned; CLI breadth defaults match the store constants and don't overlap
+the main universe). `ruff check src tests scripts` clean. All numbers
+reproducible: fresh-universe frames cached
+(`CRV-…-XRP_15m_52d_w385.json.gz`), original universe from the store via
+`--source store --days 0`, attribution via single-coin engine runs.
+
+**Honest caveats.** (1) Single-coin attribution ≠ portfolio attribution — the
+ranking/concurrency interactions differ; treat it as qualitative. (2) Picking
+the fresh universe by *today's* volume has mild hindsight bias (today-liquid
+correlates with recently-moved); it biases TOWARD finding momentum, which
+makes the FAIL more damning, not less. (3) One 52d window: the breadth FAIL
+is as regime-sampled as the original PASS — that symmetry is exactly the
+point. (4) The fresh-frames API window ends ~2h before the store window;
+immaterial at 4993 vs 5018 frames.
+
+**What's next (loop).** B-G014 when 1m span ≥14d (~Jun 23–26; top-ups
+verified this iteration, 3.7d). B-EDGE2b reruns are now two-armed (original +
+breadth universes, both under the min_trades floor). P0 edge hunt continues:
+momentum family needs either a regime/universe selector (what *makes* a coin
+trend-clean?) or a different family; breakout_v1 accrues paper evidence
+meanwhile. B12j / B14a if idle.
