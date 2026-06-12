@@ -43,6 +43,14 @@ def _paper(conn, agent, t_ms, action, coin, side=None, sz=None, px=None):
     )
 
 
+def _funding(conn, coin, t_ms, usdc):
+    conn.execute(
+        """INSERT INTO funding_payments(time_ms, coin, usdc, szi, funding_rate, raw_json)
+           VALUES(?,?,?,?,?,?)""",
+        (t_ms, coin, usdc, 0.0, 0.0, "{}"),
+    )
+
+
 def test_track_record_structure_and_numbers(conn):
     now = int(time.time() * 1000)
     day = 86_400_000
@@ -262,6 +270,88 @@ def test_cli_track_record_marks_open_paper(tmp_path, monkeypatch):
                if ln.startswith("| breakout_v1"))
     assert row.rstrip().endswith("| — |")
     c.close()
+
+
+DAY = 86_400_000
+
+
+def test_bot_composite_excludes_manual_and_null(conn):
+    """B-BOTREC: the bot composite is B-PNL-SPLIT's criterion applied to the
+    record — named agents + bot-tagged 'unknown:' cloids in; the operator's
+    manual fills and NULL-agent (pre-attribution legacy) fills out."""
+    from hl_bot.reports.track_record import BOT_NOTE, to_html
+
+    now = int(time.time() * 1000)
+    _fill(conn, "twap_mr_v1", now - 2 * DAY, pnl=5.0)        # bot
+    _fill(conn, "unknown:0xabc", now - DAY, pnl=3.0)         # bot-tagged cloid
+    _fill(conn, "manual", now, pnl=-100.0)                   # operator
+    _fill(conn, None, now, pnl=-50.0)                        # legacy, not ours
+
+    tr = build_track_record(conn)
+    bot = tr["bot"]
+    assert bot["n_trades"] == 2
+    assert bot["net_pnl"] == pytest.approx(7.8)              # 5-0.1 + 3-0.1
+    assert bot["fills_pnl"] == pytest.approx(7.8)
+    assert bot["funding_pnl"] == 0.0
+    # Cumulative-PnL curve: (first day, 0) then day-end values; ends at net.
+    assert bot["pnl_curve"][0][1] == 0.0
+    assert bot["pnl_curve"][-1][1] == pytest.approx(bot["net_pnl"])
+    assert bot["n_days"] == 2 and len(bot["pnl_curve"]) == 3
+    # unknown:* stays out of the per-agent table (not a nameable agent) but
+    # inside the composite — the composite is the honest aggregate.
+    assert [a["agent"] for a in tr["agents"]] == ["twap_mr_v1"]
+
+    assert tr["bot_note"] == BOT_NOTE
+    md = to_markdown(tr)
+    assert "## Bot record" in md and "bot-only composite" in md
+    html = to_html(tr)
+    assert "Bot record" in html and "bot-only composite" in html
+    assert "$+7.80" in md and "$+7.80" in html
+
+
+def test_bot_composite_attributed_funding_manual_share_stays_out(conn):
+    """Funding joins the composite via the size-weighted attribution; the
+    share earned by manual size never counts as bot PnL."""
+    base = (int(time.time() * 1000) // DAY) * DAY
+    hour = 3_600_000
+    _fill(conn, "femr_v1", base + hour, pnl=0.0)             # bot +1 BTC
+    _fill(conn, "manual", base + hour, pnl=0.0)              # manual +1 BTC
+    _funding(conn, "BTC", base + 2 * hour, 2.0)              # split 50/50
+
+    bot = build_track_record(conn)["bot"]
+    assert bot["funding_pnl"] == pytest.approx(1.0)          # bot's half only
+    assert bot["net_pnl"] == pytest.approx(1.0 - 0.1)        # + its fill fee
+
+
+def test_agent_daily_series_includes_attributed_funding(conn):
+    """sharpe(d)/maxDD$ judge the same revenue line as the net column: a
+    funding bleed on a no-fill day must show in the drawdown (it already
+    showed in net via score_agent)."""
+    base = (int(time.time() * 1000) // DAY) * DAY - 10 * DAY
+    hour = 3_600_000
+    for i in range(3):                                       # +1/day, 3 days
+        _fill(conn, "femr_v1", base + i * DAY + hour, pnl=1.0, fee=0.0)
+    _funding(conn, "BTC", base + 3 * DAY + hour, -5.0)       # day 4: bleed
+
+    tr = build_track_record(conn)
+    ag = next(a for a in tr["agents"] if a["agent"] == "femr_v1")
+    assert ag["net_pnl"] == pytest.approx(-2.0)              # 3 - 5
+    # Fills-only series was [1,1,1] -> maxDD$ 0; funding lands on its day.
+    assert ag["max_drawdown_usd"] == pytest.approx(-5.0)
+    assert tr["bot"]["net_pnl"] == pytest.approx(-2.0)
+    assert tr["bot"]["max_drawdown_usd"] == pytest.approx(-5.0)
+
+
+def test_bot_composite_empty_book(conn):
+    """Manual-only history: the composite renders honestly empty."""
+    from hl_bot.reports.track_record import to_html
+
+    _fill(conn, "manual", int(time.time() * 1000), pnl=-100.0)
+    tr = build_track_record(conn)
+    bot = tr["bot"]
+    assert bot["n_trades"] == 0 and bot["net_pnl"] == 0.0
+    assert bot["pnl_curve"] == [] and bot["sharpe_daily"] is None
+    assert "needs ≥1 active day" in to_html(tr)
 
 
 def test_html_export_has_chart_and_stats(conn, tmp_path):

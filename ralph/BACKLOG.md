@@ -107,6 +107,30 @@ Keep it ruthlessly prioritized: the top item should always be the highest-levera
   CANNOT split (equity_snapshots are address-wide) so all three exports carry
   an explicit shared-account caveat (`ACCOUNT_NOTE`). Operator: arm via
   /etc/hl-bot/env (deploy/README §Monitoring), e.g. −3%/day ≈ −$20 today.
+- [x] **B-BOTREC — Bot-only composite record headlines the track record +
+  funding-consistent daily series.** Done (Iter 92): the track record's
+  headline was the account-wide equity curve — on the shared address it is
+  dominated by the operator's manual book (live-fired: bot composite
+  **+$201.74 / 10d, sharpe(d) +6.12, maxDD$ −$77.65, 1014 trades** while the
+  account headline reads −5.0%), and there was no aggregate bot number an
+  allocator could underwrite. Now `_bot_record`: every bot-attributed fill
+  (B-PNL-SPLIT's criterion: agent NOT NULL ≠ manual; unknown:* included)
+  plus size-weighted attributed funding, bucketed by UTC day → net/fills/
+  funding split, sharpe(d), maxDD$, cumulative-PnL curve (day-end points,
+  zero anchor) rendered FIRST in md/html/json with its own SVG + basis note.
+  Consistency fix found while there: per-agent `sharpe_daily`/`maxDD$` were
+  computed fills-only while the net column beside them includes attributed
+  funding (and the paper section's series includes modeled funding) — a
+  funding strategy's revenue line was invisible to exactly the columns that
+  judge its risk; `_agent_daily_pnl` now folds attributed funding onto its
+  day. 4 new tests (manual/NULL excluded + unknown:* included, manual's
+  funding share stays out, funding-day drawdown shows, empty-book render).
+- [ ] **B-CALMAR — Account calmar prints absurd compounding on short
+  windows.** Live track record shows `calmar +7.9e45`: `score_agent`'s
+  account arm annualizes `(1+mean_daily_ret)^365` on a days-old curve with a
+  hot mean — meaningless and embarrassing on a public-grade artifact. Cap or
+  suppress (None) when the window is shorter than ~30d, or report
+  non-annualized return/DD. Small, cosmetic-honesty.
 - [x] **B-PAPER — Make the paper book exist + paper/live book separation.** Done
   (Iter 37). Found while scoping B-EDGE2a: paper `femr_tick` NEVER logged
   place/flatten (gap dates to the original femr_tick — `defer_exec_logging`

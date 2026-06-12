@@ -1,11 +1,19 @@
 """Track-record export — the artifact capital/AUM decisions are made on.
 
-Turns the ground-truth tables into a shareable, auditable record: account equity
-curve + per-agent net/edge/Sharpe/drawdown across standard windows, exported as
-JSON (machine) and Markdown (human). This is the Path-C deliverable in
-``docs/ROADMAP_TO_1M.md`` — a vault depositor or allocator needs exactly this
-before committing capital, and it doubles as the evidence the supervisor's
+Turns the ground-truth tables into a shareable, auditable record: a bot-only
+composite (daily fills + attributed funding, cumulative-PnL curve), the account
+equity curve, and per-agent net/edge/Sharpe/drawdown across standard windows,
+exported as JSON (machine) and Markdown (human). This is the Path-C deliverable
+in ``docs/ROADMAP_TO_1M.md`` — a vault depositor or allocator needs exactly
+this before committing capital, and it doubles as the evidence the supervisor's
 go-live gates reference.
+
+The bot composite leads (B-BOTREC): the trading address is shared with the
+operator's manual book, so the account-wide headline can be dominated by
+manual trading (seen live: account −$235/24h while the bot's own book was
++$0.42). The composite is the aggregate an allocator can actually underwrite —
+every bot-attributed fill plus size-weighted attributed funding, untouched by
+deposits, withdrawals, or manual fills.
 
 Everything is computed from the same tables and ``score_agent`` used live, so the
 track record can never flatter the live numbers.
@@ -29,7 +37,7 @@ import time
 from pathlib import Path
 from typing import Any
 
-from ..scoring.metrics import list_agents, score_agent
+from ..scoring.metrics import _agent_funding_payments, list_agents, score_agent
 from ..scoring.paper import (
     list_paper_agents,
     mark_paper_positions,
@@ -54,8 +62,20 @@ ACCOUNT_NOTE = (
     "shared account — the equity curve and headline figures read the WHOLE "
     "address (equity snapshots + all fills, including the operator's manual "
     "trades); they are not a bot-only record until the bot trades its own "
-    "address/vault. Bot-only evidence is the per-agent table "
-    "(cloid-attributed fills)."
+    "address/vault. Bot-only evidence is the bot record above + the per-agent "
+    "table (cloid-attributed fills)."
+)
+
+# B-PNL-SPLIT's criterion, applied to the record an allocator reads: bot =
+# fills with a non-NULL agent other than 'manual' ('unknown:' prefixes are
+# bot-tagged cloids that lost their name, still ours; NULL = pre-attribution
+# legacy, not ours), plus each bot agent's size-weighted attributed funding.
+BOT_NOTE = (
+    "bot-only composite — closed_pnl − fee over every bot-attributed fill "
+    "(named agents + bot-tagged 'unknown:' cloids; the operator's manual and "
+    "pre-attribution fills excluded) plus size-weighted attributed funding, "
+    "bucketed by UTC day. Cumulative PnL, not account equity: deposits, "
+    "withdrawals and manual trading never touch it."
 )
 
 
@@ -67,7 +87,25 @@ def _account_equity_curve(conn: sqlite3.Connection) -> list[tuple[int, float]]:
     return [(int(r[0]), float(r[1])) for r in rows]
 
 
+_DAY_MS = 86_400_000
+
+
+def _gap_filled(buckets: dict[int, float]) -> list[float]:
+    if not buckets:
+        return []
+    lo, hi = min(buckets), max(buckets)
+    return [buckets.get(d, 0.0) for d in range(lo, hi + 1)]
+
+
 def _agent_daily_pnl(conn: sqlite3.Connection, agent: str) -> list[float]:
+    """Gap-filled daily net PnL: fills (closed_pnl − fee) + attributed funding.
+
+    Funding rides the same size-weighted attribution as ``score_agent``'s net,
+    so the sharpe(d)/maxDD$ columns judge the same revenue line as the net
+    column beside them (a funding strategy's main revenue line was invisible
+    to them before) and mean the same thing as the paper section's
+    modeled-funding series (``paper_daily_pnl``).
+    """
     rows = conn.execute(
         "SELECT time_ms, COALESCE(closed_pnl,0) - COALESCE(fee,0) AS net "
         "FROM fills WHERE agent = ? ORDER BY time_ms ASC",
@@ -75,12 +113,59 @@ def _agent_daily_pnl(conn: sqlite3.Connection, agent: str) -> list[float]:
     ).fetchall()
     buckets: dict[int, float] = {}
     for r in rows:
-        day = int(r[0] // 86_400_000)
+        day = int(r[0] // _DAY_MS)
         buckets[day] = buckets.get(day, 0.0) + float(r[1])
-    if not buckets:
-        return []
-    lo, hi = min(buckets), max(buckets)
-    return [buckets.get(d, 0.0) for d in range(lo, hi + 1)]
+    for t, share in _agent_funding_payments(conn, agent, None):
+        day = int(t // _DAY_MS)
+        buckets[day] = buckets.get(day, 0.0) + share
+    return _gap_filled(buckets)
+
+
+def _bot_record(conn: sqlite3.Connection) -> dict[str, Any]:
+    """Aggregate bot-only record (the BOT_NOTE basis) + cumulative-PnL curve.
+
+    The curve's x points are UTC day boundaries: ``(first_day, 0.0)`` then
+    cumulative net through each day's end, so a single active day still draws
+    a two-point line and the y values are flatten-at-day-end book values.
+    """
+    fills = conn.execute(
+        "SELECT time_ms, COALESCE(closed_pnl,0) - COALESCE(fee,0) AS net "
+        "FROM fills WHERE agent IS NOT NULL AND agent != 'manual'"
+    ).fetchall()
+    buckets: dict[int, float] = {}
+    fills_pnl = 0.0
+    for r in fills:
+        day = int(r[0] // _DAY_MS)
+        buckets[day] = buckets.get(day, 0.0) + float(r[1])
+        fills_pnl += float(r[1])
+    funding_pnl = 0.0
+    bot_agents = [
+        a for a in list_agents(conn) if a not in ("_account", "manual")
+    ]
+    for agent in bot_agents:
+        for t, share in _agent_funding_payments(conn, agent, None):
+            day = int(t // _DAY_MS)
+            buckets[day] = buckets.get(day, 0.0) + share
+            funding_pnl += share
+    daily = _gap_filled(buckets)
+    curve: list[tuple[int, float]] = []
+    if buckets:
+        lo = min(buckets)
+        curve.append((lo * _DAY_MS, 0.0))
+        cum = 0.0
+        for i, x in enumerate(daily):
+            cum += x
+            curve.append(((lo + i + 1) * _DAY_MS, cum))
+    return {
+        "n_trades": len(fills),
+        "fills_pnl": fills_pnl,
+        "funding_pnl": funding_pnl,
+        "net_pnl": fills_pnl + funding_pnl,
+        "sharpe_daily": _daily_sharpe(daily),
+        "max_drawdown_usd": _dollar_max_drawdown(daily),
+        "n_days": len(daily),
+        "pnl_curve": curve,
+    }
 
 
 def _daily_sharpe(daily: list[float]) -> float | None:
@@ -195,6 +280,8 @@ def build_track_record(
 
     out: dict[str, Any] = {
         "generated_ms": now_ms,
+        "bot": _bot_record(conn),
+        "bot_note": BOT_NOTE,
         "account": account,
         "account_note": ACCOUNT_NOTE,
         "equity_curve": curve,
@@ -209,6 +296,20 @@ def build_track_record(
 def to_markdown(track: dict[str, Any]) -> str:
     a = track["account"]
     lines = ["# hl-bot track record", ""]
+    b = track.get("bot")
+    if b is not None:
+        lines.append("## Bot record")
+        lines.append(
+            f"- net `${b['net_pnl']:+.2f}` (fills `${b['fills_pnl']:+.2f}` "
+            f"+ funding `${b['funding_pnl']:+.2f}`) · trades `{b['n_trades']}` "
+            f"over `{b['n_days']}` days"
+        )
+        lines.append(
+            f"- sharpe(d) `{_num(b.get('sharpe_daily'))}` "
+            f"· maxDD$ `{_money(b.get('max_drawdown_usd'))}`"
+        )
+        lines.append(f"_{track['bot_note']}_")
+        lines.append("")
     lines.append("## Account")
     if a.get("start_value") is not None:
         lines.append(
@@ -269,11 +370,12 @@ def _money(v: float | None) -> str:
 
 
 def _equity_svg(curve: list[tuple[int, float]], width: int = 820, height: int = 240,
-                pad: int = 30) -> str:
-    """Inline SVG line chart of the equity curve — no external deps, shareable."""
+                pad: int = 30,
+                empty_msg: str = "(equity curve needs ≥2 snapshots)") -> str:
+    """Inline SVG line chart of a (ts, value) curve — no external deps, shareable."""
     vals = [v for _, v in curve]
     if len(vals) < 2:
-        return '<p class="muted">(equity curve needs ≥2 snapshots)</p>'
+        return f'<p class="muted">{empty_msg}</p>'
     lo, hi = min(vals), max(vals)
     rng = (hi - lo) or 1.0
     n = len(vals)
@@ -309,6 +411,21 @@ def to_html(track: dict[str, Any]) -> str:
     if a.get("start_value") is not None:
         eq = (f"${a['start_value']:,.2f} → ${a['end_value']:,.2f} "
               f"({_pct(a.get('total_return_pct'))})")
+    bot_section = ""
+    b = track.get("bot")
+    if b is not None:
+        bot_svg = _equity_svg(
+            b.get("pnl_curve") or [],
+            empty_msg="(bot PnL curve needs ≥1 active day)")
+        bot_section = (
+            "<h2>Bot record</h2>"
+            f"<p><b>net ${b['net_pnl']:+.2f}</b> "
+            f"(fills ${b['fills_pnl']:+.2f} + funding ${b['funding_pnl']:+.2f}) "
+            f"· {b['n_trades']} trades over {b['n_days']} days</p>{bot_svg}"
+            f"<p class=\"muted\">sharpe(d) {_num(b.get('sharpe_daily'))} · "
+            f"maxDD$ {_money(b.get('max_drawdown_usd'))}</p>"
+            f"<p class=\"muted\">{track['bot_note']}</p>"
+        )
     rows = "".join(
         f"<tr><td>{ag['agent']}</td><td>{ag['n_trades']}</td>"
         f"<td>${ag['net_pnl']:+.2f}</td><td>{_bps(ag['edge_bps'])}</td>"
@@ -347,6 +464,7 @@ def to_html(track: dict[str, Any]) -> str:
         "</style></head><body>"
         "<h1>hl-bot track record</h1>"
         f"<p class=\"muted\">generated {gen}</p>"
+        f"{bot_section}"
         "<h2>Account equity</h2>"
         f"<p><b>{eq}</b></p>{svg}"
         f"<p class=\"muted\">sharpe {_num(a.get('sharpe'))} · max DD "

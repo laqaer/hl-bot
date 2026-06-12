@@ -5104,3 +5104,63 @@ Idle queue: B-STOREBKP2 once the operator arms HLBOT_STORE_BACKUP_S3;
 operator nudges — wire HEALTHCHECK_URL, consider arming
 HLBOT_DAILY_LOSS_FLOOR, consider arming the S3 store backup; stale `[~]`
 B4-RUN header near BACKLOG top duplicates the closed item (cosmetic).
+
+## Iteration 92 — 2026-06-12 — B-BOTREC: bot-only composite record headlines the track record
+
+**Ripeness checks** (per-iteration readout): b_edge2b NOT RIPE (15m span
+52.7d < 60d, ~Jun 20); b_g014 NOT RIPE (1m span 4.3d < 14d, ~Jun 26). Store
+fresh (worst lag 7.1m, harvest skipped; peer sync +0/+0).
+
+**The work.** The track record — the Path-C artifact capital decisions are
+made on — led with the account-wide equity curve. On the shared address that
+headline is the operator's manual book wearing the bot's name: live today the
+account reads **−5.0% equity** while the bot's own aggregate is **+$201.74
+over 10 days**. B-PNL-SPLIT fixed this for `hlbot health`'s 24h number;
+nothing fixed it for the allocator-facing record, which had per-agent rows
+but no aggregate bot curve/net/sharpe/DD at all.
+
+**Changed** (`reports/track_record.py`):
+- `_bot_record`: bot = fills with agent NOT NULL ≠ 'manual' (B-PNL-SPLIT's
+  criterion — `unknown:*` bot-tagged cloids included, NULL pre-attribution
+  legacy excluded) + each bot agent's size-weighted attributed funding
+  (`_agent_funding_payments`, manual-held shares stay out), bucketed by UTC
+  day → fills/funding/net split, sharpe(d), maxDD$, n_trades, n_days, and a
+  cumulative-PnL curve (zero anchor at first day, day-end points). Rendered
+  FIRST in all three exports — own SVG in HTML, explicit BOT_NOTE basis
+  ("cumulative PnL, not account equity: deposits, withdrawals and manual
+  trading never touch it"); ACCOUNT_NOTE now points at it.
+- **Consistency fix found while there:** the live per-agent
+  `sharpe_daily`/`max_drawdown_usd` columns were computed from a FILLS-ONLY
+  daily series while the `net` column beside them includes attributed funding
+  (score_agent), and the paper section's series includes modeled funding
+  (paper_daily_pnl's "matches live semantics" claim was false). A funding
+  strategy's revenue line was invisible to exactly the columns that judge its
+  risk. `_agent_daily_pnl` now folds attributed funding onto its UTC day —
+  same attribution path as everything else (one source of truth).
+
+**Evidence.** 585 → **589 tests** pass (+4: manual/NULL excluded +
+unknown:* included + curve shape + note rendering; manual's funding share
+stays out of the composite; a funding bleed on a no-fill day now shows in
+maxDD$ (−5 vs fills-only 0) and matches net; manual-only book renders
+honestly empty); ruff clean. Live-fired read-only on the deploy DB:
+composite +$201.74 (fills +$199.02, funding +$2.72) / 1014 trades / 10 days,
+sharpe(d) +6.12, maxDD$ −$77.65 — and it cross-foots the per-agent table
+(twap_mr_v1 +$161.61 + femr_v1 +$40.13). JSON curve 11 points ending at net;
+HTML renders 2 SVGs, bot section first.
+
+**Found.** Account `calmar` prints +7.9e45 on the live record —
+`(1+mean)^365` annualization on a days-old hot curve. Filed B-CALMAR
+(cosmetic-honesty, small). Also: the Iter-89 idle-queue "stale [~] B4-RUN
+header" is already gone — both B4-RUN entries read [x]; item moot.
+
+**Live watch.** Health: WARN only on the standing pager nag (tick 2.2m,
+ingest 2.4m, paper tick 0.1m, none paused). pnl_24h: bot $+0.42 (account
+−$234.86, manual −$235.28). Equity $670.63 (account-level, includes the
+operator's manual book).
+
+**What's next (loop).** Per-iteration readouts unchanged (b_edge2b ~Jun 20,
+b_g014 ~Jun 26, b_edge3 + b_edge2_1h reruns ~Jul 10, B-EDGE2f paper readout
+~Jul 12). Idle queue: B-CALMAR (small, this iteration's find); B-STOREBKP2
+once the operator arms HLBOT_STORE_BACKUP_S3; operator nudges — wire
+HEALTHCHECK_URL, consider arming HLBOT_DAILY_LOSS_FLOOR + the S3 store
+backup.
