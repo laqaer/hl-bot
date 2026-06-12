@@ -98,6 +98,19 @@ CREATE TABLE IF NOT EXISTS funding_payments (
     PRIMARY KEY (time_ms, coin)
 );
 
+CREATE TABLE IF NOT EXISTS tick_heartbeats (
+    -- One row per COMPLETED tick loop (femr_tick), paper or live. Liveness
+    -- ground truth for `hlbot health`: ticks run with log_holds=False, so
+    -- agent_decisions grows only when an order/error happens — a healthy but
+    -- quiet book is indistinguishable from a dead loop without this.
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    ts_ms           INTEGER NOT NULL,
+    mode            TEXT NOT NULL,            -- 'paper' / 'live'
+    agents          INTEGER NOT NULL DEFAULT 0,  -- roster size this tick
+    decisions       INTEGER NOT NULL DEFAULT 0   -- decisions returned (incl. holds)
+);
+CREATE INDEX IF NOT EXISTS idx_heartbeats_ts ON tick_heartbeats(ts_ms);
+
 CREATE TABLE IF NOT EXISTS agent_state (
     -- Persistent per-agent state: enabled, mode (paper/live), goals breached, etc.
     agent           TEXT PRIMARY KEY,

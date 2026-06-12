@@ -832,6 +832,30 @@ def gather_decisions(
     return out
 
 
+def record_tick_heartbeat(
+    conn: sqlite3.Connection,
+    *,
+    mode: str,
+    agents: int,
+    decisions: int,
+    now_ms: int | None = None,
+) -> None:
+    """Mark a tick loop as having run to completion (liveness ground truth).
+
+    ``assess_health`` keys its "is the bot alive?" check on these rows.
+    Decision rows cannot carry that check: ticks run with ``log_holds=False``,
+    so ``agent_decisions`` grows only when an order/error happens and a healthy
+    but quiet book is indistinguishable from a dead loop. Written at the END of
+    a tick (after the execution loop on the live path), so a tick that aborts
+    mid-way does not beat — which is the point of a dead-man switch.
+    """
+    conn.execute(
+        "INSERT INTO tick_heartbeats(ts_ms, mode, agents, decisions) VALUES(?,?,?,?)",
+        (now_ms or int(time.time() * 1000), mode, agents, decisions),
+    )
+    conn.commit()
+
+
 @dataclass
 class ExecEvent:
     """One outcome of routing a decision to the exchange (place/flatten).

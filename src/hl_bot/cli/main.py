@@ -401,6 +401,7 @@ def femr_tick(live: bool = False, execution: str = "taker", vwap_window: int = 0
         load_agent_overrides,
         positions_from_clearinghouse,
         reconcile_agents,
+        record_tick_heartbeat,
         synthesize_paper_positions,
     )
     from ..exec.orders import (
@@ -546,6 +547,8 @@ def femr_tick(live: bool = False, execution: str = "taker", vwap_window: int = 0
 
     if not live:
         console.print("[yellow]PAPER MODE[/yellow]")
+        record_tick_heartbeat(
+            conn, mode="paper", agents=len(agents), decisions=len(all_decisions))
         return
 
     try:
@@ -610,6 +613,9 @@ def femr_tick(live: bool = False, execution: str = "taker", vwap_window: int = 0
         agent_names=agent_names, guardrails_ok=ok, execution=execution,
     ):
         console.print(ev.message)
+
+    record_tick_heartbeat(
+        conn, mode="live", agents=len(agents), decisions=len(all_decisions))
 
 
 def parse_agent_config(config: str) -> dict[str, Any]:
@@ -1192,7 +1198,7 @@ def ws(
 
 
 @app.command()
-def health(max_tick_age_s: int = 900, heartbeat: bool = True):
+def health(max_tick_age_s: int = 900, max_decision_age_s: int = 259_200, heartbeat: bool = True):
     """Assess bot health (tick/ingest freshness, equity, paused agents, 24h PnL).
 
     Pings HEALTHCHECK_URL when healthy (dead-man switch) and Telegram-alerts when
@@ -1203,7 +1209,8 @@ def health(max_tick_age_s: int = 900, heartbeat: bool = True):
     from ..ops.health import assess_health, ping_heartbeat
 
     conn, s = _conn()
-    rep = assess_health(conn, max_tick_age_s=max_tick_age_s)
+    rep = assess_health(
+        conn, max_tick_age_s=max_tick_age_s, max_decision_age_s=max_decision_age_s)
     console.print(rep.render())
     down = rep.status == "down"
     # Only DOWN is a real page: warn (fresh box, no ticks yet, a paused agent) is

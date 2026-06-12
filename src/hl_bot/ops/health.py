@@ -1,7 +1,9 @@
 """Health assessment + heartbeat for unattended 24/7 operation.
 
 ``assess_health`` reads the ground-truth DB and returns an ok/warn/down verdict:
-  * is the bot still ticking?            (recent agent_decisions)
+  * is the tick loop alive?              (recent tick_heartbeats; decision rows
+                                          as a warn-only fallback on legacy DBs)
+  * is evidence still accumulating?      (decision rows not silent for days)
   * is ingest fresh?                     (recent fills/equity snapshots)
   * is any agent paused by a guardrail?  (agent_state.enabled = 0)
   * is it bleeding?                       (24h realized PnL vs a floor)
@@ -53,22 +55,50 @@ def assess_health(
     now_ms: int | None = None,
     max_tick_age_s: int = 900,        # 15 min: ticks should be far more frequent
     max_ingest_age_s: int = 3600,     # 1 h
+    max_decision_age_s: int = 259_200,  # 3 d: loop alive but book silent → warn
     daily_loss_floor: float = -1e9,   # set to a negative $ to flag bleeding
 ) -> HealthReport:
     now_ms = now_ms or int(time.time() * 1000)
     checks: list[tuple[str, Level, str]] = []
     metrics: dict[str, float | None] = {}
 
-    # --- tick freshness (is the bot alive?) ---
-    last_tick = _max_ts(conn, "agent_decisions", "ts_ms")
-    if last_tick is None:
-        checks.append(("tick", "warn", "no decisions logged yet"))
-        metrics["tick_age_s"] = None
-    else:
-        age = (now_ms - last_tick) / 1000
+    # --- tick freshness (is the loop alive?) ---
+    # Keyed on tick_heartbeats: one row per COMPLETED femr_tick, paper or live.
+    # Decision rows cannot carry this check — ticks log no holds, so
+    # agent_decisions grows only when an order/error happens, and a healthy but
+    # quiet book reads exactly like a dead loop (15 trade-free minutes used to
+    # page the operator; a muted pager is a dead dead-man switch).
+    last_beat = _max_ts(conn, "tick_heartbeats", "ts_ms")
+    last_decision = _max_ts(conn, "agent_decisions", "ts_ms")
+    if last_beat is not None:
+        age = (now_ms - last_beat) / 1000
         metrics["tick_age_s"] = age
         level = "crit" if age > max_tick_age_s else "ok"
-        checks.append(("tick", level, f"last decision {age/60:.1f} min ago"))
+        checks.append(("tick", level, f"last tick {age/60:.1f} min ago"))
+    elif last_decision is not None:
+        # Legacy DB (predates heartbeats): decision age is the only signal.
+        # It is event-driven, so stale may just mean quiet — warn, never crit.
+        age = (now_ms - last_decision) / 1000
+        metrics["tick_age_s"] = age
+        level = "warn" if age > max_tick_age_s else "ok"
+        checks.append(("tick", level, f"no heartbeats; last decision {age/60:.1f} min ago"))
+    else:
+        checks.append(("tick", "warn", "no ticks recorded yet"))
+        metrics["tick_age_s"] = None
+
+    # --- decision activity (is evidence accumulating?) ---
+    # Only meaningful when the loop is beating: a live-but-silent book for days
+    # means broken roster/feeds (or a dead market) — either way the paper/live
+    # evidence the G1–G3 gates wait on has stalled and nobody would notice.
+    if last_beat is not None:
+        if last_decision is None:
+            checks.append(("activity", "warn", "no decisions logged yet"))
+            metrics["decision_age_s"] = None
+        else:
+            age = (now_ms - last_decision) / 1000
+            metrics["decision_age_s"] = age
+            level = "warn" if age > max_decision_age_s else "ok"
+            checks.append(("activity", level, f"last decision {age/3600:.1f} h ago"))
 
     # --- ingest freshness ---
     last_fill = _max_ts(conn, "fills", "time_ms")

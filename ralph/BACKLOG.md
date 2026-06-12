@@ -267,7 +267,21 @@ Keep it ruthlessly prioritized: the top item should always be the highest-levera
   `HLBOT_TUNER_APPLY_LOOSENING=1`. Paths env-overridable → script unit-tested
   for the first time (5 tests, incl. pre-existing rails pinned).
 
-## P2 — cadence, structure, devops
+- [x] **B-HB — Real tick heartbeat for the dead-man switch.** Done (Iter 65):
+  `hlbot health`'s "is the bot alive?" check keyed on `MAX(ts_ms)` from
+  `agent_decisions` — but every tick runs `log_holds=False`, so decision rows
+  are event-driven (orders/errors only) and a healthy-but-quiet book read as
+  DOWN after 15 trade-free minutes (false pages → muted pager → dead dead-man
+  switch), while an actually-dead loop was indistinguishable from a quiet
+  market. Now: `tick_heartbeats` table (one row per COMPLETED `femr_tick`,
+  paper or live; auto-created by the idempotent schema) written via tested
+  `runtime.record_tick_heartbeat` at the END of both tick paths (an aborted
+  tick doesn't beat — that's the point); `assess_health` keys tick-freshness
+  on it (crit when stale), demotes the legacy decision-based check to
+  warn-only fallback for pre-heartbeat DBs, and gains an `activity` check
+  (loop beating but zero decision rows for ≥3d → warn — the silent-stall
+  signal the G1–G3 evidence accumulation had no detector for). Live-fired
+  both directions on a real paper tick.
 
 - [x] **B10 — WebSocket market view.** Done: `ingest/ws.py` MarketState +
   `hlbot ws` service writes a snapshot; live tick overlays it (HLBOT_WS_SNAPSHOT)

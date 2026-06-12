@@ -3369,3 +3369,66 @@ configs/experiments/b_g014.json --check-only` (and b_edge2b) replaces the
 hand ETA check. b_edge2b ripens first (~Jun 20), b_g014 ~Jun 26 — both runs
 are now one command with frozen arms. B-EDGE2f at ≥30d paper books (~Jul 8).
 Idle queue: B-SCALE doc once G2 evidence is real.
+
+## Iteration 65 — 2026-06-12 — B-HB: the dead-man switch now watches a real heartbeat
+
+**Ripeness checks** (the per-iteration readout B-PREREG installed): b_g014
+NOT RIPE (1m span 3.7d < 14d, ETA ~Jun 26); b_edge2b NOT RIPE (15m span
+52.1d < 60d, breadth coins binding, ETA ~Jun 20). Candle store healthy and
+topped up by loop.sh.
+
+**Why this.** Every headline item is time/evidence-blocked, REVIEW is swept
+(only M5 left, deliberately lowest-priority). Auditing the ops spine that
+the whole waiting game depends on found a structural hole: `assess_health`'s
+"is the bot alive?" check read `MAX(ts_ms)` from `agent_decisions` with a
+15-min crit bar — but `femr_tick` runs `log_holds=False` (and has since
+birth; the hold-logging paper `tick` loop the check was designed against was
+retired in B12j), so decision rows appear only when an order/error happens.
+Two failure modes, both live today: (1) a healthy book that simply doesn't
+trade for 15 minutes reads DOWN → heartbeat ping withheld + Telegram alert →
+false pages train the operator to mute the pager — a muted dead-man switch
+is no switch; (2) an actually-dead tick loop is indistinguishable from a
+quiet market, so the G1/G2 evidence accumulation (paper books, live track
+record) could silently stop for days. Highest-leverage unblocked fix:
+ops-trust is what makes the multi-week waits safe to wait out.
+
+**Changed.** (a) Schema: `tick_heartbeats` (ts_ms, mode, agents, decisions)
+— one row per COMPLETED tick; `CREATE TABLE IF NOT EXISTS` in the schema
+script `_conn()` already runs every invocation, so deployed DBs migrate on
+first tick after update. (b) `runtime.record_tick_heartbeat` (tested) called
+at the END of both `femr_tick` paths — paper just before the early return,
+live after the execution loop — so a tick that aborts mid-way (e.g. perp
+account fetch failure, build_exchange failure) does NOT beat, which is
+exactly the dead-man semantics; a live roster that empties (last agent
+demoted) also stops beating → pages → correct, that deserves eyes.
+(c) `assess_health`: tick check keys on heartbeats (crit > max_tick_age_s);
+legacy DBs without the table fall back to the old decision-age check
+DEMOTED to warn (it can't tell quiet from dead, so it must never page);
+new `activity` check — loop beating but no decision row for
+`max_decision_age_s` (default 3d) → warn, the first detector for "evidence
+stalled while everything looks alive" (broken roster/feeds). Warn doesn't
+page (only DOWN does, unchanged CLI semantics) but renders in every tick's
+journal + `hlbot health`. CLI exposes `--max-decision-age-s`.
+
+**Evidence.** 425 → **430 tests pass** (test_ops.py 7→12: quiet-book-is-
+not-down [the regression this kills], stale-heartbeat-pages-despite-recent-
+decisions, legacy-DB-warns-not-pages, stalled-activity-warns, heartbeat
+write→health read round trip, and a CLI wiring pin that runs `femr_tick`
+paper end-to-end with faked account/view/roster and asserts the
+("paper",0,0) heartbeat row). `ruff check src tests scripts` clean.
+Live-fired on a throwaway DB: one REAL paper tick (full roster, real API;
+twap_mr placed a paper XPL short) → `health` shows `✓ tick: last tick 0.0
+min ago` + `✓ activity`; aging the heartbeat 1h back (decisions left fresh)
+→ `🔴 DOWN, ✗ tick: last tick 60.2 min ago`, exit 1, Telegram path invoked.
+Both directions behave.
+
+**Found.** The `activity` warn is deliberately page-free this iteration
+(avoiding new false-page classes while the threshold calibrates); if 3d
+proves reliably quiet-free on the deployed boxes, consider a crit tier at
+~7d so a silent-stall eventually pages. Not filed as a task — revisit when
+real paper-box data exists.
+
+**What's next (loop).** Per-iteration: the two `--check-only` ripeness
+readouts (b_edge2b ripens ~Jun 20 — FIRST; b_g014 ~Jun 26). B-EDGE2f at
+≥30d paper books (~Jul 8). Idle queue: B-SCALE doc once G2 evidence is
+real; REVIEW M5 (basis spot scaling) remains the last unpicked finding.
