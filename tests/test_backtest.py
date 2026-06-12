@@ -213,6 +213,54 @@ def test_frame_cache_roundtrip(tmp_path):
     assert r1.net_pnl == r2.net_pnl
 
 
+def test_default_cache_path_keys_on_vwap_window():
+    """Frames bake the VWAP window in, so a non-default window needs its own file.
+
+    The default window keeps the historical key so caches fetched before the
+    --vwap-window option existed stay valid.
+    """
+    from hl_bot.backtest.data import default_cache_path
+
+    legacy = default_cache_path(["BTC", "ETH"], "1h", 90)
+    assert legacy.name == "BTC-ETH_1h_90d.json.gz"
+    assert default_cache_path(["BTC", "ETH"], "1h", 90, vwap_window=60) == legacy
+
+    windowed = default_cache_path(["BTC", "ETH"], "15m", 52, vwap_window=4)
+    assert windowed.name == "BTC-ETH_15m_52d_w4.json.gz"
+    assert windowed != default_cache_path(["BTC", "ETH"], "15m", 52)
+
+
+def test_cached_or_fetch_window_never_serves_wrong_window(tmp_path, monkeypatch):
+    """A window-60 cache must not satisfy a window-4 request (and vice versa)."""
+    import hl_bot.config as config
+    from hl_bot.backtest import data
+
+    monkeypatch.setattr(config, "DATA_DIR", tmp_path)
+    frames_w60 = _mean_reversion_path()
+    data.save_frames(data.default_cache_path(["TST"], "15m", 5), frames_w60)
+
+    fetched: list[int] = []
+
+    def fake_load_frames(coins, *, vwap_window=60, **kw):
+        fetched.append(vwap_window)
+        return frames_w60
+
+    monkeypatch.setattr(data, "load_frames", fake_load_frames)
+
+    # default window: served from the existing cache, no fetch
+    got = data.cached_or_fetch(["TST"], interval="15m", days=5)
+    assert len(got) == len(frames_w60) and fetched == []
+
+    # non-default window: cache miss → fetch with that window, new file written
+    data.cached_or_fetch(["TST"], interval="15m", days=5, vwap_window=4)
+    assert fetched == [4]
+    assert data.default_cache_path(["TST"], "15m", 5, vwap_window=4).exists()
+
+    # second call hits the new window-keyed cache, no second fetch
+    data.cached_or_fetch(["TST"], interval="15m", days=5, vwap_window=4)
+    assert fetched == [4]
+
+
 def test_parse_agent_config_and_factory_override():
     """--config parses to a dict and actually reaches the agent's config."""
     from hl_bot.cli.main import _backtest_factories, parse_agent_config

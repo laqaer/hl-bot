@@ -635,21 +635,26 @@ def backtest_fetch(
     interval: str = "1h",
     days: int = 30,
     refresh: bool = False,
+    vwap_window: int = 60,
 ):
     """Fetch + cache HL candle/funding history for offline, reproducible backtests.
 
     Writes a gzipped frame dataset under data/backtest_cache/ (gitignored).
     Run this once where HL is reachable; then `hlbot backtest` runs without network.
+    --vwap-window sets the rolling VWAP/sigma window in BARS (live fades a 60×1m
+    VWAP, so 15m bars want 4, 5m bars want 12); non-default windows get their own
+    cache file because frames bake the window in.
     """
     from ..backtest.data import cached_or_fetch, default_cache_path
 
     _, s = _conn()
     coin_list = [c.strip() for c in coins.split(",") if c.strip()]
-    path = default_cache_path(coin_list, interval, days)
+    path = default_cache_path(coin_list, interval, days, vwap_window)
     console.print(f"[dim]fetching {days}d {interval} for {coin_list}…[/dim]")
     try:
         frames = cached_or_fetch(coin_list, interval=interval, days=days,
-                                 base_url=s.hl_api_url, refresh=refresh)
+                                 base_url=s.hl_api_url, refresh=refresh,
+                                 vwap_window=vwap_window)
     except Exception as e:  # noqa: BLE001
         console.print(f"[red]fetch failed: {e}[/red]")
         raise typer.Exit(2) from e
@@ -702,6 +707,7 @@ def backtest(
     starting_capital: float = 1000.0,
     cache: bool = True,
     config: str = "",
+    vwap_window: int = 60,
 ):
     """Replay an agent over real Hyperliquid history with an explicit cost model.
 
@@ -730,9 +736,11 @@ def backtest(
     console.print(f"[dim]loading {days}d of {interval} candles for {coin_list} "
                   f"({'cache' if cache else 'network'})…[/dim]")
     try:
-        frames = (cached_or_fetch(coin_list, interval=interval, days=days, base_url=s.hl_api_url)
+        frames = (cached_or_fetch(coin_list, interval=interval, days=days,
+                                  base_url=s.hl_api_url, vwap_window=vwap_window)
                   if cache else
-                  load_frames(coin_list, interval=interval, days=days, base_url=s.hl_api_url))
+                  load_frames(coin_list, interval=interval, days=days,
+                              base_url=s.hl_api_url, vwap_window=vwap_window))
     except Exception as e:  # noqa: BLE001
         console.print(f"[red]failed to load history: {e}[/red]")
         raise typer.Exit(2) from e
@@ -745,7 +753,8 @@ def backtest(
                 "1h": 8_760, "4h": 2_190, "1d": 365}.get(interval, 8_760)
 
     modes = [False, True] if compare else [maker]
-    title = f"Backtest {agent} ({days}d {interval})"
+    title = f"Backtest {agent} ({days}d {interval}"
+    title += f" w={vwap_window})" if vwap_window != 60 else ")"
     if cfg:
         title += f" cfg={json.dumps(cfg, separators=(',', ':'))}"
     table = Table(title=title)
@@ -785,6 +794,7 @@ def confirm(
     min_sharpe: float = 1.0,
     cache: bool = True,
     config: str = "",
+    vwap_window: int = 60,
 ):
     """Confirm a strategy through the G0 gate: walk-forward + cost stress.
 
@@ -808,9 +818,11 @@ def confirm(
     per_year = {"1m": 525_600, "5m": 105_120, "15m": 35_040,
                 "1h": 8_760, "4h": 2_190, "1d": 365}.get(interval, 8_760)
     try:
-        frames = (cached_or_fetch(coin_list, interval=interval, days=days, base_url=s.hl_api_url)
+        frames = (cached_or_fetch(coin_list, interval=interval, days=days,
+                                  base_url=s.hl_api_url, vwap_window=vwap_window)
                   if cache else
-                  load_frames(coin_list, interval=interval, days=days, base_url=s.hl_api_url))
+                  load_frames(coin_list, interval=interval, days=days,
+                              base_url=s.hl_api_url, vwap_window=vwap_window))
     except Exception as e:  # noqa: BLE001
         console.print(f"[red]failed to load history: {e}[/red]")
         raise typer.Exit(2) from e

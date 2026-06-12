@@ -1179,3 +1179,85 @@ backtest-fetch (window must enter the cache key when ≠60) and A/B regime_filte
 + size_by_signal at 15m/52d and 5m/17d. Filed **B-HIST2** (backtest `--source
 store`) so A/Bs can use accumulated history beyond the 5000-bar API window once
 it exists.
+
+## Iteration 29 — 2026-06-12 — B-CAD: live-cadence A/Bs — first G0 PASS at the exact live config
+
+**Context.** B-CAD was the top unblocked item: Iter 27 showed the 1h backtest
+fades a 60×1h VWAP while live fades a 60×1m VWAP — different strategies — so
+every lever verdict to date was rendered at the wrong cadence. Prereq tooling
+landed here, then the A/Bs ran on real history (network up; one 429 between
+fetches, retried fine).
+
+**Changed (1 commit).**
+- **`--vwap-window` exposed in `hlbot backtest` / `confirm` / `backtest-fetch`**,
+  threaded through `cached_or_fetch`/`load_frames`.
+- **`default_cache_path` keys on the window when ≠60** (`..._w{n}.json.gz`):
+  cached frames bake the VWAP window into `candles_1h`/`closes`, so without this
+  a window-60 dataset would silently serve a window-4 run. Default window keeps
+  the historical key — existing caches stay valid.
+- **2 new tests** (160 pass, was 158): key backward-compat + windowed key;
+  `cached_or_fetch` never serves the wrong-window cache (fake fetch, tmp DATA_DIR).
+
+**A/B results (twap_mr_v1, 10-coin universe, maker numbers, reproducible via
+`--config`/`--vwap-window`).**
+
+*5m / 17d / window=12 (1h VWAP horizon — closest multi-week live proxy):*
+
+| config                     | maker edge | net$  | trades | maxDD  |
+|----------------------------|-----------:|------:|-------:|-------:|
+| baseline                   |    −1.5bps |  −103 |   3456 | −15.2% |
+| regime defaults 0.03/0.65  |    −0.8bps |   −59 |   3476 | −14.9% |
+| regime 0.015/0.55          |    −1.6bps |  −103 |   3280 | −17.2% |
+| regime 0.01/0.55           |    −1.2bps |   −73 |   3112 | −14.8% |
+| regime 0.005/0.55          |    −1.0bps |   −58 |   2780 | −10.5% |
+| size_by_signal             |    −0.9bps |   −38 |   3538 |  −9.2% |
+| regime + size              |    −0.9bps |   −37 |   3522 |  −9.1% |
+
+Walk-forward (prefer=maker): baseline IS −1.9 / **OOS +1.8bps, +7.9sh** (1158
+trades); regime IS −2.1 / OOS +1.7; size IS −2.1 / OOS +1.4. All FAIL G0, but
+the most recent ~6d are positive across every config — same pocket live is
+printing +29.5bps in.
+
+*15m / 52d / window=4 (coarse z proxy — only 4 closes per window):*
+baseline −1.5bps/2162 trades/−9.7%; regime defaults inert (−1.5); size_by_signal
+−1.0bps, net −23$ vs −64$, maxDD −4.2%. Confirm: baseline OOS −3.0bps (the
+older 52d sample is negative — the positive pocket is recent). FAIL G0.
+
+*1m / 3d / window=60 — the EXACT live strategy (API retains only 3.5d of 1m):*
+
+| exec  | edge    | net$   | trades | win | sharpe | maxDD |
+|-------|--------:|-------:|-------:|----:|-------:|------:|
+| taker |  −0.0bps|  −0.13 |    846 | 70% |  +0.25 | −3.9% |
+| maker | **+5.4bps**| +90.77 | 844 | 72% | +26.70 | −2.0% |
+
+`hlbot confirm` walk-forward: **✅ CONFIRMED — first G0 PASS in this book**
+(IS +5.1bps/+24.4sh, OOS +6.0bps/+33.1sh, maker). Honest caveats: 3.5 days
+only (walk-forward halves ≈2.3d/1.2d), coincides with the favorable recent
+regime, and the engine's maker fills are optimistic (rest-at-mid always fills).
+This is *consistency with live*, not yet a durable edge claim.
+
+**Findings.**
+1. **Cadence explains the backtest/live divergence**: −5.0bps (1h) → −1.5bps
+   (5m/15m proxies) → +5.4bps (exact 1m replica). Lever verdicts rendered at 1h
+   were verdicts on a different strategy.
+2. **The taker tax is the entire edge at live cadence** (−0.0 taker vs +5.4
+   maker). Filed **B-MAKER-LIVE** (human-gated): operator should set
+   `HLBOT_TICK_ARGS="--live --execution maker"` — machinery built+tested
+   (B2b/B10b). Exits stay taker; worst case is missed entries, not losses.
+3. **Lever verdicts at live-like cadence:** regime_filter — helps at 5m
+   (−1.5→−0.8, defaults best), inert at 15m, unneeded at 1m where edge is
+   already positive; size_by_signal — a loss-dampener, not an edge-adder: cuts
+   net loss ~2/3 when edge<0, cut profit 42% at 1m where edge>0. **Both stay
+   default OFF; no live changes made.**
+4. G0-at-scale needs more 1m history than the API retains → **B-HIST2 promoted
+   to top of P0.6** (backtest `--source store`); the hourly harvester (Iter 28)
+   is already accumulating the data this needs.
+
+**Evidence.** 160 tests pass; ruff clean. All numbers above from real-API runs
+on this box today; datasets cached under `data/backtest_cache/` (incl. new
+`_w12`/`_w4` keyed files) for reproducibility.
+
+**What's next (loop).** B-HIST2 once the store has ≥~14d of 1m (check
+`data/candle_store/` spans; until then it's API-retention-equivalent), then a
+multi-week exact-replica G0. Meanwhile: B-EXIT/B-FUND/B-WIN sweeps can now run
+at the proxy cadences with the new flag; B-MAKER-LIVE awaits the operator.

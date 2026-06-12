@@ -349,10 +349,20 @@ def load_cached_frames(path: str | Path) -> list[Frame]:
     return [Frame(**d) for d in payload]
 
 
-def default_cache_path(coins: list[str], interval: str, days: int) -> Path:
-    """Stable on-disk location for a (coins, interval, days) backtest dataset."""
+def default_cache_path(
+    coins: list[str], interval: str, days: int, vwap_window: int = 60
+) -> Path:
+    """Stable on-disk location for a (coins, interval, days, window) dataset.
+
+    Cached frames bake the VWAP window into ``candles_1h``/``closes``, so a
+    non-default ``vwap_window`` MUST enter the key — otherwise a window-60
+    dataset would silently serve a window-4 run (B-CAD). The default window
+    keeps the historical key so existing caches stay valid.
+    """
     from ..config import DATA_DIR
     key = f"{'-'.join(sorted(coins))}_{interval}_{days}d"
+    if vwap_window != 60:
+        key += f"_w{vwap_window}"
     return DATA_DIR / "backtest_cache" / f"{key}.json.gz"
 
 
@@ -367,7 +377,7 @@ def cached_or_fetch(
     vwap_window: int = 60,
 ) -> list[Frame]:
     """Return frames from cache if present, else fetch (network) and cache them."""
-    p = Path(cache_path) if cache_path else default_cache_path(coins, interval, days)
+    p = Path(cache_path) if cache_path else default_cache_path(coins, interval, days, vwap_window)
     if p.exists() and not refresh:
         return load_cached_frames(p)
     frames = load_frames(coins, interval=interval, days=days,

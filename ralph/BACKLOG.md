@@ -187,19 +187,34 @@ each on ≥90d real history (`hlbot confirm` / `hlbot backtest --config`) before
   self-enabled by update.sh — auto-update previously copied new timers without
   enabling them). Validated on real API: 30/30 pairs, full retention captured
   (3.5d@1m / 17.4d@5m / 52.1d@15m, 3.6MB), incremental top-up proven.
-- [ ] **B-HIST2 — Backtest from the store.** `hlbot backtest/confirm` still fetch
-  from the API (capped at retention); add a `--source store` path that builds
-  frames from `data/candle_store/` (+ funding fetch) so A/Bs can use accumulated
-  history beyond the 5000-bar window once it exists. Pairs with B-CAD's
-  `--vwap-window` work.
-- [ ] **B-CAD — A/B levers at live-like cadence.** The live strategy fades a 60×1m
-  VWAP; the 1h backtest fades a 60×1h VWAP — a different (slower) strategy, which
-  is also why backtest says −5bps while live prints +29.5bps. Now feasible:
-  build_frames is linear (Iter 27). Needs: expose `--vwap-window` in
-  backtest/confirm/backtest-fetch (window must enter the cache key when ≠60 —
-  cached frames bake the window in), then run 15m/52d (window=4) and 5m/17d
-  (window=12) A/Bs of baseline vs regime_filter vs size_by_signal.
-- [ ] **B-SIZE — A/B `size_by_signal`** (+ a vol-targeting variant). Lever shipped.
+- [ ] **B-HIST2 — Backtest from the store. ← TOP PRIORITY once store ≥ ~14d of 1m.**
+  `hlbot backtest/confirm` still fetch from the API (capped at retention); add a
+  `--source store` path that builds frames from `data/candle_store/` (+ funding
+  fetch) so A/Bs can use accumulated history beyond the 5000-bar window. Why it's
+  now the lever: the exact-live-replica backtest (1m, window=60) **PASSED G0** on
+  the only 3.5d of 1m the API retains (Iter 29) — a real multi-week G0 at live
+  cadence needs the store. The `--vwap-window` plumbing it pairs with is done.
+- [x] **B-CAD — A/B levers at live-like cadence.** Done (Iter 29, numbers in
+  PROGRESS): `--vwap-window` exposed in backtest/confirm/backtest-fetch (window
+  keys the cache when ≠60). Cadence explains the backtest/live divergence: maker
+  edge −5.0bps (1h) → −1.5bps (5m w=12 and 15m w=4 proxies) → **+5.4bps at the
+  exact live config (1m w=60, 3.5d, 844 trades, G0 PASS — sample-limited)**.
+  Taker at 1m = −0.0bps: the spread tax eats the entire edge → filed B-MAKER-LIVE.
+  Lever verdicts at live-like cadence: regime_filter helps at 5m (−1.5→−0.8
+  maker) but is inert at 15m and unneeded at 1m; size_by_signal dampens losses
+  where edge<0 but cut net profit 42% at 1m where edge>0. **Both stay default
+  OFF; no live change.**
+- [B] **B-MAKER-LIVE — Route live entries through maker execution.** *Human-gated
+  (live change).* The 1m exact-replica backtest: maker +5.4bps vs taker −0.0bps —
+  the taker tax is the whole edge at live cadence. The machinery exists and is
+  tested (`--execution maker`, B2b + B10b instant fill detection). Operator: set
+  `HLBOT_TICK_ARGS="--live --execution maker"` in /etc/hl-bot/env per
+  deploy/README.md §4 and watch the first session at current size. Risk: maker
+  entries can miss fills in fast moves (fewer trades, not losses; exits stay taker).
+- [x] **B-SIZE — A/B `size_by_signal`.** Done as part of Iter 29 (see B-CAD):
+  helps only when the strategy is losing; at the live config it cut profit 42%
+  (winners get sized down too). Keep OFF. The vol-targeting variant is pruned
+  unless drawdown control becomes the binding problem.
 - [ ] **B-EXIT — sweep `sigma_exit`/`stop_loss_pct`/`max_hold_hours`** for best
   risk-adjusted exits.
 - [ ] **B-FUND — funding-aware fade suppression** (skip/trim fades funding opposes).
