@@ -226,6 +226,26 @@ Keep it ruthlessly prioritized: the top item should always be the highest-levera
   where a paper DB exists so dev/live-only clones stay silent. Names shared
   with run-paper-tick.sh pinned by test. 7 new tests; live-fired all three
   arms (absent → quiet, stale → warn, fresh → ok).
+- [x] **B-G1SPAN — Promotion gates enforce evidence SPAN + clean guardrail
+  history (G1 pre-registration, day 0 of the paper books).** Done (Iter 89):
+  every promotion block keyed on `window: 30d` metrics, which bound the
+  *lookback*, not the sample — a paper book born Jun 12 could print
+  "promotion-ready" in ~10 days if a pocket pushed its 30d card over the
+  gates (the exact thin-sample shape of the "+177bps CONFIRMED" carry
+  false-positive), and the fills-sourced path AUTO-APPLIES promotions.
+  G1's "≥30d paper, no guardrail breach" had no structural enforcement.
+  Now `Promotion.min_span_days` (evidence book span: decision log incl.
+  holds for paper, fills for live; first→last row) and
+  `Promotion.clean_guardrails_days` (zero pause/demote guardrail failures
+  on record in the lookback; alert fails never block — they fire on any
+  materially losing day by design). Metrics-pass-but-evidence-thin emits an
+  audit row ("promotion blocked: evidence span 2.0d < 30d required") since
+  that's the state an operator would mistake for readiness. All 9 configs
+  carry `min_span_days: 30` + `clean_guardrails_days: 30`, pinned by test —
+  frozen 2026-06-12, the day the paper clocks started; loosening is an
+  operator decision. Defaults 0 ⇒ legacy/inline configs unchanged. 12 new
+  tests; live-fired read-only on the box's paper DB (day-0 spans 0.000d,
+  evaluations clean).
 - [x] **B-MAKERFILL — Honest maker-fill model in the backtester.** Done
   (Iter 50): `CostModel(maker_fill="resting")` + `--maker-fill resting` on
   backtest/confirm replay the live maker lifecycle (entries rest at the

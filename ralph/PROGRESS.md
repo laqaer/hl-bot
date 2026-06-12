@@ -4958,3 +4958,65 @@ readouts unchanged (b_edge2b ~Jun 20, b_g014 ~Jun 26, b_edge3 + b_edge2_1h
 G2 evidence exists; off-host store backup proposal if the operator wants
 host-loss coverage; operator nudge — wire HEALTHCHECK_URL (pager warn still
 firing on every health line) and consider arming HLBOT_DAILY_LOSS_FLOOR.
+
+## Iteration 89 — 2026-06-12 — B-G1SPAN: promotion gates enforce evidence span + clean guardrail history
+
+**Ripeness checks** (per-iteration readout): b_g014 NOT RIPE (1m span 4.2d
+< 14d, ~Jun 26); b_edge2b NOT RIPE (~Jun 20). Store fresh (worst lag 5.6m,
+harvest skipped; peer sync +0/+0).
+
+**The work.** With every experiment clock calendar-gated, audited the G1
+pipeline the paper loop started feeding yesterday — and found the promotion
+machinery cannot express G1. ROADMAP §4 says "≥30d paper: edge ≥ +5bps,
+≥150 trades, **no guardrail breach**". Every promotion block in configs/
+keys on `window: 30d` scorecard metrics, and a window bounds the *lookback*,
+not the sample: a paper book born Jun 12 passes every "30d" condition on
+10 days of evidence if a pocket pushes the card over the gates — the exact
+thin-sample false-positive shape of the "+177bps CONFIRMED" carry print
+(2 trades, Iter 47). Worse, the fills-sourced evaluate() path AUTO-APPLIES
+promotions, and "no guardrail breach" was only checked at evaluation
+instant (a paused-then-recovered agent promoted clean). Day 0 of the paper
+books is the last day these gates count as pre-registered, so this
+out-ranked the idle queue.
+
+**Changed.**
+- `supervisor/goals.py`: `Promotion.min_span_days` (evidence-book calendar
+  span: paper = first→last decision row INCLUDING holds — a logged hold is
+  the agent alive and observing; fills = first→last exchange fill) and
+  `Promotion.clean_guardrails_days` (zero pause/demote guardrail failures
+  recorded in goal_evaluations over the lookback; alert failures never
+  block — the 24h edge<-60bps alert fires on any materially losing day by
+  design, counting it would block promotion near-permanently). Both
+  default 0 = off, so inline/legacy configs are byte-identical. When every
+  metric condition passes but evidence gates fail, an audit row is emitted
+  ("promotion blocked paper -> live_small: evidence span 2.0d < 30d
+  required") — that's the state an operator would mistake for readiness.
+- All 9 configs/*.yaml promotion blocks: `min_span_days: 30` +
+  `clean_guardrails_days: 30`, pinned by test as the frozen G1 floor
+  (loosening is an operator decision, on record from today).
+
+**Evidence.** 547 → **558 tests** pass (+11 in test_promotion_gates.py:
+thin-fills-book blocks the auto-apply path, seasoned book promotes, thin
+paper book can't print promotion-ready, hold rows count as observation,
+recorded pause breach blocks / alert doesn't / outside-lookback forgiven /
+other agents' breaches don't, legacy defaults off, no audit row on routine
+metric failure, all-configs G1 pin); ruff clean. Live-fired evaluate()
+read-only on the box's real paper DB: day-0 spans 0.000–0.003d, conditions
+evaluate normally, no promotion rows (metrics not passing yet — honest).
+
+**Live watch.** (1) TON RESOLVED at exchange truth: short 112.5 @ 1.7773
+(15:12) closed @ 1.7209 (16:34), **+$6.35** — signal exit well before the
+~19:12 max-hold deadline, so max-hold enforcement goes unobserved this
+round (it never bound). (2) Health: WARN only on the standing pager nag;
+tick/ingest/paper all fresh (paper tick 2.1 min ago). (3) pnl_24h: bot
+$+2.88 (account −$323.90, manual −$326.77) — the B-PNL-SPLIT line working.
+(4) Equity $680.14 (was $689.38 Iter 88 — account-level, includes the
+operator's manual book).
+
+**What's next (loop).** Per-iteration readouts unchanged (b_edge2b ~Jun 20,
+b_g014 ~Jun 26, b_edge3 + b_edge2_1h reruns ~Jul 10, B-EDGE2f paper readout
+~Jul 12 — and from today the supervisor itself refuses to call any paper
+card promotion-ready before ~Jul 12). Idle queue: off-host store backup
+proposal (both store clones share one host); operator nudges — wire
+HEALTHCHECK_URL, consider arming HLBOT_DAILY_LOSS_FLOOR; stale `[~]`
+B4-RUN header at BACKLOG line ~39 duplicates the closed item (cosmetic).

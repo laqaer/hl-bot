@@ -22,6 +22,8 @@ Each agent has a contract:
   promotion:
     from: paper
     to: live_small
+    min_span_days: 30          # evidence book must span this many days
+    clean_guardrails_days: 30  # no pause/demote breach on record in lookback
     conditions:
       - {metric: sharpe,   window: 30d, op: ">=", threshold: 2.0}
       - {metric: n_trades, window: 30d, op: ">=", threshold: 100}
@@ -84,6 +86,13 @@ class Promotion(BaseModel):
     from_mode: str = Field(alias="from")
     to_mode: str = Field(alias="to")
     conditions: list[Condition]
+    # G1's structural gates (ROADMAP §4). A metric window like "30d" only
+    # bounds the *lookback* — every "30d" condition can pass on a book that is
+    # five days old. These bound the evidence itself: the book must span
+    # min_span_days of calendar, and the agent must have no pause/demote
+    # guardrail breach on record in the last clean_guardrails_days. 0 disables.
+    min_span_days: float = 0.0
+    clean_guardrails_days: float = 0.0
 
     model_config = {"populate_by_name": True}
 
@@ -131,6 +140,60 @@ def _effective_mode(conn: sqlite3.Connection, g: AgentGoals) -> str:
         "SELECT mode FROM agent_state WHERE agent=?", (g.agent,)
     ).fetchone()
     return row["mode"] if row else g.mode
+
+
+def _evidence_span_days(conn: sqlite3.Connection, agent: str, use_paper: bool) -> float:
+    """Calendar span of the evidence book behind the scorecards: first→last
+    decision row for paper (ANY action — a logged hold is the agent alive and
+    observing, exactly what a forward test accrues), first→last exchange fill
+    otherwise."""
+    if use_paper:
+        row = conn.execute(
+            "SELECT MIN(ts_ms) AS lo, MAX(ts_ms) AS hi FROM agent_decisions"
+            " WHERE agent=? AND is_paper=1",
+            (agent,),
+        ).fetchone()
+    else:
+        row = conn.execute(
+            "SELECT MIN(time_ms) AS lo, MAX(time_ms) AS hi FROM fills WHERE agent=?",
+            (agent,),
+        ).fetchone()
+    if row is None or row["lo"] is None:
+        return 0.0
+    return (row["hi"] - row["lo"]) / 86_400_000.0
+
+
+def _evidence_blockers(
+    conn: sqlite3.Connection, agent: str, promo: Promotion, use_paper: bool
+) -> list[str]:
+    """Promotion evidence gates that metric conditions can't express.
+
+    Only pause/demote breaches count against clean_guardrails_days: alert
+    guardrails fire on any materially losing day by design (e.g. 24h edge
+    < -60bps), so counting them would block promotion near-permanently for
+    any strategy with losing days.
+    """
+    blockers: list[str] = []
+    if promo.min_span_days > 0:
+        span = _evidence_span_days(conn, agent, use_paper)
+        if span < promo.min_span_days:
+            blockers.append(
+                f"evidence span {span:.1f}d < {promo.min_span_days:g}d required"
+            )
+    if promo.clean_guardrails_days > 0:
+        cutoff = int(time.time() * 1000 - promo.clean_guardrails_days * 86_400_000)
+        row = conn.execute(
+            """SELECT COUNT(*) AS n FROM goal_evaluations
+               WHERE agent=? AND goal_name LIKE 'guardrail:%' AND status='fail'
+                 AND action_taken IN ('pause','demote') AND ts_ms >= ?""",
+            (agent, cutoff),
+        ).fetchone()
+        if row is not None and row["n"]:
+            blockers.append(
+                f"{row['n']} pause/demote guardrail breach(es) on record "
+                f"in last {promo.clean_guardrails_days:g}d"
+            )
+    return blockers
 
 
 def _has_paper_book(conn: sqlite3.Connection, agent: str) -> bool:
@@ -245,7 +308,21 @@ def evaluate(
     if g.promotion and mode == g.promotion.from_mode and not guardrail_failed:
         results = [c.evaluate(cards[c.window]) for c in g.promotion.conditions]
         if results and all(ok is True for ok, _ in results):
-            if use_paper:
+            blockers = _evidence_blockers(conn, g.agent, g.promotion, use_paper)
+            if blockers:
+                # Every metric condition passed but the evidence itself is
+                # thin or dirty — the exact thin-sample false-positive G1's
+                # "≥30d, no breach" wording exists to stop. Record it (this
+                # is the state an operator would otherwise mistake for
+                # readiness), promote nothing.
+                out.append(Evaluation(
+                    agent=g.agent, goal_name="promotion",
+                    metric_value=None, threshold=None,
+                    status="fail", action="none", source=source,
+                    detail=(f"promotion blocked {g.promotion.from_mode} -> "
+                            f"{g.promotion.to_mode}: " + "; ".join(blockers)),
+                ))
+            elif use_paper:
                 # Paper evidence flags readiness but NEVER flips a mode:
                 # run_once auto-applies "promote", and going live on modeled
                 # fills would violate the human-gated live rule.

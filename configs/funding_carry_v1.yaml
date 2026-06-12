@@ -24,6 +24,11 @@ guardrails:
 promotion:
   from: paper
   to: live_small
+  # G1 evidence gates (ROADMAP §4): a "30d" metric window passes on a days-old
+  # book; these require the book itself to span 30d of calendar with no
+  # pause/demote guardrail breach on record.
+  min_span_days: 30
+  clean_guardrails_days: 30
   conditions:
     - {metric: edge_bps, window: 30d, op: ">=", threshold: 5}
     - {metric: net_pnl,  window: 30d, op: ">=", threshold: 40}
