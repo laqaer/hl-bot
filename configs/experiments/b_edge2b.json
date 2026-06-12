@@ -1,0 +1,34 @@
+{
+  "name": "b_edge2b",
+  "description": "B-EDGE2b: three-armed breakout revalidation as the 15m store outgrows the API's ~52d retention. Frozen 2026-06-12 at store span ~52.3d (= the window every breakout number so far was measured on); min_span_days 60 gates the first rerun on genuinely new data (~Jun 20). Config lb=384/ex=96 (Iter 35); ER gate 0.1/96 (Iter 49). Taker arms only — optimistic maker fills are not promotion evidence for momentum.",
+  "agent": "breakout_v1",
+  "coins": ["ADA", "AVAX", "BTC", "DOGE", "ETH", "HYPE", "LINK", "SOL", "TRX", "ZEC"],
+  "interval": "15m",
+  "days": 0,
+  "source": "store",
+  "vwap_window": 385,
+  "min_span_days": 60,
+  "min_edge_bps": 3.0,
+  "min_sharpe": 1.0,
+  "min_trades": 20,
+  "arms": [
+    {
+      "name": "original-taker",
+      "prefer": "taker",
+      "config": {"lookback_bars": 384, "exit_lookback_bars": 96}
+    },
+    {
+      "name": "breadth-taker",
+      "prefer": "taker",
+      "coins": ["CRV", "ENA", "LIT", "NEAR", "SUI", "TON", "WLD", "XMR", "XPL", "XRP"],
+      "config": {"lookback_bars": 384, "exit_lookback_bars": 96}
+    },
+    {
+      "name": "combined-er-taker",
+      "prefer": "taker",
+      "coins": ["ADA", "AVAX", "BTC", "DOGE", "ETH", "HYPE", "LINK", "SOL", "TRX", "ZEC", "CRV", "ENA", "LIT", "NEAR", "SUI", "TON", "WLD", "XMR", "XPL", "XRP"],
+      "config": {"lookback_bars": 384, "exit_lookback_bars": 96, "min_efficiency_ratio": 0.1, "er_lookback_bars": 96}
+    }
+  ],
+  "decision": "The promotion-relevant arm is combined-er-taker (the breakout_er_v1 configuration): it must keep PASSING G0 as samples lengthen or breakout_er_v1's promotion case dies. original-taker tracks whether the base edge's regime persists; breadth-taker is expected weak/FAIL — a breadth PASS would upgrade the thesis, a combined-er FAIL kills it. Remember the 0.1 ER threshold was selected on the 52d breadth sweep (Iter 49), so only post-Jun-12 data is out-of-selection. Rerun every few weeks as the store grows (bump min_span_days after each rerun so the next run waits for new data); promotion stays human-gated via B-PAPER3c."
+}

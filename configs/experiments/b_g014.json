@@ -1,0 +1,23 @@
+{
+  "name": "b_g014",
+  "description": "B-G014: multi-week exact-replica G0 for twap_mr_v1 from the 1m candle store. Frozen 2026-06-12 while the store held ~3.7d — before the deciding sample existed. Arms are the backlog-prescribed three configs (live baseline; stop_loss_pct 0.03 from B-EXIT; vwap_window 240 from B-WIN), each judged taker AND maker-rest; combos excluded (stop+window is anti-synergistic, Iter 33).",
+  "agent": "twap_mr_v1",
+  "coins": ["ADA", "AVAX", "BTC", "DOGE", "ETH", "HYPE", "LINK", "SOL", "TRX", "ZEC"],
+  "interval": "1m",
+  "days": 0,
+  "source": "store",
+  "vwap_window": 60,
+  "min_span_days": 14,
+  "min_edge_bps": 3.0,
+  "min_sharpe": 1.0,
+  "min_trades": 20,
+  "arms": [
+    {"name": "baseline-taker", "prefer": "taker"},
+    {"name": "baseline-maker-rest", "prefer": "maker", "maker_fill": "resting"},
+    {"name": "stop3-taker", "prefer": "taker", "config": {"stop_loss_pct": 0.03}},
+    {"name": "stop3-maker-rest", "prefer": "maker", "maker_fill": "resting", "config": {"stop_loss_pct": 0.03}},
+    {"name": "w240-taker", "prefer": "taker", "vwap_window": 240},
+    {"name": "w240-maker-rest", "prefer": "maker", "maker_fill": "resting", "vwap_window": 240}
+  ],
+  "decision": "A live-flip proposal requires an arm to PASS G0 AND beat the baseline arm of the same execution basis on OOS edge over this >=14d sample. Maker claims count ONLY from the maker_fill=resting arms (optimistic maker fills flipped the sign of the whole maker case, Iters 50-51); B-MAKER-LIVE additionally requires the maker-rest arm to beat the same-config taker arm. If baseline-taker FAILS on >=2 weeks, the Iter-29 3.5d PASS was the recent regime pocket: propose nothing, twap_mr_v1 stays as-is and B-MAKER-LIVE stays blocked. Any flip is a live strategy change — operator-gated, never loop-applied."
+}

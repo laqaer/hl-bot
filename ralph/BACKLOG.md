@@ -238,6 +238,21 @@ Keep it ruthlessly prioritized: the top item should always be the highest-levera
   realized_pnl/fees), surviving partial fills/flips/manual interference; wired
   into `hlbot ingest` and exposed via `hlbot positions`. (REVIEW M2. Iter 10.)
 
+- [x] **B-PREREG — Pre-registered experiment specs + `hlbot experiment`.**
+  Done (Iter 64): the two headline confirms the book is waiting on (B-G014,
+  B-EDGE2b) were prose + an ETA — arms re-derivable in the moment, after
+  peeking at early numbers (the forking-paths bias the confirm harness exists
+  to kill), and the "is the store ripe yet?" check re-derived by hand each
+  iteration. Now `backtest/experiments.py` (spec load with hard-error typo
+  validation; worst-coin ripeness over the full arm universe; runner that
+  builds frames once per (universe, window) and feeds each arm through
+  `confirm_strategy` untouched) + `hlbot experiment <spec> [--check-only|
+  --force]` (exit 3 = not ripe; --force prints an explicit "peek, NOT the
+  pre-registered verdict" banner) + the two frozen specs in
+  `configs/experiments/`. Honesty pins in CI: b_g014's maker arms must be
+  `maker_fill=resting`, no stop+w240 combo arm, b_edge2b taker-only.
+  Informational output; decisions stay operator-gated.
+
 - [x] **B-M4 — Auto-tuner auto-apply is risk-tightening only.** Done (Iter 63,
   REVIEW M4): `scripts/auto_tuner.py` was the last ungated live-params writer —
   Hermes cron auto-applied LLM tweaks to `agent_overrides.json`, including
@@ -422,6 +437,11 @@ each on ≥90d real history (`hlbot confirm` / `hlbot backtest --config`) before
   anti-synergistic): whichever passes AND beats baseline on the multi-week
   sample, propose the default flip to the operator (live strategy change —
   not loop-flippable).
+  **Frozen as `configs/experiments/b_g014.json` (Iter 64, B-PREREG)** — all
+  six arms (baseline / stop3 / w240 × taker / maker-rest), thresholds, and
+  the decision rule are pre-registered; run `uv run hlbot experiment
+  configs/experiments/b_g014.json` (refuses to run until every 1m span ≥14d;
+  `--check-only` is the per-iteration span readout, exit 3 = not ripe).
   _Store continuity now guarded by loop.sh per-iteration top-up (Iter 33: the
   systemd harvest timer was found NOT running on the loop box — no root; a
   >3.5d gap would have silently invalidated this sample)._
@@ -533,6 +553,11 @@ each on ≥90d real history (`hlbot confirm` / `hlbot backtest --config`) before
     B-EDGE2e configuration whose G0 PASS is the current promotion candidate.
     A durable edge claim needs the ER-filtered combined arm to keep passing
     (and the threshold to stay off-knife-edge) as samples lengthen.
+    **Frozen as `configs/experiments/b_edge2b.json` (Iter 64, B-PREREG)** —
+    three taker arms, ripeness-gated at 60d 15m span (~Jun 20: first sample
+    that outgrows the 52d window every breakout number so far shares); run
+    `uv run hlbot experiment configs/experiments/b_edge2b.json`, then bump
+    `min_span_days` so the next rerun waits for new data again.
   - [x] **B-EDGE2d — out-of-universe breadth test.** Done (Iter 48): same
     config (lb=384/ex=96) on 10 fresh liquid coins (CRV,ENA,LIT,NEAR,SUI,TON,
     WLD,XMR,XPL,XRP — top fresh by 24h volume, full 52d history) **FAILS G0**:

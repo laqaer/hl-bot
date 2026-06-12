@@ -3301,3 +3301,71 @@ REVIEW itself ranks it lowest priority.
 with --prefer maker --maker-fill resting; w=240 arm the one to watch).
 B-EDGE2b three-armed reruns as the 15m store grows. B-EDGE2f at ≥30d paper
 books (~Jul 8). Idle queue: B-SCALE doc once G2 evidence is real.
+
+## Iteration 64 — 2026-06-12 — B-PREREG: the headline confirms are frozen as pre-registered, ripeness-gated experiments
+
+**Why this.** Every explicit backlog item is done or time/evidence-blocked
+(B-G014 needs ≥14d of 1m store, today 3.7d, ETA ~Jun 26; B-EDGE2f needs ≥30d
+paper books, ~Jul 8; B-EDGE2b's rerun needs the 15m store to outgrow the 52d
+window it was measured on), and every backtest number so far was produced
+today — a rerun adds zero new data. The leverage left is evidence *integrity*
+for the runs the book is waiting on: B-G014 and B-EDGE2b existed only as
+prose + an ETA. Prose fails two ways when the sample finally ripens: the
+arms get assembled in the moment — i.e. after peeking at early numbers,
+exactly the forking-paths bias `hlbot confirm` was built to kill — and the
+"is the store ripe yet?" check is re-derived by hand every iteration.
+
+**Changed.** (a) `backtest/experiments.py`: `load_spec` (JSON spec → frozen
+agent/universes/interval/arms/thresholds/decision rule; ANY unknown key,
+bad prefer/maker_fill, dup arm name, or malformed universe is a hard error,
+never a silent default — a mislabeled arm would poison recorded evidence);
+`check_ripeness` (per-coin store spans over the FULL arm universe;
+worst-coin governs, a missing series is unripe, not 0d); `run_experiment`
+(one frames build per distinct (universe, vwap_window) — frames bake the
+window in — each arm fed to `confirm_strategy` with its frozen knobs;
+loaders injected, so orchestration is offline-testable). (b) `hlbot
+experiment <spec> [--check-only|--force|--store-root]`: refuses to run an
+unripe spec (exit 3); `--check-only` is the span readout the loop can run
+each iteration instead of hand-checking ETAs; `--force` prints an explicit
+"peek, NOT the pre-registered verdict" banner; output = per-arm confirm
+summaries + verdict table + the frozen decision rule (informational only —
+nothing auto-acts). `_load_backtest_frames` gained a `store_root`
+pass-through (frames_from_store already took it). (c) Two specs committed
+in `configs/experiments/`: **b_g014.json** — twap_mr_v1, 1m store, 10-coin
+universe, days=0, min_span 14d, SIX arms (baseline / stop_loss 0.03 / w=240,
+each × taker AND maker-rest; no stop+window combo — anti-synergistic per
+Iter 33), decision rule frozen: flip-proposals need PASS + beat same-basis
+baseline, maker claims count only from resting-fill arms, baseline FAIL ⇒
+Iter-29's 3.5d PASS was the pocket, propose nothing. **b_edge2b.json** —
+breakout_v1, 15m store, three taker arms (original / breadth / combined-ER
+0.1), min_span 60d (~Jun 20: the first sample that outgrows the frozen 52d
+window), decision rule notes the 0.1 threshold was selected on this same
+52d data so only post-Jun-12 bars are out-of-selection.
+
+**Evidence.** 405 → **425 tests pass** (20 new in `test_experiments.py`:
+spec parse + 10-case typo-rejection parametrization; worst-coin/missing-coin
+ripeness; runner grouping (base+stop share one frames build, w240 gets its
+own) and untouched pass-through of prefer/maker_fill/config/thresholds/
+periods_per_year; CI pins on the COMMITTED specs — agents known, decision
+rule present, b_g014 maker arms all resting + exactly the three configs ×
+two bases, b_edge2b taker-only/385-window/20-coin-ER arm; CLI unripe → exit
+3 before any frame/network work, check-only both ways, bad spec → exit 1).
+`ruff check src tests scripts` clean. Live-fired: both registered specs
+against the real store — b_g014 NOT RIPE (min 3.7d < 14d, all 10 coins
+listed), b_edge2b NOT RIPE (52.1d < 60d, breadth coins the binding ones) —
+and a throwaway 2-coin/1d/two-arm smoke spec ran the FULL pipeline on real
+candles + real funding fetch: taker and maker-rest arms both through
+confirm (maker arm's ladder correctly labeled maker-rest), verdict table +
+frozen decision printed, exit 0. Smoke numbers discarded by construction
+(1d peek; both arms FAIL walk-forward, as expected from a half-day OOS
+tail).
+
+**Found.** Nothing new filed. Note for future spec authors: `min_span_days`
+should be bumped after each B-EDGE2b rerun so the next run waits for
+genuinely new data (recorded in the spec's decision text and the backlog).
+
+**What's next (loop).** Each iteration: `uv run hlbot experiment
+configs/experiments/b_g014.json --check-only` (and b_edge2b) replaces the
+hand ETA check. b_edge2b ripens first (~Jun 20), b_g014 ~Jun 26 — both runs
+are now one command with frozen arms. B-EDGE2f at ≥30d paper books (~Jul 8).
+Idle queue: B-SCALE doc once G2 evidence is real.

@@ -734,11 +734,12 @@ def _load_backtest_frames(
     *,
     source: str,
     interval: str,
-    days: int,
+    days: float,
     cache: bool,
     vwap_window: int,
     api_url: str,
     with_funding: bool = True,
+    store_root: str | None = None,
 ):
     """Load frames for backtest/confirm per --source; prints status, exits on failure.
 
@@ -755,7 +756,7 @@ def _load_backtest_frames(
         try:
             frames, coverage = frames_from_store(
                 coin_list, interval=interval, days=days, with_funding=with_funding,
-                base_url=api_url, vwap_window=vwap_window)
+                base_url=api_url, vwap_window=vwap_window, root=store_root)
         except Exception as e:  # noqa: BLE001
             console.print(f"[red]failed to load from store: {e}[/red]")
             raise typer.Exit(2) from e
@@ -996,6 +997,90 @@ def confirm(
     console.print(res.summary())
     if not res.confirmed:
         raise typer.Exit(1)
+
+
+@app.command()
+def experiment(
+    spec_path: str,
+    check_only: bool = False,
+    force: bool = False,
+    store_root: str = "",
+):
+    """Run a pre-registered experiment spec — frozen confirm arms, ripeness-gated.
+
+    Specs live in configs/experiments/*.json and freeze an evidence-bearing
+    rerun (agent, universes, every arm's config/execution/fill model, pass
+    thresholds, decision rule) BEFORE the deciding sample exists, so the arms
+    can't be picked after peeking at early numbers. The command refuses to run
+    until every coin's store span reaches the spec's min_span_days
+    (exit 3 = not ripe; --check-only prints the span readout and stops;
+    --force runs anyway — an early run is a peek, record it as one, it is
+    NOT the pre-registered verdict). Results are informational: the printed
+    decision rule is applied by the operator, never auto-acted on.
+    """
+    from ..backtest.experiments import check_ripeness, load_spec, run_experiment
+
+    try:
+        spec = load_spec(spec_path)
+    except (OSError, ValueError) as e:
+        console.print(f"[red]{e}[/red]")
+        raise typer.Exit(1) from e
+    if spec.agent not in _backtest_factories({}):
+        console.print(f"[red]spec agent {spec.agent!r} unknown; "
+                      f"choose from {list(_backtest_factories({}))}[/red]")
+        raise typer.Exit(1)
+
+    root = store_root or None
+    rep = check_ripeness(spec, root=root)
+    console.print(rep.summary(), markup=False)
+    if check_only:
+        raise typer.Exit(0 if rep.ripe else 3)
+    if not rep.ripe:
+        if not force:
+            console.print("[yellow]refusing to run before the pre-registered sample "
+                          "exists (--force to peek anyway)[/yellow]")
+            raise typer.Exit(3)
+        console.print("[yellow]--force: running on an unripe sample — this is a peek, "
+                      "NOT the pre-registered verdict[/yellow]")
+
+    _, s = _conn()
+
+    def _load(coins: list[str], window: int):
+        return _load_backtest_frames(
+            coins, source=spec.source, interval=spec.interval, days=spec.days,
+            cache=True, vwap_window=window, api_url=s.hl_api_url, store_root=root)
+
+    results = run_experiment(
+        spec,
+        factory_for=lambda cfg: _backtest_factories(cfg)[spec.agent],
+        load_frames=_load,
+    )
+    for ar in results:
+        console.print(f"\n[bold]{ar.arm.name}[/bold]")
+        console.print(ar.result.summary(), markup=False)
+    table = Table(title=f"Experiment {spec.name} — {spec.agent} ({spec.interval}, "
+                        f"source={spec.source})")
+    for col in ("arm", "exec", "verdict", "edge is/oos", "oos sharpe", "trades is/oos"):
+        table.add_column(col)
+    for ar in results:
+        r = ar.result
+        fill = f":{ar.arm.maker_fill}" if ar.arm.prefer == "maker" else ""
+        table.add_row(
+            ar.arm.name,
+            f"{ar.arm.prefer}{fill}",
+            "[green]PASS[/green]" if r.confirmed else "[red]FAIL[/red]",
+            f"{_fmt_bps(r.in_sample.edge_bps)} / {_fmt_bps(r.out_of_sample.edge_bps)}",
+            "—" if r.out_of_sample.sharpe is None else f"{r.out_of_sample.sharpe:+.2f}",
+            f"{r.in_sample.n_trades} / {r.out_of_sample.n_trades}",
+        )
+    console.print(table)
+    if spec.decision:
+        console.print("decision rule (frozen with the spec):", style="bold")
+        console.print(spec.decision, markup=False)
+
+
+def _fmt_bps(v: float | None) -> str:
+    return "—" if v is None else f"{v:+.1f}"
 
 
 @app.command()
