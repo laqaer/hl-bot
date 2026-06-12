@@ -1162,6 +1162,117 @@ def gates(
     )
 
 
+@app.command("prop-check")
+def prop_check(
+    start_balance: float = typer.Option(
+        0.0, help="Eval account starting balance $ (0 = first equity "
+                  "snapshot in the window — fine for 'would my live curve "
+                  "have survived?', wrong for sizing a real eval)."),
+    daily_loss_pct: float = typer.Option(
+        0.05, help="Max daily loss as a fraction (firm rule — VERIFY)."),
+    daily_loss_base: str = typer.Option(
+        "start", help="What the daily %% is of: 'start' (fixed $) or "
+                      "'day_open' (that day's opening equity)."),
+    max_dd_pct: float = typer.Option(
+        0.10, help="Max drawdown as a fraction (firm rule — VERIFY)."),
+    dd_mode: str = typer.Option(
+        "trailing", help="'trailing' (from equity high-water mark) or "
+                         "'static' (from start balance)."),
+    target_pct: float = typer.Option(
+        0.0, help="Profit target fraction for a PASS (0 = no target rule)."),
+    min_trading_days: int = typer.Option(
+        0, help="Minimum distinct trading days for a PASS (0 = no rule)."),
+    boundary_hour: int = typer.Option(
+        0, min=0, max=23, help="UTC hour at which the daily limit resets."),
+    days: float = typer.Option(
+        0.0, help="Replay only the last N days of snapshots (0 = all)."),
+):
+    """Read-only prop-eval rule replay (CAPITAL.md Track B, docs/PROP_EVAL.md).
+
+    Replays the account equity curve (equity_snapshots — includes unrealized
+    PnL) against a firm's eval rules: day-boundary daily loss, trailing or
+    static max drawdown, profit target + min trading days. Reports every
+    would-be breach and the current headroom. The defaults are PLACEHOLDERS
+    shaped like common prop rules — pass the verified firm numbers.
+    """
+    from ..risk.prop import (
+        EvalProfile,
+        equity_points,
+        fill_trading_days,
+        simulate_eval,
+    )
+
+    if daily_loss_base not in ("start", "day_open"):
+        raise typer.BadParameter("daily-loss-base must be 'start' or 'day_open'")
+    if dd_mode not in ("trailing", "static"):
+        raise typer.BadParameter("dd-mode must be 'trailing' or 'static'")
+
+    conn, _ = _conn()
+    since_ms = int((time.time() - days * 86400) * 1000) if days > 0 else 0
+    pts = equity_points(conn, since_ms=since_ms)
+    if not pts:
+        console.print("[red]no equity snapshots in the window[/red] — run "
+                      "`hlbot ingest` on the box that trades, or widen --days")
+        raise typer.Exit(1)
+
+    profile = EvalProfile(
+        name="cli", start_balance=start_balance or pts[0][1],
+        max_daily_loss_pct=daily_loss_pct,
+        daily_loss_base=daily_loss_base,  # type: ignore[arg-type]
+        max_drawdown_pct=max_dd_pct,
+        drawdown_mode=dd_mode,  # type: ignore[arg-type]
+        profit_target_pct=target_pct, min_trading_days=min_trading_days,
+        day_boundary_utc_hour=boundary_hour,
+    )
+    report = simulate_eval(
+        profile, pts,
+        trading_days=fill_trading_days(conn, boundary_hour, since_ms))
+
+    span_d = (report.last_ts_ms - report.first_ts_ms) / 86_400_000
+    console.print(
+        f"rules: daily -{daily_loss_pct:.1%} of {daily_loss_base}, "
+        f"maxDD -{max_dd_pct:.1%} {dd_mode}, "
+        f"target +{target_pct:.1%}, min {min_trading_days} trading days, "
+        f"reset {boundary_hour:02d}:00 UTC  "
+        f"[dim](placeholders unless you passed the firm's verified "
+        f"numbers)[/dim]"
+    )
+    console.print(
+        f"curve: {report.n_points} snapshots over {span_d:.1f}d, "
+        f"start ${profile.start_balance:.2f} → last ${report.last_equity:.2f} "
+        f"(HWM ${report.high_water_mark:.2f}), "
+        f"{report.trading_days} trading days"
+    )
+    if report.breaches:
+        table = Table(title="Would-be breaches (any ONE fails a real eval)")
+        for col in ("when (UTC)", "rule", "equity", "floor", "detail"):
+            table.add_column(col)
+        for b in report.breaches:
+            table.add_row(
+                time.strftime("%Y-%m-%d %H:%M", time.gmtime(b.ts_ms / 1000)),
+                b.rule, f"${b.equity:.2f}", f"${b.floor:.2f}", b.detail)
+        console.print(table)
+    else:
+        console.print("[green]no breaches in the replayed window[/green]")
+    console.print(
+        f"headroom now: daily ${report.daily_headroom:.2f} "
+        f"(floor ${report.daily_floor:.2f}), "
+        f"drawdown ${report.drawdown_headroom:.2f} "
+        f"(floor ${report.drawdown_floor:.2f})"
+    )
+    verdict_color = {"FAIL": "red", "PASS": "green"}.get(report.verdict, "yellow")
+    console.print(f"verdict: [{verdict_color}]{report.verdict}[/{verdict_color}]")
+    gap = f", largest gap {report.max_gap_hours:.1f}h" if report.max_gap_hours else ""
+    density = (
+        f"{report.obs_per_day:.1f} obs/day" if report.obs_per_day else "1 snapshot"
+    )
+    console.print(
+        f"[dim]sampled curve: {density}{gap} — a real eval marks "
+        f"continuously, so breaches between snapshots are invisible here; "
+        f"treat thin headroom as a fail.[/dim]"
+    )
+
+
 @app.command()
 def report(send: bool = False):
     """Build daily report; optionally send to Telegram."""

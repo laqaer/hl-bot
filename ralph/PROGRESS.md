@@ -2961,3 +2961,65 @@ written (13KB), **exit 0 in ~6s** (was exit 124 at 30s).
 maker-rest the arm to watch). B-EDGE2b three-armed reruns as the 15m store
 grows. B-EDGE2f at ≥30d paper books (~Jul 8). Idle queue: B-PROP / B17
 capital-formation specs, B-SCALE doc once G2 evidence is real.
+
+## Iteration 58 — 2026-06-12 — B-PROP: prop-eval rules as code + prep checklist
+
+**Why this.** Research tasks remain time-blocked (B-G014 needs 1m store span
+≥14d — measured 3.7d today, ETA ~Jun 23–26; B-EDGE2f needs ≥30d paper books,
+~Jul 8; checked the local DB while orienting — it's empty, as expected: paper
+evidence accumulates on the deploy box, not here). Top unblocked backlog item
+was B-PROP (P3, CAPITAL.md Track B): prep for trading firm capital through a
+funded-account eval. Scoping it surfaced a real machinery gap, so the
+"checklist" got an operational core: prop evals breach on **equity (incl.
+unrealized) from a day boundary** and on a **trailing-HWM max drawdown** —
+both invisible to our existing account guardrail (`check_guardrails` is
+rolling-24h and realized-only). Without code for those rules we cannot know
+whether our own live curve would survive a given firm's eval before paying
+the fee.
+
+**Changed.** (a) `risk/prop.py`: `EvalProfile` (daily-loss % with
+start-balance or day-open base + configurable UTC reset hour;
+trailing/static max-DD; profit target; min trading days) +
+`simulate_eval(profile, points)` — pure replay of any (ts_ms, equity) series
+producing breach episodes (collapsed per day per rule / per excursion),
+first-breach FAIL verdict (conservative: a breach after the target date
+still fails — a funded account lives under the same rules), current headroom
+to both floors, and observation-density stats (sampled-curve honesty: a real
+eval marks continuously, so the report names its own blind spot). DB helpers
+`equity_points` / `fill_trading_days`. (b) `hlbot prop-check`: read-only CLI
+over `equity_snapshots`, all rule numbers as flags (defaults are loudly
+labeled placeholders), breach table + headroom + verdict + density caveat.
+(c) `docs/PROP_EVAL.md`: the B-PROP checklist — hard gate (no eval fee
+before live G1+ evidence AND a ≥30d breach-free prop-check replay),
+verify-terms table for Hypernova/Propr/Velotrade, rule→bot mapping
+(`GuardrailConfig.max_daily_loss` ≤ 50% of the firm's daily allowance to
+carry the realized-vs-equity gap; tightened notional caps; same strategy,
+same params — "if the eval needs different params, we have a lottery
+ticket"), isolation wiring (separate wallet/DB/services), in-eval abort
+discipline, funded/failed exit rules. (d) CAPITAL.md Track B links the
+checklist + tool.
+
+**Evidence.** 356 → **368 tests pass** (12 new in `tests/test_prop_eval.py`:
+the killer case — intraday unrealized dip below the daily floor on a day
+that closes green → FAIL; same $ loss split across the reset boundary → no
+breach vs same-day → breach; start vs day-open daily base; trailing vs
+static DD divergence on the same curve; DD episode collapse + re-entry;
+target-without-min-days stays IN_PROGRESS; headroom/density math; boundary-
+hour shift; empty curve → NO_DATA; DB helpers; CLI smoke on a scratch DB
+both FAIL and clean arms). `ruff check src tests scripts` clean. Live-fired
+on a synthetic 10d hourly curve with one −4.6% intraday wick: prop-check
+flags exactly that wick as a daily_loss breach (day closed green — the case
+the realized-only guardrail can't see), 24.1 obs/day density line, verdict
+FAIL; loosening to −10% daily prints "no breaches". No live behavior change
+anywhere — the module is read-only analysis.
+
+**Found.** `simulate_eval` accepts any equity series, and the backtest
+engine already builds per-bar equity — wiring those together would pre-screen
+a strategy against a firm's rules at bar resolution before any live capital.
+Filed as B-PROP2 (small slice).
+
+**What's next (loop).** B-G014 when 1m store span ≥14d (~Jun 23–26; w=240
+maker-rest the arm to watch). B-EDGE2b three-armed reruns as the 15m store
+grows. B-EDGE2f at ≥30d paper books (~Jul 8). Idle queue: B-PROP2 (backtest
+curve pre-screen), B17 moonshot sleeve spec, B-SCALE doc once G2 evidence
+is real.

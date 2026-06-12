@@ -58,6 +58,9 @@ raising, but capped and unforgiving.
   (~$200k); and a **high failure rate (~87% across prop firms in 6 months)**. Run the
   *same* risk-disciplined strategy the bot already enforces.
 - **Use it as:** additive capital ($100–200k) on top of the vault — not the whole plan.
+- **Prep:** `PROP_EVAL.md` is the checklist; `hlbot prop-check` replays our real
+  equity curve against a firm's rules (day-boundary equity loss, trailing DD)
+  before any fee is paid.
 
 ## Track C — SMA / friends-&-family (later; once the record is strong)
 

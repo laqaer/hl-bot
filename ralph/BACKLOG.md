@@ -557,9 +557,21 @@ each on ≥90d real history (`hlbot confirm` / `hlbot backtest --config`) before
   rollback). Found+fixed: CAPITAL.md step 5 ("point HL_TRADER_ADDRESS at the
   vault") would have read the vault but traded the personal account. Still
   human-gated behind G3; env unset ⇒ behavior byte-identical.
-- [ ] **B-PROP — Prop/funded eval prep.** Checklist for Hypernova/Propr/Velotrade
-  (HL-native, API-friendly); run the same guardrailed strategy through an eval for
-  additive $100–200k. (docs/CAPITAL.md Track B.)
+- [x] **B-PROP — Prop/funded eval prep.** Done (Iter 58): `docs/PROP_EVAL.md`
+  checklist (verify-terms table, free pre-screen, rule→guardrail mapping with
+  the realized-vs-equity buffer, isolation wiring, in-eval/abort discipline) +
+  the operational core: `risk/prop.py` `EvalProfile`/`simulate_eval` replays
+  any equity curve against eval rules our guardrails do NOT model
+  (equity-based day-boundary daily loss incl. unrealized, trailing-HWM /
+  static max drawdown, profit target + min trading days) and `hlbot
+  prop-check` runs it read-only on `equity_snapshots`. Eval *run* stays
+  human-gated behind live G1+ evidence per the checklist. The actual eval
+  needs ≥30d clean `prop-check` on the live box first.
+- [ ] **B-PROP2 — Pre-screen backtest equity curves through `EvalProfile`.**
+  `simulate_eval` takes any (ts_ms, equity) series; the backtest engine
+  already builds per-bar equity. Wire a `--prop-profile` (or a small script)
+  so a strategy can be screened against a firm's rules at bar resolution —
+  denser than live snapshots, usable before any live capital. Small slice.
 - [ ] **B17 — Moonshot sleeve spec.** Design the ring-fenced, loss-bounded sleeve
   (separate sub-account, hard cap, defined max loss). Spec only; no live. (CAPITAL.md
   Track D.)
