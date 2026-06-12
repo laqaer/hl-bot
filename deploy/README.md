@@ -68,6 +68,22 @@ manual trading on the shared account neither pages it nor masks a bot bleed
 (the account-wide number prints beside it). Unset = unarmed. A malformed
 value refuses to run (missed dead-man ping) rather than silently disarm.
 
+Off-host candle-store backup (B-STOREBKP): the rolling `data/candle_store/`
+holds the only copy of fine-candle history the API has already expired (1m
+retention ~3.5d) — Litestream replicates the DBs but not these files, and
+B-STORESYNC's two store clones share this one host. Set
+`HLBOT_STORE_BACKUP_S3=bucket[/prefix]` in `/etc/hl-bot/env` and every
+harvest run (hourly timer + the loop's step-0) uploads the post-sync store
+tarball to S3 with no extra tooling (stdlib SigV4; creds from the EC2
+instance role like Litestream, or the `AWS_*` keys; throttled to ~hourly).
+It overwrites a stable `candle_store.tar` and writes one dated
+`weekly/candle_store.<YYYY>W<WW>.tar` restore point per ISO week, so a
+corrupted store can't silently replace the only good copy. The instance role
+needs `s3:PutObject` on the bucket (the `deploy/aws` Terraform's Litestream
+policy already grants it when `backup_bucket` is set). Backup failures warn
+in the journal but never turn the harvest timer red. Restore:
+`aws s3 cp s3://<bucket>/<prefix>/candle_store.tar - | tar -x -C data/candle_store/`.
+
 ## Host sizing & "I can't SSH in"
 
 `install.sh` adds a swapfile (`deploy/ensure-swap.sh`) and the units bound the

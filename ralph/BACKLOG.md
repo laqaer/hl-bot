@@ -36,7 +36,7 @@ Keep it ruthlessly prioritized: the top item should always be the highest-levera
 - [x] **B5 — Confirmation harness (G0 as code).** Done: `backtest/confirm.py`
   walk-forward + cost ladder (maker/taker 1×/2×/3×) → PASS/FAIL; `hlbot confirm`.
   (Iteration 3.)
-- [~] **B4-RUN — Confirm carry strategies on real history.** Run on a 10-coin
+- [x] **B4-RUN — Confirm carry strategies on real history.** Run on a 10-coin
   liquid-alt universe incl. ZEC (Iteration 20, network up). **NOT confirmed (FAIL
   G0):** xfund_carry_v1 maker −4.3bps full-sample but OOS-maker +3.4bps/+0.60sh
   (52 trades) — a faint recent-regime signal, in-sample −43.7bps; funding_carry_v1
@@ -404,7 +404,33 @@ Keep it ruthlessly prioritized: the top item should always be the highest-levera
   loop store pulled 177 fresher ones, 0 missing bars on both. Either
   harvester dying alone can no longer gap the sample; host loss remains the
   residual risk (off-host store backup = operator-gated follow-up if ever
-  needed).
+  needed). _Host-loss coverage shipped Iter 90 (B-STOREBKP below) — arming
+  it is still the operator's call._
+- [x] **B-STOREBKP — Off-host S3 backup of the candle store.** Done (Iter 90):
+  B-STORESYNC's residual risk is the HOST — both store clones live on it, and
+  NOTHING here is replicated off-host (litestream is inactive on this box:
+  no binary, no /etc/litestream.yml), so host loss permanently invalidates
+  the multi-week 1m sample every P0 experiment clock is waiting on (~Jun 26
+  b_g014). Litestream only covers SQLite anyway; the store is gzipped JSON.
+  Now `backtest/store_backup.py`: stdlib-only SigV4 S3 PUT (no boto3/aws-cli
+  on the box; signing pinned to the AWS-published key-derivation vector),
+  creds from AWS_* env or the EC2 IMDSv2 instance role (live-fired: role
+  resolves real temp creds), gated on `HLBOT_STORE_BACKUP_S3=bucket[/prefix]`
+  (unset = inert, pinned), throttled ~hourly via a state marker beside the
+  store, stable `candle_store.tar` overwrite + one dated weekly restore point
+  (a corrupted store can't replace the only good copy). Wired into
+  `harvest-candles` on BOTH paths (post-sync, so the tarball is the union;
+  failures warn but never redden the timer — pinned). Operator: set the env
+  in /etc/hl-bot/env + give the role s3:PutObject (deploy/README §Operate,
+  env.example). tests/conftest.py guards the suite from real uploads on an
+  armed box.
+- [ ] **B-STOREBKP2 — health warn when an ARMED store backup is silently
+  failing.** The backup warns in the journal only; if the operator arms
+  HLBOT_STORE_BACKUP_S3 and uploads start failing (perms drift, bucket
+  deleted), protection silently lapses. Mirror B-PAPERHB: read the
+  `.candle_backup_state.json` marker's last_success age in `assess_health`,
+  warn-only, gated on the env being set so unarmed boxes stay quiet. Small;
+  do once the operator actually arms it (no marker exists until then).
 - [x] **B-M4 — Auto-tuner auto-apply is risk-tightening only.** Done (Iter 63,
   REVIEW M4): `scripts/auto_tuner.py` was the last ungated live-params writer —
   Hermes cron auto-applied LLM tweaks to `agent_overrides.json`, including

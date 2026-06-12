@@ -759,6 +759,12 @@ def harvest_candles(
     irreplaceable 1m sample (both have died once: B-DEPLOY-EXEC, Iter 78).
     Best-effort redundancy: a missing peer clone is skipped, sync failures
     never change the exit code (only harvest failures turn the timer red).
+
+    If HLBOT_STORE_BACKUP_S3=bucket[/prefix] is set, every run also uploads
+    the (post-sync) store tarball off-host to S3 (B-STOREBKP — both store
+    clones share one host; stdlib SigV4, creds from env or the EC2 instance
+    role, throttled to ~hourly). Same best-effort rule: a backup failure
+    warns but never changes the exit code.
     """
     from ..backtest.store import harvest, harvest_pairs, worst_store_lag
 
@@ -779,6 +785,7 @@ def harvest_candles(
             )
             if sync_peer:
                 _sync_peer_store(sync_peer)
+            _backup_store_s3()
             return
     results = harvest(coin_list, interval_list, extra_pairs=extra, base_url=s.hl_api_url)
     table = Table(title="Candle harvest")
@@ -793,6 +800,7 @@ def harvest_candles(
     console.print(table)
     if sync_peer:
         _sync_peer_store(sync_peer)
+    _backup_store_s3()
     if any(r.error for r in results):
         raise typer.Exit(2)
 
@@ -821,6 +829,29 @@ def _sync_peer_store(peer: str) -> None:
     if errs:
         line += f" [yellow]({len(errs)} file(s) errored, e.g. {errs[0].name}: {errs[0].error})[/yellow]"
     console.print(line)
+
+
+def _backup_store_s3() -> None:
+    """Best-effort off-host store backup (B-STOREBKP); never changes the exit
+    code — only harvest failures may turn the timer red. Silent when the
+    HLBOT_STORE_BACKUP_S3 opt-in is unset."""
+    from ..backtest import store_backup
+
+    try:
+        res = store_backup.backup_store()
+    except Exception as e:  # noqa: BLE001 — backup must not block the harvest
+        console.print(f"[yellow]store backup failed: {e}[/yellow]")
+        return
+    if res.skipped == "disabled":
+        return
+    if res.error:
+        console.print(f"[yellow]store backup: {res.error}[/yellow]")
+    elif res.skipped:
+        console.print(f"[dim]store backup skipped ({res.skipped})[/dim]")
+    else:
+        console.print(
+            f"store backup ↗ s3: {', '.join(res.keys)} ({res.bytes_uploaded:,} bytes)"
+        )
 
 
 def _load_backtest_frames(
