@@ -1077,10 +1077,15 @@ def experiment(
     (--no-record opts out). Results are informational: the printed decision
     rule is applied by the operator, never auto-acted on.
     """
+    from dataclasses import asdict
+
     from ..backtest.experiments import (
+        arm_comparison,
         check_ripeness,
         experiment_record,
+        load_experiment_records,
         load_spec,
+        preferred_full_scenario,
         run_experiment,
         write_experiment_record,
     )
@@ -1125,11 +1130,14 @@ def experiment(
         console.print(ar.result.summary(), markup=False)
     table = Table(title=f"Experiment {spec.name} — {spec.agent} ({spec.interval}, "
                         f"source={spec.source})")
-    for col in ("arm", "exec", "verdict", "edge is/oos", "oos sharpe", "trades is/oos"):
+    for col in ("arm", "exec", "verdict", "edge is/oos", "oos sharpe",
+                "trades is/oos", "pocket is/oos/1x"):
         table.add_column(col)
     for ar in results:
         r = ar.result
         fill = f":{ar.arm.maker_fill}" if ar.arm.prefer == "maker" else ""
+        full = preferred_full_scenario(
+            ar.arm.prefer, [asdict(s) for s in r.cost_ladder]) or {}
         table.add_row(
             ar.arm.name,
             f"{ar.arm.prefer}{fill}",
@@ -1137,8 +1145,37 @@ def experiment(
             f"{_fmt_bps(r.in_sample.edge_bps)} / {_fmt_bps(r.out_of_sample.edge_bps)}",
             "—" if r.out_of_sample.sharpe is None else f"{r.out_of_sample.sharpe:+.2f}",
             f"{r.in_sample.n_trades} / {r.out_of_sample.n_trades}",
+            _pocket_cell(r.in_sample.pocket_share, r.out_of_sample.pocket_share,
+                         full.get("pocket_share")),
         )
     console.print(table)
+    # Prior recorded runs (loaded BEFORE this run's record is written): the
+    # rerun protocol reads each new verdict against history — a PASS whose
+    # pocket numbers don't fall on new data is the pocket renewing its badge.
+    prior = load_experiment_records(spec.name, results_dir)
+    if prior:
+        pt = Table(title=f"Prior recorded runs — {spec.name} "
+                         f"(read pocket/edge against these)")
+        for col in ("ran_at", "arm", "exec", "verdict", "edge is/oos",
+                    "pocket is/oos/1x"):
+            pt.add_column(col)
+        for rec_ in prior:
+            stamp = str(rec_.get("ran_at", "?"))[:10]
+            if rec_.get("forced"):
+                stamp += " [yellow](peek)[/yellow]"
+            for arm_ in rec_["arms"]:
+                c = arm_comparison(arm_)
+                fill = f":{arm_.get('maker_fill')}" if c["prefer"] == "maker" else ""
+                pt.add_row(
+                    stamp,
+                    str(c["name"]),
+                    f"{c['prefer']}{fill}",
+                    {True: "[green]PASS[/green]", False: "[red]FAIL[/red]"}.get(
+                        c["confirmed"], "—"),
+                    f"{_fmt_bps(c['edge_is'])} / {_fmt_bps(c['edge_oos'])}",
+                    _pocket_cell(c["pocket_is"], c["pocket_oos"], c["pocket_full"]),
+                )
+        console.print(pt)
     if spec.decision:
         console.print("decision rule (frozen with the spec):", style="bold")
         console.print(spec.decision, markup=False)
@@ -1157,6 +1194,18 @@ def experiment(
 
 def _fmt_bps(v: float | None) -> str:
     return "—" if v is None else f"{v:+.1f}"
+
+
+def _fmt_share(v: float | None) -> str:
+    return "—" if v is None else f"{v:.2f}"
+
+
+def _pocket_cell(is_share: float | None, oos_share: float | None,
+                 full_share: float | None) -> str:
+    """`0.87 / 2.20 / 0.69` — IS / OOS / preferred-execution-1x full sample."""
+    if is_share is None and oos_share is None and full_share is None:
+        return "—"
+    return f"{_fmt_share(is_share)} / {_fmt_share(oos_share)} / {_fmt_share(full_share)}"
 
 
 @app.command()

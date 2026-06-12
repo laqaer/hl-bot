@@ -411,3 +411,68 @@ def write_experiment_record(record: dict[str, Any], results_dir: str | Path) -> 
         n += 1
     path.write_text(json.dumps(record, indent=2) + "\n", encoding="utf-8")
     return path
+
+
+def load_experiment_records(spec_name: str, results_dir: str | Path) -> list[dict[str, Any]]:
+    """All persisted verdict records for ``spec_name`` under ``results_dir``,
+    sorted by ``ran_at`` (ISO-8601, so lexicographic order is time order).
+    Peeks are included — their ``forced`` flag rides the record. Unreadable or
+    foreign files are skipped, never fatal: the prior-run comparison is a
+    reading aid, not a gate."""
+    d = Path(results_dir)
+    if not d.is_dir():
+        return []
+    out: list[dict[str, Any]] = []
+    for p in sorted(d.glob("*.json")):
+        try:
+            rec = json.loads(p.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        if (isinstance(rec, dict) and isinstance(rec.get("spec"), dict)
+                and rec["spec"].get("name") == spec_name
+                and isinstance(rec.get("arms"), list)):
+            out.append(rec)
+    out.sort(key=lambda r: str(r.get("ran_at", "")))
+    return out
+
+
+def preferred_full_scenario(
+    prefer: str, cost_ladder: list[dict[str, Any]],
+) -> dict[str, Any] | None:
+    """The full-sample cost-ladder rung matching an arm's preferred execution
+    basis: taker arms read ``taker-1x``; maker arms read the single maker rung
+    (named by its fill model — ``maker`` / ``maker-rest`` / ``maker-restc``)."""
+    for s in cost_ladder:
+        name = str(s.get("name", ""))
+        hit = name.startswith("maker") if prefer == "maker" else name == "taker-1x"
+        if hit:
+            return s
+    return None
+
+
+def arm_comparison(arm: dict[str, Any]) -> dict[str, Any]:
+    """Compact reading row for one recorded arm: verdict, IS/OOS edge and
+    trades, and the pocket triple (IS / OOS / preferred-execution full sample).
+
+    This is what makes a rerun's verdict mechanical to read against history —
+    a PASS whose pocket numbers don't fall on new data is the pocket renewing
+    its badge, not a durable edge (B-POCKET, Iter 76). Records written before
+    the pocket diagnostic existed lack the fields; they read as ``None`` and
+    render as missing rather than failing."""
+    is_ = arm.get("in_sample") or {}
+    oos = arm.get("out_of_sample") or {}
+    full = preferred_full_scenario(
+        str(arm.get("prefer", "taker")), arm.get("cost_ladder") or []) or {}
+    return {
+        "name": arm.get("name"),
+        "prefer": arm.get("prefer"),
+        "maker_fill": arm.get("maker_fill"),
+        "confirmed": arm.get("confirmed"),
+        "edge_is": is_.get("edge_bps"),
+        "edge_oos": oos.get("edge_bps"),
+        "trades_is": is_.get("n_trades"),
+        "trades_oos": oos.get("n_trades"),
+        "pocket_is": is_.get("pocket_share"),
+        "pocket_oos": oos.get("pocket_share"),
+        "pocket_full": full.get("pocket_share"),
+    }

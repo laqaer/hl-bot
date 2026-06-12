@@ -28,8 +28,10 @@ from hl_bot.backtest.confirm import ConfirmationResult, ScenarioResult
 from hl_bot.backtest.experiments import (
     PERIODS_PER_YEAR,
     ArmResult,
+    arm_comparison,
     check_ripeness,
     experiment_record,
+    load_experiment_records,
     load_spec,
     run_experiment,
     write_experiment_record,
@@ -496,12 +498,12 @@ def test_cli_experiment_bad_spec_exits_1(tmp_path):
 # ---------------------------------------------------------------------------
 
 
-def _patch_fake_run(monkeypatch):
+def _patch_fake_run(monkeypatch, result_fn=_fake_result):
     """Fake the runner (no frames/network); the recording seam is what's under test."""
     import hl_bot.backtest.experiments as exps
 
     def fake_run(spec, *, factory_for, load_frames, confirm_fn=None):
-        return [exps.ArmResult(arm=a, result=_fake_result(a.name)) for a in spec.arms]
+        return [exps.ArmResult(arm=a, result=result_fn(a.name)) for a in spec.arms]
 
     monkeypatch.setattr(exps, "run_experiment", fake_run)
 
@@ -560,3 +562,103 @@ def test_cli_experiment_forced_peek_recorded_as_peek_and_no_record_opts_out(
         "--results-dir", str(rdir), "--force", "--no-record"])
     assert res2.exit_code == 0, res2.output
     assert len(list(rdir.glob("*.json"))) == 1  # nothing new written
+
+
+# ---------------------------------------------------------------------------
+# prior-run comparison — the rerun protocol's reading aid (B-POCKET2)
+# ---------------------------------------------------------------------------
+
+
+def test_load_experiment_records_filters_sorts_and_skips_garbage(tmp_path):
+    d = tmp_path / "results"
+    write_experiment_record({"spec": {"name": "s1"}, "ran_at": "2026-06-20T00:00:00Z",
+                             "forced": False, "arms": []}, d)
+    write_experiment_record({"spec": {"name": "s1"}, "ran_at": "2026-06-12T00:00:00Z",
+                             "forced": True, "arms": []}, d)
+    write_experiment_record({"spec": {"name": "other"}, "ran_at": "2026-06-13T00:00:00Z",
+                             "forced": False, "arms": []}, d)
+    (d / "garbage.json").write_text("{not json")
+    (d / "no_arms.json").write_text(json.dumps({"spec": {"name": "s1"}}))
+    recs = load_experiment_records("s1", d)
+    # only s1's well-formed records, peeks included, oldest first
+    assert [r["ran_at"] for r in recs] == ["2026-06-12T00:00:00Z", "2026-06-20T00:00:00Z"]
+    assert recs[0]["forced"] is True
+    assert load_experiment_records("s1", tmp_path / "missing") == []
+
+
+def test_arm_comparison_pocket_triple_rung_selection_and_legacy_degrade():
+    ladder = [
+        {"name": "maker-rest", "pocket_share": 0.4},
+        {"name": "taker-1x", "pocket_share": 0.69},
+        {"name": "taker-2x", "pocket_share": 0.9},
+    ]
+    arm = {"name": "combined", "prefer": "taker", "confirmed": True,
+           "in_sample": {"edge_bps": 20.1, "n_trades": 226, "pocket_share": 0.87},
+           "out_of_sample": {"edge_bps": 70.4, "n_trades": 96, "pocket_share": 2.20},
+           "cost_ladder": ladder}
+    c = arm_comparison(arm)
+    # full-sample pocket reads the rung matching the arm's execution basis
+    assert (c["pocket_is"], c["pocket_oos"], c["pocket_full"]) == (0.87, 2.20, 0.69)
+    assert (c["edge_is"], c["edge_oos"], c["confirmed"]) == (20.1, 70.4, True)
+    assert (c["trades_is"], c["trades_oos"]) == (226, 96)
+    c2 = arm_comparison({**arm, "prefer": "maker"})
+    assert c2["pocket_full"] == 0.4  # maker arms read the maker rung, any fill name
+    # records written before B-POCKET lack the fields — degrade, never fail
+    legacy = {"name": "old", "prefer": "taker", "confirmed": False,
+              "in_sample": {"edge_bps": -11.8, "n_trades": 470},
+              "out_of_sample": {"edge_bps": 51.0, "n_trades": 120},
+              "cost_ladder": [{"name": "taker-1x"}]}
+    cl = arm_comparison(legacy)
+    assert (cl["pocket_is"], cl["pocket_oos"], cl["pocket_full"]) == (None, None, None)
+    assert cl["edge_is"] == -11.8 and cl["confirmed"] is False
+
+
+def _fake_result_with_pockets(name: str) -> ConfirmationResult:
+    is_ = ScenarioResult("in-sample(taker)", 10.0, 20.1, 2.0, 226, pocket_share=0.87,
+                         pocket_window="2026-04-21..2026-05-04", pocket_window_frac=0.25)
+    oos = ScenarioResult("oos(taker)", 5.0, 70.4, 3.9, 96, pocket_share=2.20,
+                         pocket_window="2026-06-02..2026-06-05", pocket_window_frac=0.25)
+    ladder = [
+        ScenarioResult("maker", 1.0, 5.0, 1.0, 322, pocket_share=0.50,
+                       pocket_window="w", pocket_window_frac=0.25),
+        ScenarioResult("taker-1x", 1.0, 4.0, 1.0, 322, pocket_share=0.69,
+                       pocket_window="2026-05-25..2026-06-05", pocket_window_frac=0.25),
+        ScenarioResult("taker-2x", 0.5, 2.0, 0.5, 322),
+        ScenarioResult("taker-3x", -0.5, -2.0, -0.5, 322),
+    ]
+    return ConfirmationResult(agent=name, confirmed=True, reasons=[], in_sample=is_,
+                              out_of_sample=oos, cost_ladder=ladder,
+                              robust_to_2x_slippage=True, n_frames=2)
+
+
+def test_cli_experiment_pocket_column_and_prior_runs_table(tmp_path, monkeypatch):
+    from rich.console import Console
+    from typer.testing import CliRunner
+
+    import hl_bot.cli.main as cli
+    from hl_bot.cli.main import app
+
+    spec_path = _write_spec(tmp_path, min_span_days=2)
+    for c in ("BTC", "ETH"):
+        _write_store(tmp_path, c, "1m", 3 * DAY_BARS + 1)
+    monkeypatch.setenv("HLBOT_DB", str(tmp_path / "t.sqlite"))
+    monkeypatch.setattr(cli, "console", Console(width=250))
+    _patch_fake_run(monkeypatch, result_fn=_fake_result_with_pockets)
+    rdir = tmp_path / "results"
+    args = ["experiment", str(spec_path), "--store-root", str(tmp_path),
+            "--results-dir", str(rdir)]
+
+    res = CliRunner().invoke(app, args)
+    assert res.exit_code == 0, res.output
+    # current-run table carries the pocket triple (IS / OOS / preferred-1x rung)
+    assert "pocket is/oos/1x" in res.output
+    assert "0.87 / 2.20 / 0.69" in res.output
+    assert "Prior recorded runs" not in res.output  # nothing recorded before this run
+
+    res2 = CliRunner().invoke(app, args)
+    assert res2.exit_code == 0, res2.output
+    # the rerun shows the first run's verdict beside its own, mechanically
+    assert "Prior recorded runs" in res2.output
+    assert res2.output.count("0.87 / 2.20 / 0.69") == 2  # current + prior rows
+    assert "+20.1 / +70.4" in res2.output
+    assert len(list(rdir.glob("t_spec.*.json"))) == 2

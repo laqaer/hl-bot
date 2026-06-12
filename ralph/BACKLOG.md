@@ -288,6 +288,21 @@ Keep it ruthlessly prioritized: the top item should always be the highest-levera
   (May 25–Jun 5), IS 0.87, OOS 2.20 (Jun 2–5: the OOS tail outside one
   4-day burst LOSES)** — the PASS is the pocket, quantified. Jun-20 baseline
   for comparison.
+- [x] **B-POCKET2 — Pocket-aware prior-run comparison in `hlbot experiment`.**
+  Done (Iter 80, the Iter-76/79 idle-queue "reading aid"): the rerun protocol
+  says "read each verdict against history" but the machinery didn't — the
+  headline table had no pocket column and prior verdicts lived in JSON records
+  + PROGRESS prose. Now (a) the current-run table carries `pocket is/oos/1x`
+  (1x = the cost-ladder rung matching the arm's execution basis), and (b) every
+  full run prints a "Prior recorded runs" table built from the spec's persisted
+  records (`load_experiment_records` + `arm_comparison`, pure + tested;
+  pre-B-POCKET records degrade to "—", peeks labeled). (c) The b_edge2b
+  baseline is now machine-readable: ran the frozen spec `--force` on the
+  already-seen 52.5d sample (the Iter-76 numbers, honestly recorded as
+  `results/b_edge2b.20260612T153311Z.peek.json`) — combined-ER pocket
+  IS 0.86 / OOS 1.81 / taker-1x 0.69; original-universe full-sample pocket
+  **1.15** (rest of sample loses — its PASS is wholly the pocket). The Jun-20
+  verdict will print beside these automatically.
 - [x] **B-RIPE — Gap-aware experiment ripeness.** Done (Iter 70): `check_ripeness`
   judged spans only — `coverage_of` computes interval-aligned holes but the
   ripeness gate discarded them, so a harvester outage >3.5d (permanent 1m data
@@ -347,6 +362,16 @@ Keep it ruthlessly prioritized: the top item should always be the highest-levera
   be index-mode 100755). Box remediated (`chmod +x` on the deploy clone —
   invisible to the merge under fileMode=false) and the first successful
   auto-deploy observed live same-iteration.
+- [ ] **B-DEPLOY-HB — Updater visibility in `hlbot health`.** Found (Iter 80):
+  hlbot-update was dead Jun 8–12 (203/EXEC) and regressed→dead AGAIN today
+  (the 15:19 ff-merge to 4d3454b rewrote update.sh at index mode 100644,
+  stripping the Iter-79 manual chmod — the d12dac2 fix was still unpushed;
+  re-remediated in Iter 80) with nothing paging either time. `assess_health`
+  should warn/crit when the box's deploy lags: simplest data-truth signal is
+  `data/.deployed_sha` mtime (stale ≥ N days = updater not deploying) and/or
+  comparing it to the repo HEAD on disk; checking systemd unit state is an
+  option but mtime needs no privileges. Read-only, warn-only — never blocks
+  ticks.
 - [x] **B-M5 — Spot-mid normalization fixed + tested (REVIEW M5, the last
   unpicked finding).** Done (Iter 66): the basis feed was silently dead, not
   merely fragile — the inline parser zipped `universe` with the ctx array
@@ -715,7 +740,10 @@ each on ≥90d real history (`hlbot confirm` / `hlbot backtest --config`) before
     record will carry `pocket_share` per scenario; today's already-seen-
     sample baseline for the combined-ER arm is taker-1x 0.69 / IS 0.87 /
     OOS 2.20 — a PASS whose pocket numbers don't fall on new data is the
-    pocket renewing its badge, not a durable edge.
+    pocket renewing its badge, not a durable edge. _Baseline now recorded
+    (Iter 80, B-POCKET2): `results/b_edge2b.20260612T153311Z.peek.json`
+    (combined-ER pockets 0.86/1.81/0.69 on the one-day-later window); the
+    Jun-20 run prints its numbers beside it automatically._
   - [x] **B-EDGE2g — extended-history read at 1h cadence (span-for-cadence).**
     Done (Iter 75): the Iter-74 1h harvest made ~208d available NOW vs
     ~Sep for 90d of 15m, so the xmom-killer test was pointed at breakout

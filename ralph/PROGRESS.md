@@ -4358,3 +4358,84 @@ should land on the box within ~15m of push). B-EDGE2f at ≥30d paper books
 (~Jul 8); xmom paper card ~Jul 12. Idle queue: B-SCALE doc on real G2
 evidence; pocket-aware reading aid in `hlbot experiment` output if the
 Jun-20 read needs it.
+
+## Iteration 80 — 2026-06-12 — B-POCKET2: pocket-aware prior-run comparison in `hlbot experiment` + b_edge2b baseline recorded
+
+**Ripeness checks** (per-iteration readout): b_edge2b NOT RIPE (15m 52.5d
+< 60d, ~Jun 20); b_g014 NOT RIPE (1m 4.1d < 14d, ~Jun 26); b_edge3 +
+b_edge2_1h NOT RIPE (1h 172.0d < 200d, ~Jul 10). Store fresh (step-0:
+worst lag 19.7m ≤ 30m, no harvest). Auto-deploy confirmed alive post-
+B-DEPLOY-EXEC: 15:19 timer fire Result=success, box at 4d3454b (d12dac2
+lands next cycle after push — the Iter-79 "natural test case").
+
+**Why this.** All four specs are calendar-blocked, so this is the idle-queue
+item: the Jun-20 b_edge2b read is the first gate decision, and its protocol
+("read pocket_share against the 0.69/0.87/2.20 baseline; a PASS whose
+pocket numbers don't fall on new data is the pocket renewing its badge")
+existed only as prose in BACKLOG/PROGRESS — the headline experiment table
+had no pocket column, and prior verdicts sat in raw JSON. A reading the
+machinery doesn't surface is a reading a future iteration can skip.
+
+**Changed.**
+- `backtest/experiments.py`: `load_experiment_records(spec_name, dir)`
+  (all persisted verdicts for a spec, ran_at-sorted, peeks included,
+  garbage/foreign files skipped — a reading aid, never a gate),
+  `preferred_full_scenario` (the cost-ladder rung matching an arm's
+  execution basis: taker→taker-1x, maker→the maker rung whatever its fill
+  named it), `arm_comparison` (compact row: verdict, IS/OOS edge+trades,
+  pocket triple; pre-B-POCKET records degrade to None, never fail).
+- `cli experiment`: current-run table grows `pocket is/oos/1x`; every full
+  run prints a "Prior recorded runs" table (loaded BEFORE the new record is
+  written) with per-arm verdict/edge/pocket per prior record, peeks
+  labeled. `--check-only` unchanged (per-iteration readout stays terse).
+- Recorded the b_edge2b baseline honestly: ran the frozen spec `--force` on
+  the already-seen 52.5d sample → `results/b_edge2b.20260612T153311Z.peek.
+  json` (visibly a peek, forced:true — same numbers Iter 76 published as
+  the Jun-20 baseline, now machine-readable where the comparison reads).
+
+**Evidence.** 501 → **504 tests pass** (+3: record loading filters/sorts/
+skips garbage + missing dir; arm_comparison rung selection (taker-1x vs
+maker-rest) + legacy degrade; CLI pocket column + prior-table appears only
+once a record exists, pocket triple shown in both current and prior rows);
+ruff clean. Live-fired: the forced peek printed the new pocket column on
+real data, and `load_experiment_records`+`arm_comparison` read the real
+record back correctly.
+
+**Found.** Today's window (one day later than Iter 76) already moves the
+pockets: combined-ER OOS pocket 2.20→1.81, IS 0.87→0.86, taker-1x 0.69
+(stable). More interesting: the **original-universe arm's full-sample
+pocket is 1.15** — outside its best 13-day window the arm LOSES on the
+full sample; its PASS (+19.8 IS / +61.6 OOS) is wholly the May-25–Jun-5
+pocket. breadth arm OOS pocket prints "—" by design (OOS lost money;
+concentration-of-a-loss isn't computed). The Jun-20 comparison is now
+mechanical: combined-ER must keep pocket ≲0.7 at taker-1x with the OOS
+pocket FALLING as post-selection data accrues, or the PASS is the pocket.
+
+**Found (deploy regression, remediated in-iteration).** The 15:34:35
+hlbot-update run failed **203/EXEC again** — the 15:19 deploy Iter 79
+watched succeed had itself re-broken the updater: the ff-merge to 4d3454b
+(one commit BEFORE the d12dac2 fix, which wasn't pushed until Iter 79's
+loop pass ended) rewrote `deploy/update.sh` (content changed in-range at
+1556f7b) from the git index at mode 100644, stripping the manual
+`chmod +x`. So the fix that makes the updater immune sat on GitHub,
+unfetchable by the dead updater it fixes — a chicken-and-egg the Iter-79
+entry didn't see: a deploy-mechanism fix can't ride the mechanism while
+the broken state re-manifests in the remediation→push gap. Re-applied the
+documented remediation (`chmod +x`, as hlbot, file owner); the next fire
+(15:49:35) fetches d12dac2, whose checkout sets index mode 100755 (the
+bit now survives merges) and whose unit-cp installs the bash-prefixed
+ExecStart — both layers of the permanent fix. Deploy verification noted
+below. Follow-up filed (B-DEPLOY-HB): the updater was dead Jun 8–12 and
+failed→dead again today with nothing paging — `hlbot health` has no eyes
+on hlbot-update.
+
+**What's next (loop).** Per-iteration: PROMPT step 0 (store top-up), the
+four `--check-only` readouts (b_edge2b ~Jun 20 FIRST; b_g014 ~Jun 26;
+b_edge3 + b_edge2_1h ~Jul 10), and spot-check the box keeps auto-deploying
+(d12dac2+this commit should land within ~15m of push). B-DEPLOY-HB
+(updater visibility in `hlbot health`) is the next idle-queue candidate.
+B-EDGE2f at ≥30d paper books (~Jul 8); xmom paper card ~Jul 12. Also
+queued: B-SCALE doc on real G2 evidence; consider a reversal read of
+xmom's strongly-negative IS on the 208d 1h sample (sign-flip hypothesis —
+needs cost math first; do NOT burn the pre-registered b_edge3 rerun on
+it).
