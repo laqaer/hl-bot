@@ -53,6 +53,14 @@ for i in $(seq 1 "$ITERS"); do
   [ -f "$ROOT/ralph/STOP" ] && { log "STOP file present — exiting"; rm -f "$ROOT/ralph/STOP"; break; }
   log "iteration $i/$ITERS"
 
+  # Keep the rolling candle store fresh. The systemd harvest timer can't run on
+  # this box (no root), and 1m API retention is only ~3.5d — letting more than
+  # that pass between harvests gaps the store and silently invalidates B-G014's
+  # multi-week sample. Best-effort: a network blip must not block the iteration.
+  uv run hlbot harvest-candles >/tmp/ralph_harvest.log 2>&1 \
+    && log "candle store topped up" \
+    || log "harvest-candles failed (continuing; see /tmp/ralph_harvest.log)"
+
   before="$(git rev-parse HEAD)"
   "$CLAUDE_BIN" -p "$(cat "$PROMPT_FILE")" --model "$CLAUDE_MODEL" $CLAUDE_FLAGS \
     || log "claude exited non-zero (continuing)"

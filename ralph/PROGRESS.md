@@ -1441,3 +1441,68 @@ cached_or_fetch backfill integration); ruff clean. All A/B numbers from
 stop-0.03 arms). Interim: B-WIN (VWAP window study — cheap, datasets exist for
 several windows) or the B12 remainder (femr_tick preamble harness). B-MAKER-LIVE
 unchanged, still operator-gated.
+
+## Iteration 33 — 2026-06-12 — B-WIN: VWAP window study — 4h window is the strongest lever yet (+ loop.sh store-continuity fix)
+
+**Context.** B-G014 still blocked (store 1m span 3.5d, need ~14d). Per the
+Iter-32 plan, took B-WIN (VWAP window study). All runs from the candle store
+(`--source store --days 0`, raw candles → frames at any window, no per-window
+API refetch; funding from API; 0 bars missing on all 30 coin×interval pairs).
+
+**Ops finding first (durable fix).** The hourly `hlbot-harvest.timer` is NOT
+running on this box (no root / no user systemd bus; store files were 90 min
+stale). 1m API retention is ~3.5d, so any >3.5d harvest gap would silently gap
+the store and invalidate B-G014's multi-week sample — the top-priority item
+was quietly rotting. Fix: `ralph/loop.sh` now tops up the store best-effort at
+the start of every iteration (failure logs and continues; `bash -n` clean).
+Topped up manually this iteration (30/30 pairs ok, ~90 new 1m bars/coin).
+
+**Sweep — vwap_window at live-like cadences (maker edge bps; 10-coin
+ADA…ZEC universe; same stored sample within each column).**
+
+| VWAP span | 1m/3.5d (live cfg) | 5m/17.4d | 15m/52.1d |
+|-----------|-------------------:|---------:|----------:|
+| 0.5h      | +2.0               | −1.7     | —         |
+| 1h (live) | +4.5               | −1.4     | −1.5      |
+| 2h        | +4.3               | −0.4     | +0.3      |
+| **4h**    | **+7.6**           | **+2.1** | **+1.1**  |
+| 8h        | +4.9               | −1.0     | −1.6      |
+
+Monotone rise to an interior peak at 4h on ALL THREE samples — the first
+lever that is concordant across cadences AND sample lengths (sigma_exit and
+funding_filter both inverted between the 3.5d pocket and 17d). Taker at the
+live config flips −0.8 → **+1.7** at w=240 — the only configuration seen so
+far whose taker arm is positive. Trades drop 991→328 (deeper 2σ dislocations
+of a slower VWAP), so absolute net$ is lower (+$90.01→+$49.66 maker) while
+per-trade edge rises 69% and maxDD stays ~−2%; at 5m/17.4d maxDD improves
+−15.2%→−5.6% and Sharpe −5.68→+3.45 (first positive multi-week config).
+
+**Walk-forward confirms (store, prefer=maker).**
+- 1m w=240: **G0 PASS** — IS +4.4 / OOS **+13.4** / full +7.6bps; taker-1x
+  positive (+$11.44). Baseline w=60 same sample: PASS, IS +4.4 / OOS +4.9 /
+  full +4.5, taker −0.8. (Both sample-limited: 3.5d.)
+- 5m/17.4d w=48: **G0 FAIL but the closest yet** — IS +2.0 / OOS +2.4 vs the
+  +3.0 bar (baseline w=12: IS −1.9); both halves positive, every cost rung
+  beats baseline.
+- **Anti-synergy with B-EXIT's stop:** adding `stop_loss_pct: 0.03` DEGRADES
+  the 4h arms on both samples (1m: full +7.6→+5.9, IS +4.4→+1.3 FAIL;
+  5m/17d: +2.1→+1.3, IS +0.1 FAIL). B-EXIT's "robust" stop verdict was
+  conditional on w=60 — with a 4h σ, 2σ entries are bigger absolute
+  dislocations and the wide stop holds losers the slower reversion can't
+  rescue. B-G014 arms updated: test stop-0.03 and window-240 SEPARATELY.
+
+**Verdict.** No live change (window is hardcoded 60×1m in the live tick —
+cli/main.py ~245–279). Filed **B-WIN2**: parameterize the live VWAP window
+(default 60, operator-flippable) so the 4h flip is one config change once
+B-G014's multi-week sample rules. Added `--vwap-window 240` as a third B-G014
+confirm arm. Volume-weighted σ variant left unexplored (separate slice).
+
+**Evidence.** 172 tests pass; ruff clean (loop.sh is the only code change;
+gate run anyway). Every number above reproducible offline-candles via the
+exact CLI flags shown (store + `--vwap-window`).
+
+**What's next (loop).** B-WIN2 (small, unblocks the best lever for operator
+flip). Then B12 remainder (femr_tick preamble harness — overlaps B-WIN2's
+touch point, consider doing together). B-G014 unblocks ~2026-06-26 with three
+arms. B-MAKER-LIVE unchanged, operator-gated — note w=240 would make even
+taker entries positive at live cadence, but maker remains ~6bps better.

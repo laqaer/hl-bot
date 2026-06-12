@@ -202,9 +202,14 @@ each on ≥90d real history (`hlbot confirm` / `hlbot backtest --config`) before
   --prefer maker`. A PASS on ≥2 weeks is the durable-edge evidence B-MAKER-LIVE
   and B-SCALE are waiting on; a FAIL means the Iter-29 PASS was the recent
   pocket, not the strategy. **Run a second arm with `--config
-  '{"stop_loss_pct":0.03}'`** (B-EXIT's robust lever, Iter 31): if it passes
-  AND beats baseline on the multi-week sample, propose the default flip to the
-  operator (live strategy change — not loop-flippable).
+  '{"stop_loss_pct":0.03}'`** (B-EXIT's robust lever, Iter 31) **and a third
+  arm with `--vwap-window 240`** (B-WIN's 4h window, Iter 33 — the strongest
+  lever so far; test arms SEPARATELY, the stop+window combo is anti-synergistic):
+  whichever passes AND beats baseline on the multi-week sample, propose the
+  default flip to the operator (live strategy change — not loop-flippable).
+  _Store continuity now guarded by loop.sh per-iteration top-up (Iter 33: the
+  systemd harvest timer was found NOT running on the loop box — no root; a
+  >3.5d gap would have silently invalidated this sample)._
 - [x] **B-CAD — A/B levers at live-like cadence.** Done (Iter 29, numbers in
   PROGRESS): `--vwap-window` exposed in backtest/confirm/backtest-fetch (window
   keys the cache when ≠60). Cadence explains the backtest/live divergence: maker
@@ -250,7 +255,24 @@ each on ≥90d real history (`hlbot confirm` / `hlbot backtest --config`) before
   the reversion harvests). Helps only on 5m/17d (−1.5→−0.5, clean dose-response,
   maxDD −15.2→−10.7%) but still G0 FAIL (OOS +1.6bps); inert at 15m/1h. Same
   window flips sign across cadence (5m/3d helps, 1m/3.5d hurts) → keep OFF.
-- [ ] **B-WIN — VWAP window study** (1h vs 2–4h vs volume-weighted σ).
+- [x] **B-WIN — VWAP window study.** Done (Iter 33, all from the candle store,
+  numbers in PROGRESS). **The 4h window is the best lever found so far** —
+  monotone improvement 0.5h→4h with an interior peak at 4h (8h decays) on ALL
+  THREE live-like samples: 1m/3.5d maker +4.5→**+7.6** (taker flips −0.8→**+1.7**,
+  G0 PASS, OOS +13.4), 5m/17.4d −1.4→**+2.1** (first positive 17d config; G0
+  near-miss IS +2.0/OOS +2.4 vs +3 bar), 15m/52d −1.5→**+1.1**. Unlike
+  sigma_exit/funding_filter it is concordant across samples. Caveats: fewer
+  trades (991→328 at 1m) so net$ is lower ($90→$50); stop_loss 0.03 is
+  ANTI-synergistic with the 4h window (both confirm arms degrade) — B-EXIT's
+  stop verdict was conditional on w=60. Volume-weighted σ variant not explored
+  (separate slice if ever needed). Live flip blocked on B-WIN2 plumbing +
+  B-G014 multi-week evidence.
+- [ ] **B-WIN2 — Parameterize the live tick VWAP window.** The live `femr_tick`
+  preamble hardcodes 60×1m candles → `candles_1h` (cli/main.py ~245–279; the
+  backtest engine honors any window via `--vwap-window`). Expose the window as
+  config/env (default 60 — NOT a live change by itself) so the operator can flip
+  to 240 once B-G014's multi-week sample confirms B-WIN's 4h result. Reuse
+  `rolling_vwap_sigma` from backtest/data.py instead of the inlined copy.
 - [ ] **B-EDGE2 — hunt a second, low-correlation edge** (carry is pruned) so the
   book isn't single-strategy before raising AUM.
 
