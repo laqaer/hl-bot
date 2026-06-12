@@ -32,6 +32,11 @@ if as_hlbot 'uv run pytest -q' >/tmp/hlbot_update.log 2>&1; then
   cp "$HOME_DIR"/deploy/systemd/hlbot-*.service "$HOME_DIR"/deploy/systemd/hlbot-*.timer \
      /etc/systemd/system/ 2>/dev/null || true
   systemctl daemon-reload
+  # A timer new to this commit must be enabled, not just copied, or it never fires
+  # (services stay opt-in; only timers self-enable).
+  for t in "$HOME_DIR"/deploy/systemd/hlbot-*.timer; do
+    systemctl enable --now "$(basename "$t")" 2>/dev/null || true
+  done
   systemctl restart hlbot-tick.timer hlbot-ws.service 2>/dev/null || true
   echo "[update] deployed + restarted $current"
 else

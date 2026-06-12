@@ -1,0 +1,14 @@
+[Unit]
+Description=hl-bot fine-candle harvest (HL keeps ~5000 bars/interval; append before they expire)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=hlbot
+WorkingDirectory=/opt/hl-bot
+EnvironmentFile=/etc/hl-bot/env
+ExecStart=/usr/bin/env bash -c 'uv run hlbot harvest-candles'
+TimeoutStartSec=300
+NoNewPrivileges=true
+ProtectSystem=full

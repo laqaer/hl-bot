@@ -180,11 +180,18 @@ each on ≥90d real history (`hlbot confirm` / `hlbot backtest --config`) before
   positive (OOS −6.0bps, G0 FAIL). Defaults (0.03/0.65) are inert at 1h. Verdict:
   the lever's direction is validated, keep default OFF, do NOT flip live until it
   A/Bs positive at live-like cadence (B-CAD; blocked on retention → B-HIST).
-- [ ] **B-HIST — Rolling fine-candle accumulator (prereq for B-CAD).** HL retains
-  only ~5000 candles/interval (measured Iter 27: 3.5d @1m, 17.4d @5m, 52d @15m),
-  so live-cadence history must be harvested before it expires: a periodic job
-  (cron/`hlbot ingest`) appending 1m+5m candles to a local store, dedup by t.
-  Every day un-deployed is a day of 1m history lost forever — do this next.
+- [x] **B-HIST — Rolling fine-candle accumulator (prereq for B-CAD).** Done
+  (Iter 28): `backtest/store.py` (merge-by-t, fresh-wins, atomic gz writes) +
+  `hlbot harvest-candles` (10-coin universe × 1m/5m/15m, per-pair error
+  isolation) + `hlbot-harvest.timer` (hourly, enabled by install.sh AND
+  self-enabled by update.sh — auto-update previously copied new timers without
+  enabling them). Validated on real API: 30/30 pairs, full retention captured
+  (3.5d@1m / 17.4d@5m / 52.1d@15m, 3.6MB), incremental top-up proven.
+- [ ] **B-HIST2 — Backtest from the store.** `hlbot backtest/confirm` still fetch
+  from the API (capped at retention); add a `--source store` path that builds
+  frames from `data/candle_store/` (+ funding fetch) so A/Bs can use accumulated
+  history beyond the 5000-bar window once it exists. Pairs with B-CAD's
+  `--vwap-window` work.
 - [ ] **B-CAD — A/B levers at live-like cadence.** The live strategy fades a 60×1m
   VWAP; the 1h backtest fades a 60×1h VWAP — a different (slower) strategy, which
   is also why backtest says −5bps while live prints +29.5bps. Now feasible:

@@ -1134,3 +1134,48 @@ cached frames bake the window in, key must include it when ≠60).
 
 **What's next (loop).** B-HIST (highest leverage: starts the irreplaceable data
 clock), then B-CAD A/Bs of regime_filter + size_by_signal at live-like cadence.
+
+---
+
+## Iteration 28 — 2026-06-12 — B-HIST: rolling fine-candle store + hourly harvest timer
+
+**Context.** Top unblocked item after Iter 27's finding that HL retains only
+~5000 candles/interval (3.5d @1m): live-cadence history must be harvested
+continuously or it expires — every un-deployed day loses a day of 1m bars that
+B-CAD (lever A/Bs at live-like cadence) will need.
+
+**Changed (1 commit).**
+- **`backtest/store.py` (new):** rolling per-(coin,interval) gzipped-JSON store
+  under `data/candle_store/` (gitignored). Pure merge core: dedup by open time
+  `t`, **fresh wins** (a bar captured mid-formation is finalized by the next
+  harvest), ascending, malformed rows dropped. Atomic write-then-rename so a
+  crash can't truncate irreplaceable history. `harvest_one` refetches from the
+  last stored bar *inclusive*; an empty store reaches back one full retention
+  window (5000 bars). Per-pair fetch failures are recorded in the result, not
+  raised — one bad coin can't kill the cron sweep.
+- **`hlbot harvest-candles`:** sweeps the 10-coin universe × (1m,5m,15m) by
+  default; prints an added/total/span/status table; exits non-zero if any pair
+  failed (so the systemd run shows red) while still saving the good pairs.
+  15m included deliberately: one extra paginated call/coin buys the >52d 15m
+  history longer walk-forwards will need.
+- **`deploy/systemd/hlbot-harvest.{service,timer}`:** hourly oneshot
+  (minute :23, Persistent=true), enabled by install.sh.
+- **`deploy/update.sh` fix (found during this work):** auto-update copied new
+  unit files into /etc/systemd/system but never *enabled* a brand-new timer —
+  the harvest timer would have landed on the live box disabled, silently losing
+  the data this task exists to save. Now any repo-shipped `hlbot-*.timer`
+  self-enables on a green deploy (idempotent; services stay opt-in).
+
+**Evidence.** **158 tests pass** (7 new in `tests/test_candle_store.py`: merge
+semantics, round trip, retention-window reach-back, inclusive incremental
+refetch, failure isolation, no-op); ruff clean; `bash -n` clean on both scripts.
+**Real-API validation on this box:** 30/30 pairs ok — 5001 bars each, spans
+exactly the measured retention (3.5d @1m, 17.4d @5m, 52.1d @15m); second BTC/1m
+run added just 1 bar (total 5002, no dups) proving incremental top-up. Store =
+3.6MB for full retention; growth ~1MB/day across the grid — negligible.
+
+**What's next (loop).** B-CAD: expose `--vwap-window` in backtest/confirm/
+backtest-fetch (window must enter the cache key when ≠60) and A/B regime_filter
++ size_by_signal at 15m/52d and 5m/17d. Filed **B-HIST2** (backtest `--source
+store`) so A/Bs can use accumulated history beyond the 5000-bar API window once
+it exists.

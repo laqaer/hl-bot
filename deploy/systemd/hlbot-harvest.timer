@@ -1,0 +1,9 @@
+[Unit]
+Description=hl-bot candle harvest, hourly (1m retention is only ~3.5d)
+
+[Timer]
+OnCalendar=*-*-* *:23:00
+Persistent=true
+
+[Install]
+WantedBy=timers.target

@@ -657,6 +657,41 @@ def backtest_fetch(
 
 
 @app.command()
+def harvest_candles(
+    coins: str = "ADA,AVAX,BTC,DOGE,ETH,HYPE,LINK,SOL,TRX,ZEC",
+    intervals: str = "1m,5m,15m",
+):
+    """Append the latest fine-interval candles to the rolling local store (B-HIST).
+
+    HL retains only ~5000 candles per interval (≈3.5d of 1m, ≈17d of 5m), so
+    live-cadence backtest history must be harvested before it expires. Run
+    periodically (deploy/systemd/hlbot-harvest.timer does it hourly): each run
+    refetches from the last stored bar and appends, deduped by open time, into
+    data/candle_store/{coin}_{interval}.json.gz (gitignored). Exits non-zero if
+    any pair failed so the systemd run shows up red; successful pairs are saved
+    regardless.
+    """
+    from ..backtest.store import harvest
+
+    _, s = _conn()
+    coin_list = [c.strip() for c in coins.split(",") if c.strip()]
+    interval_list = [i.strip() for i in intervals.split(",") if i.strip()]
+    results = harvest(coin_list, interval_list, base_url=s.hl_api_url)
+    table = Table(title="Candle harvest")
+    for col in ("coin", "interval", "added", "total", "span", "status"):
+        table.add_column(col)
+    for r in results:
+        table.add_row(
+            r.coin, r.interval, str(r.added), str(r.total),
+            "—" if r.span_days is None else f"{r.span_days:.1f}d",
+            f"[red]{r.error}[/red]" if r.error else "[green]ok[/green]",
+        )
+    console.print(table)
+    if any(r.error for r in results):
+        raise typer.Exit(2)
+
+
+@app.command()
 def backtest(
     agent: str = "twap_mr_v1",
     coins: str = "BTC,ETH,SOL",
