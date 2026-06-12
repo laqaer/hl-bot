@@ -4512,3 +4512,83 @@ heartbeats resume on live ticks; (2) per-iteration readouts unchanged
 (b_edge2b ~Jun 20, b_g014 ~Jun 26, b_edge3+b_edge2_1h ~Jul 10). Then
 B-DEPLOY-HB. Idle queue: B-SCALE doc on real G2 evidence; xmom-reversal
 cost math.
+
+## Iteration 81 — 2026-06-12 — B-DEPLOY-HB: the auto-updater is no longer invisible to `hlbot health`
+
+**Why.** Two compounding multi-day silent failures this week: hlbot-update
+dead Jun 8–12 at 203/EXEC (the live box froze at its install-day commit
+while 55 commits of safety rails sat in git), then dead AGAIN for 30 min
+after the 15:19 ff-merge stripped the manual chmod. Neither left any trace
+`hlbot health` could see — the updater wrote `data/.deployed_sha` only on
+a successful NEW deploy, so a dead updater and a quiet repo were
+indistinguishable (no-op runs left nothing at all).
+
+**Changed.**
+- `deploy/update.sh`: `beat()` touches `data/.update_heartbeat` on every
+  COMPLETED run — the no-op path, the tests-red path, and the deploy path.
+  Liveness ≠ success: a red-tests run is the updater *working* (the lag
+  check reports the refusal separately); an aborted run (uv sync failure,
+  203/EXEC, dead timer) does NOT beat, so the marker goes stale exactly
+  when the updater dies.
+- `ops/health.py`: `DeploySignals` + `read_deploy_signals(db_path)`
+  (markers read beside the DB; repo HEAD read pure from .git files —
+  HEAD/loose ref/packed-refs/worktree indirection, no subprocess) and an
+  `assess_health(deploy=…)` check: warn when the beat is missing/stale
+  (>2h ≈ 8 missed 15-min fires) or when HEAD ≠ deployed sha (update.sh
+  ff-merges BEFORE its test gate, so on-disk HEAD advancing past
+  `.deployed_sha` = "fetched but not shipped" — the stuck-red freeze).
+  Gated on HLBOT_AUTO_UPDATE=1 (non-deploy clones and opted-out boxes get
+  an ok "auto-update disabled" line, never a warn). WARN-ONLY by design:
+  a lagging deploy pages nobody and blocks no tick — it just stops being
+  invisible. `hlbot health` passes real signals (`read_deploy_signals(
+  s.db_path)`).
+
+**Evidence.** 506 → **515 tests pass** (+9: disabled-is-ok; dead-updater
+warn both arms (never-ran + 3h-stale); lag warn carries both sha prefixes;
+fresh-deploy ok + metric; `read_deploy_signals` on a constructed repo
+(loose-ref and packed-refs arms) + missing-everything degrade; CLI wiring
+pin (`hlbot health` on a bare box with AUTO_UPDATE=1 prints the
+never-completed warn); marker-filename drift pin against update.sh's
+text); ruff clean. Live-fired against the REAL box: signals read
+head=deployed=d12dac2, beat=None → "⚠ deploy: updater has never completed
+a run" — correct (the marker is born when the new update.sh first runs).
+
+**Live watch (B-EXITONLY follow-through) — VERIFIED.** 8251cd1 deployed
+at the 16:04:37 updater fire (verified `.deployed_sha`), ~15 min after
+push — auto-deploy works end-to-end two cycles in a row post
+B-DEPLOY-EXEC. First live tick under it (16:08:41): heartbeat row written
+(`mode=live, agents=1` — the exit-only manager in the roster), and its
+one decision was `place TON | MAKER FILLED TON (cloid 0xa9e126f7…)` —
+the maker-fill reconciliation promoting the orphaned TON rest to bot
+ownership, the exact step skipped all hour. Correction to the Iter-80
+note: TON/NEAR entered 15:07–15:12, so they are NOT past the 4h max-hold
+yet — the ladder unwinds them by ~19:10 at the latest (reversion/stop may
+fire earlier). Verify closure next iteration.
+
+**Found.** The Iter-80 incident was bigger than written: goal_evaluations
+shows the frozen pre-deploy code promoted twap_mr_v1 paper→live_small
+EVERY TICK from ≤14:00 to 15:07 (each tick re-promoting off paper cards),
+trading live the whole hour — DOGE 14:21, SOL 14:27, LIT 14:41, VVV
+14:57, NEAR 15:07, TON 15:12 — until the realized losses themselves
+tripped the 7d edge guardrail (demote at 15:12, idempotently re-demoted
+every tick since). The d12dac2 deploy at 15:49 is what actually stopped
+the churn (B-PAPER3c live at last). Also: the account is heavily
+manually traded — open manual book includes xyz:CL ~125 contracts
+(~$10k notional crude) + BRENTOIL/ZEC/XRP shorts; equity_snapshots reads
+~$630–695 all afternoon (the Iter-80 "$49.24" was a perp-only/withdrawable
+read, not account value); 24h account-wide realized is −$333.51, almost
+all manual (bot's day: ~−$13 across DOGE/SOL/VVV/LIT). The health
+`daily_loss_floor` is unset on the box, so account-wide manual losses
+page nobody — operator call whether it should (the bot can't tell manual
+bleed from bot bleed at the account level; per-agent guardrails already
+judge bot PnL).
+
+**What's next (loop).** Verify next iteration: (1) live heartbeats
+resumed + TON/NEAR exit-only unwind (watcher armed this iteration; both
+are past the 4h max-hold → expect market closes), (2) `.update_heartbeat`
+born on the box ≈ 16:34 fire (one transient "never completed" warn cycle
+in between, by design), then health shows "✓ deploy: at 8251cd1…".
+Per-iteration readouts unchanged (b_edge2b ~Jun 20 first, b_g014 ~Jun 26,
+b_edge3 + b_edge2_1h ~Jul 10). Idle queue: B-SCALE doc on real G2
+evidence; xmom-reversal cost math (needs cost framing before any
+pre-registered spec).

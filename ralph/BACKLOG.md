@@ -383,16 +383,21 @@ Keep it ruthlessly prioritized: the top item should always be the highest-levera
   flatten-on-demote (supervisor closes the book at demotion time) would be
   stricter than exit-ladder unwind; today's exits are reversion/stop/4h
   max-hold, which bounds the unwind to hours.
-- [ ] **B-DEPLOY-HB — Updater visibility in `hlbot health`.** Found (Iter 80):
-  hlbot-update was dead Jun 8–12 (203/EXEC) and regressed→dead AGAIN today
-  (the 15:19 ff-merge to 4d3454b rewrote update.sh at index mode 100644,
-  stripping the Iter-79 manual chmod — the d12dac2 fix was still unpushed;
-  re-remediated in Iter 80) with nothing paging either time. `assess_health`
-  should warn/crit when the box's deploy lags: simplest data-truth signal is
-  `data/.deployed_sha` mtime (stale ≥ N days = updater not deploying) and/or
-  comparing it to the repo HEAD on disk; checking systemd unit state is an
-  option but mtime needs no privileges. Read-only, warn-only — never blocks
-  ticks.
+- [x] **B-DEPLOY-HB — Updater visibility in `hlbot health`.** Done (Iter 81):
+  two warn-only signals (never page, never block ticks), gated on
+  `HLBOT_AUTO_UPDATE=1` so non-deploy clones stay quiet. (1) *Updater
+  liveness*: update.sh now touches `data/.update_heartbeat` on every
+  COMPLETED run (no-op + tests-red included — those are the updater working;
+  an aborted run doesn't beat), and a missing/stale (>2h ≈ 8 missed fires)
+  marker warns — this is the signal both 203/EXEC incidents lacked.
+  (2) *Deploy lag*: on-disk repo HEAD (read pure from .git files, no
+  subprocess — update.sh ff-merges BEFORE its test gate, so HEAD advances
+  even when deploy is refused) ≠ `.deployed_sha` content warns with both
+  shas — catches stuck-red-tests freezes. `read_deploy_signals` anchors at
+  the DB's data dir (markers live beside the DB); marker filename drift
+  pinned by test against update.sh's text. The new update.sh self-deploys;
+  the marker appears on the fire after that (one transient
+  "never completed" warn cycle, by design).
 - [x] **B-M5 — Spot-mid normalization fixed + tested (REVIEW M5, the last
   unpicked finding).** Done (Iter 66): the basis feed was silently dead, not
   merely fragile — the inline parser zipped `universe` with the ctx array

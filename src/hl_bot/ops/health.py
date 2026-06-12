@@ -7,6 +7,7 @@
   * is ingest fresh?                     (recent fills/equity snapshots)
   * is any agent paused by a guardrail?  (agent_state.enabled = 0)
   * is it bleeding?                       (24h realized PnL vs a floor)
+  * is the auto-deployer alive/shipping? (``DeploySignals``; warn-only)
 
 The verdict drives a dead-man switch: ``hlbot health`` pings ``HEALTHCHECK_URL``
 only when status is ok, so a missed ping (crashed/hung bot) pages you. Anything
@@ -15,11 +16,19 @@ worse than ok also fires a Telegram alert. Pure logic here; side effects are thi
 
 from __future__ import annotations
 
+import contextlib
+import os
 import sqlite3
 import time
+from collections.abc import Mapping
 from dataclasses import dataclass, field
+from pathlib import Path
 
 Level = str  # "ok" | "warn" | "crit"
+
+# Written by deploy/update.sh beside the DB; names shared with that script.
+DEPLOYED_SHA = ".deployed_sha"        # content: sha of the last test-green deploy
+UPDATE_HEARTBEAT = ".update_heartbeat"  # touched on every COMPLETED updater run
 
 
 @dataclass
@@ -41,6 +50,78 @@ class HealthReport:
         return "\n".join(lines)
 
 
+@dataclass
+class DeploySignals:
+    """Filesystem truth about the auto-deployer (deploy/update.sh)."""
+
+    auto_update: bool                   # HLBOT_AUTO_UPDATE == "1" in this env
+    head_sha: str | None                # repo HEAD on disk (fetched, maybe undeployed)
+    deployed_sha: str | None            # content of data/.deployed_sha
+    update_beat_age_s: float | None     # age of data/.update_heartbeat; None = missing
+
+
+def _read_git_head(repo_dir: Path) -> str | None:
+    """Repo HEAD straight from .git files (no subprocess); None when unreadable.
+
+    The updater ff-merges BEFORE its test gate, so on-disk HEAD advances even
+    when the deploy is then refused — HEAD vs .deployed_sha divergence is the
+    "fetched but not shipped" signal.
+    """
+    try:
+        git = repo_dir / ".git"
+        if git.is_file():  # worktree/submodule indirection
+            line = git.read_text().strip()
+            if not line.startswith("gitdir:"):
+                return None
+            git = (repo_dir / line.split(":", 1)[1].strip()).resolve()
+        head = (git / "HEAD").read_text().strip()
+        if not head.startswith("ref:"):
+            return head or None  # detached HEAD holds the sha itself
+        ref = head.split(":", 1)[1].strip()
+        loose = git / ref
+        if loose.is_file():
+            return loose.read_text().strip() or None
+        packed = git / "packed-refs"
+        if packed.is_file():
+            for ln in packed.read_text().splitlines():
+                parts = ln.strip().split()
+                if len(parts) == 2 and not ln.startswith(("#", "^")) and parts[1] == ref:
+                    return parts[0]
+        return None
+    except OSError:
+        return None
+
+
+def read_deploy_signals(
+    db_path: Path | str,
+    *,
+    now_ms: int | None = None,
+    env: Mapping[str, str] | None = None,
+) -> DeploySignals:
+    """Gather the deploy-freshness inputs, anchored at the DB's data dir.
+
+    update.sh writes ``data/.deployed_sha`` on each test-green deploy and
+    touches ``data/.update_heartbeat`` on every completed run, so both sit
+    beside the DB regardless of where ``hlbot health`` is invoked from; the
+    repo root is the data dir's parent (HLBOT_HOME/data/hlbot.sqlite).
+    """
+    env = os.environ if env is None else env
+    now_ms = now_ms or int(time.time() * 1000)
+    data_dir = Path(db_path).parent
+    deployed: str | None = None
+    with contextlib.suppress(OSError):
+        deployed = (data_dir / DEPLOYED_SHA).read_text().strip() or None
+    beat_age: float | None = None
+    with contextlib.suppress(OSError):
+        beat_age = now_ms / 1000 - (data_dir / UPDATE_HEARTBEAT).stat().st_mtime
+    return DeploySignals(
+        auto_update=env.get("HLBOT_AUTO_UPDATE") == "1",
+        head_sha=_read_git_head(data_dir.parent),
+        deployed_sha=deployed,
+        update_beat_age_s=beat_age,
+    )
+
+
 def _max_ts(conn: sqlite3.Connection, table: str, col: str) -> int | None:
     try:
         row = conn.execute(f"SELECT MAX({col}) FROM {table}").fetchone()
@@ -57,6 +138,8 @@ def assess_health(
     max_ingest_age_s: int = 3600,     # 1 h
     max_decision_age_s: int = 259_200,  # 3 d: loop alive but book silent → warn
     daily_loss_floor: float = -1e9,   # set to a negative $ to flag bleeding
+    deploy: DeploySignals | None = None,
+    max_update_age_s: int = 7200,     # 2 h ≈ 8 missed 15-min updater fires
 ) -> HealthReport:
     now_ms = now_ms or int(time.time() * 1000)
     checks: list[tuple[str, Level, str]] = []
@@ -130,6 +213,40 @@ def assess_health(
         checks.append(("agents", "warn", f"paused: {', '.join(paused)}"))
     else:
         checks.append(("agents", "ok", "none paused"))
+
+    # --- deploy freshness (is the auto-updater alive and shipping?) ---
+    # Two compounding multi-day silent failures motivated this (B-DEPLOY-HB):
+    # the updater dead at 203/EXEC (never ran, so it left no trace) and the
+    # live book running 4-day-old code while every safety rail sat in git.
+    # Warn-only by design: a lagging deploy pages nobody and blocks no tick —
+    # it just has to stop being invisible.
+    if deploy is not None:
+        if not deploy.auto_update:
+            checks.append(("deploy", "ok", "auto-update disabled"))
+        else:
+            metrics["update_beat_age_s"] = deploy.update_beat_age_s
+            problems: list[str] = []
+            if deploy.update_beat_age_s is None:
+                problems.append("updater has never completed a run")
+            elif deploy.update_beat_age_s > max_update_age_s:
+                problems.append(
+                    f"updater last completed {deploy.update_beat_age_s/3600:.1f} h ago")
+            if deploy.deployed_sha is None:
+                problems.append("no deploy recorded (.deployed_sha missing)")
+            elif deploy.head_sha is not None and deploy.head_sha != deploy.deployed_sha:
+                # Transient for the minutes a test-gated deploy is in flight;
+                # persistent means the gate is refusing (tests red) or the
+                # deploy half of the run keeps dying.
+                problems.append(
+                    f"lags repo: HEAD {deploy.head_sha[:8]} vs deployed "
+                    f"{deploy.deployed_sha[:8]}")
+            if problems:
+                checks.append(("deploy", "warn", "; ".join(problems)))
+            else:
+                detail = f"at {deploy.deployed_sha[:8]}"
+                if deploy.update_beat_age_s is not None:
+                    detail += f", updater ran {deploy.update_beat_age_s/60:.1f} min ago"
+                checks.append(("deploy", "ok", detail))
 
     # --- 24h realized PnL ---
     since = now_ms - 86_400_000

@@ -6,6 +6,18 @@ paused?), and ``hlbot health`` pings a dead-man-switch + alerts on trouble. The
 pure assessment is unit-tested; the network/alert side-effects are thin.
 """
 
-from .health import HealthReport, assess_health, ping_heartbeat
+from .health import (
+    DeploySignals,
+    HealthReport,
+    assess_health,
+    ping_heartbeat,
+    read_deploy_signals,
+)
 
-__all__ = ["HealthReport", "assess_health", "ping_heartbeat"]
+__all__ = [
+    "DeploySignals",
+    "HealthReport",
+    "assess_health",
+    "ping_heartbeat",
+    "read_deploy_signals",
+]

@@ -13,6 +13,10 @@ ENV_FILE=/etc/hl-bot/env
 HOME_DIR="${HLBOT_HOME:-/opt/hl-bot}"
 USER_="${HLBOT_USER:-hlbot}"
 as_hlbot() { sudo -u "$USER_" bash -lc "cd '$HOME_DIR' && $*"; }
+# Liveness marker `hlbot health` watches (B-DEPLOY-HB): touched on every
+# COMPLETED run — incl. no-op and tests-red, which are the updater working —
+# but NOT on an aborted one, so a dead/dying updater goes stale and warns.
+beat() { as_hlbot 'mkdir -p data && touch data/.update_heartbeat'; }
 
 BR="$(as_hlbot 'git rev-parse --abbrev-ref HEAD')" || exit 0
 as_hlbot 'git config core.fileMode false' || true   # exec-bit changes must not block the merge
@@ -21,7 +25,7 @@ as_hlbot "git merge --ff-only 'origin/$BR' -q" >/dev/null 2>&1 || true
 
 current="$(as_hlbot 'git rev-parse HEAD')"
 deployed="$(cat "$HOME_DIR/data/.deployed_sha" 2>/dev/null || echo none)"
-[ "$current" = "$deployed" ] && exit 0
+[ "$current" = "$deployed" ] && { beat; exit 0; }
 
 echo "[update] candidate $deployed -> $current"
 as_hlbot 'uv sync --frozen -q' || { echo "[update] uv sync failed; aborting"; exit 1; }
@@ -39,7 +43,9 @@ if as_hlbot 'uv run pytest -q' >/tmp/hlbot_update.log 2>&1; then
   done
   systemctl restart hlbot-tick.timer hlbot-ws.service 2>/dev/null || true
   echo "[update] deployed + restarted $current"
+  beat
 else
   echo "[update] tests RED at $current — NOT deploying (frozen at $deployed)"
   tail -5 /tmp/hlbot_update.log || true
+  beat
 fi

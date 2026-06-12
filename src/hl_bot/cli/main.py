@@ -1345,11 +1345,12 @@ def health(max_tick_age_s: int = 900, max_decision_age_s: int = 259_200, heartbe
     """
     import os
 
-    from ..ops.health import assess_health, ping_heartbeat
+    from ..ops.health import assess_health, ping_heartbeat, read_deploy_signals
 
     conn, s = _conn()
     rep = assess_health(
-        conn, max_tick_age_s=max_tick_age_s, max_decision_age_s=max_decision_age_s)
+        conn, max_tick_age_s=max_tick_age_s, max_decision_age_s=max_decision_age_s,
+        deploy=read_deploy_signals(s.db_path))
     console.print(rep.render())
     down = rep.status == "down"
     # Only DOWN is a real page: warn (fresh box, no ticks yet, a paused agent) is

@@ -2,13 +2,21 @@
 
 from __future__ import annotations
 
+import os
 import time
+from pathlib import Path
 
 import pytest
 
 from hl_bot.db.schema import init_db
 from hl_bot.ops.doctor import render, run_doctor
-from hl_bot.ops.health import assess_health
+from hl_bot.ops.health import (
+    DEPLOYED_SHA,
+    UPDATE_HEARTBEAT,
+    DeploySignals,
+    assess_health,
+    read_deploy_signals,
+)
 
 
 @pytest.fixture
@@ -161,6 +169,131 @@ def test_health_down_when_bleeding(conn):
     _equity(conn, now - 60_000)
     rep = assess_health(conn, now_ms=now, daily_loss_floor=-30.0)
     assert rep.status == "down"
+
+
+def _fresh(conn, now):
+    """Baseline rows that make every non-deploy check ok."""
+    _beat(conn, now - 60_000)
+    _decision(conn, now - 60_000)
+    _fill(conn, now - 120_000)
+    _equity(conn, now - 60_000)
+
+
+def test_health_deploy_disabled_is_ok(conn):
+    # Operator chose no auto-update: visibility line, never a warn.
+    now = int(time.time() * 1000)
+    _fresh(conn, now)
+    rep = assess_health(conn, now_ms=now, deploy=DeploySignals(
+        auto_update=False, head_sha=None, deployed_sha=None, update_beat_age_s=None))
+    assert rep.status == "ok"
+    assert any(n == "deploy" and lvl == "ok" and "disabled" in d
+               for n, lvl, d in rep.checks)
+
+
+def test_health_deploy_dead_updater_warns(conn):
+    # The B-DEPLOY-EXEC shape: updater enabled but never completing a run
+    # (203/EXEC left no trace at all) — and the gone-stale variant.
+    now = int(time.time() * 1000)
+    _fresh(conn, now)
+    never = assess_health(conn, now_ms=now, deploy=DeploySignals(
+        auto_update=True, head_sha="a" * 40, deployed_sha="a" * 40,
+        update_beat_age_s=None))
+    assert never.status == "warn"
+    assert any(n == "deploy" and lvl == "warn" and "never completed" in d
+               for n, lvl, d in never.checks)
+    stale = assess_health(conn, now_ms=now, deploy=DeploySignals(
+        auto_update=True, head_sha="a" * 40, deployed_sha="a" * 40,
+        update_beat_age_s=3 * 3600.0))
+    assert stale.status == "warn"
+    assert any(n == "deploy" and "3.0 h ago" in d for n, _, d in stale.checks)
+
+
+def test_health_deploy_lag_warns(conn):
+    # Updater alive but refusing to ship (tests red / restart half dying):
+    # on-disk HEAD has advanced past the recorded deploy.
+    now = int(time.time() * 1000)
+    _fresh(conn, now)
+    rep = assess_health(conn, now_ms=now, deploy=DeploySignals(
+        auto_update=True, head_sha="beef" * 10, deployed_sha="cafe" * 10,
+        update_beat_age_s=120.0))
+    assert rep.status == "warn"
+    assert any(n == "deploy" and lvl == "warn" and "beefbeef" in d and "cafecafe" in d
+               for n, lvl, d in rep.checks)
+
+
+def test_health_deploy_fresh_ok(conn):
+    now = int(time.time() * 1000)
+    _fresh(conn, now)
+    rep = assess_health(conn, now_ms=now, deploy=DeploySignals(
+        auto_update=True, head_sha="a" * 40, deployed_sha="a" * 40,
+        update_beat_age_s=120.0))
+    assert rep.status == "ok"
+    assert any(n == "deploy" and lvl == "ok" and "aaaaaaaa" in d
+               for n, lvl, d in rep.checks)
+    assert rep.metrics["update_beat_age_s"] == 120.0
+
+
+def _make_repo(root: Path, sha: str, *, packed: bool) -> None:
+    git = root / ".git"
+    (git / "refs" / "heads").mkdir(parents=True)
+    (git / "HEAD").write_text("ref: refs/heads/main\n")
+    if packed:
+        (git / "packed-refs").write_text(
+            "# pack-refs with: peeled fully-peeled sorted\n"
+            f"{sha} refs/heads/main\n")
+    else:
+        (git / "refs" / "heads" / "main").write_text(sha + "\n")
+
+
+@pytest.mark.parametrize("packed", [False, True])
+def test_read_deploy_signals(tmp_path, packed):
+    sha = "ab" * 20
+    _make_repo(tmp_path, sha, packed=packed)
+    data = tmp_path / "data"
+    data.mkdir()
+    (data / DEPLOYED_SHA).write_text(sha + "\n")
+    now_ms = int(time.time() * 1000)
+    hb = data / UPDATE_HEARTBEAT
+    hb.touch()
+    os.utime(hb, (now_ms / 1000 - 300, now_ms / 1000 - 300))
+    sig = read_deploy_signals(
+        data / "hlbot.sqlite", now_ms=now_ms, env={"HLBOT_AUTO_UPDATE": "1"})
+    assert sig.auto_update
+    assert sig.head_sha == sha
+    assert sig.deployed_sha == sha
+    assert sig.update_beat_age_s == pytest.approx(300, abs=5)
+
+
+def test_read_deploy_signals_missing_everything(tmp_path):
+    # No repo, no markers: every field degrades to None, never raises.
+    data = tmp_path / "data"
+    data.mkdir()
+    sig = read_deploy_signals(data / "hlbot.sqlite", env={})
+    assert sig == DeploySignals(
+        auto_update=False, head_sha=None, deployed_sha=None, update_beat_age_s=None)
+
+
+def test_health_cli_reports_deploy(monkeypatch, tmp_path):
+    # Wiring pin: `hlbot health` must feed real deploy signals into the
+    # assessment (fresh box, auto-update on, no markers → the warn the
+    # dead-from-birth updater never got).
+    from typer.testing import CliRunner
+
+    from hl_bot.cli.main import app
+
+    monkeypatch.setenv("HLBOT_DB", str(tmp_path / "data" / "h.sqlite"))
+    monkeypatch.setenv("HLBOT_AUTO_UPDATE", "1")
+    res = CliRunner().invoke(app, ["health", "--no-heartbeat"])
+    assert res.exit_code == 0, res.output
+    assert "deploy" in res.output and "never completed" in res.output
+
+
+def test_update_sh_touches_heartbeat():
+    # Name pin: update.sh and health.py share the marker filename by string;
+    # renaming one side without the other would silently kill the check.
+    script = (Path(__file__).parents[1] / "deploy" / "update.sh").read_text()
+    assert UPDATE_HEARTBEAT in script
+    assert DEPLOYED_SHA in script
 
 
 def test_doctor_ready_with_valid_setup(conn, tmp_path):
