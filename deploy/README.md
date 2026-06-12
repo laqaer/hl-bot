@@ -56,7 +56,10 @@ sudo -u hlbot bash -c 'cd /opt/hl-bot && uv run hlbot gates'    # roadmap G1–G
 
 Monitoring: set `HEALTHCHECK_URL` (e.g. Healthchecks.io) in `/etc/hl-bot/env` —
 each tick's `hlbot health` pings it when healthy, so a missed ping pages you;
-`warn`/`down` also Telegram-alerts.
+`down` also Telegram-alerts (needs `TG_BOT_TOKEN`). With neither configured a
+ticking box warns `pager: DOWN pages nobody` on every health line until you
+wire one — telegram alone can't catch a fully dead box (nothing left running
+to send it); only the missed dead-man ping does.
 
 ## Host sizing & "I can't SSH in"
 

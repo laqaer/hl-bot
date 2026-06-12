@@ -4592,3 +4592,65 @@ Per-iteration readouts unchanged (b_edge2b ~Jun 20 first, b_g014 ~Jun 26,
 b_edge3 + b_edge2_1h ~Jul 10). Idle queue: B-SCALE doc on real G2
 evidence; xmom-reversal cost math (needs cost framing before any
 pre-registered spec).
+
+## Iteration 82 — 2026-06-12 — B-PAGER: a DOWN verdict that reaches nobody now says so
+
+**Why.** Iter 81's finding (a), the half of the incident response still
+unfiled: the live box runs with `HEALTHCHECK_URL`, `TG_BOT_TOKEN`, and
+`TG_CHAT_ID` all empty in `/etc/hl-bot/env` (verified this iteration; no
+`~/.hermes/config.yaml` fallback either). `hlbot health` runs every 5
+minutes and this week *correctly detected* trouble — and every verdict
+died in the journal. B-DEPLOY-HB made the updater visible to health;
+this makes health's own deafness visible to the operator.
+
+**Changed.**
+- `ops/health.py`: `PagerSignals` + `read_pager_signals(env)` — env truth
+  about the two send paths (`HEALTHCHECK_URL` for the dead-man ping,
+  `TG_BOT_TOKEN` or the Hermes config fallback for Telegram; fallback
+  injectable for tests, defaults to the same `_load_tg_token` the alert
+  path uses). New warn-only `pager` check in `assess_health(pager=…)`:
+  no channel ⇒ "⚠ pager: DOWN pages nobody — set HEALTHCHECK_URL and/or
+  TG_BOT_TOKEN". Gated to DBs that have actually ticked (beats or
+  decisions present), so dev/loop clones running `hlbot health` ad hoc
+  stay quiet. Telegram-only is ok-with-caveat ("a fully dead box pages
+  nobody"), not a warn — Telegram only fires from a *running* health
+  check; catching a fully dead box is precisely the dead-man URL's job,
+  and choosing to live without one is the operator's call. `hlbot health`
+  passes `read_pager_signals()`. README monitoring para updated (also
+  fixed its stale claim that warn Telegram-alerts — only DOWN does).
+
+**Evidence.** 515 → **521 tests pass** (+6: unwired warns + metric;
+both-wired ok detail; telegram-only ok-with-caveat; never-ticked box gets
+no pager line; `read_pager_signals` env arms with injected fallback; CLI
+wiring pin — ticking DB + cleared env + home redirected to tmp prints the
+nudge); ruff clean. Live-fired against the REAL box DB: `hlbot health`
+prints "⚠ pager: DOWN pages nobody…" with every other line ✓ — the box
+will show 🟡 until the operator wires a channel, which is the point.
+
+**Live watch (Iter-81 items) — partially verified, on schedule.**
+(1) Live heartbeats: VERIFIED resumed — rows at 16:08:41, 16:13:53,
+16:19:02 (every ~5 min, mode=live). (2) Exit-only unwind: NEAR **closed
+in full** at 16:13:53 on `REVERTED z=-0.29` (3 fills, +$6.59 realized
+net) — the B-EXITONLY ladder working live; TON −112.5 still open
+(entered 15:12, reversion not hit; 4h max-hold forces close by ~19:12 —
+verify next iteration). (3) `.update_heartbeat` not yet born / box still
+at 8251cd1 — checked at 16:19:10, one minute BEFORE the 16:20:25 updater
+fire that should ship 1e135aa (+ this commit ~15 min later); verify both
+next iteration, expect "✓ deploy: at <sha>" + the new pager warn in the
+box's own health output (its env has HLBOT_AUTO_UPDATE=1).
+
+**Found.** Per-iteration readouts: b_edge2b 52.5d/60d (~Jun 20), b_g014
+4.1d/14d (~Jun 26) — both not ripe, store healthy (step-0 harvest ok).
+Account equity $627.54, 24h realized −$327.81 (manual book dominates,
+unchanged from Iter 81's read; `daily_loss_floor` still unset — operator
+question stands).
+
+**What's next (loop).** Verify next iteration: TON max-hold close
+(~19:12), 1e135aa + this commit deployed (`.deployed_sha` advanced,
+`.update_heartbeat` born, deploy line ✓), pager warn visible in the live
+box's own tick-driven health output. Per-iteration readouts unchanged
+(b_edge2b ~Jun 20, b_g014 ~Jun 26, b_edge3 + b_edge2_1h ~Jul 10). Idle
+queue: xmom-reversal cost math (frame from existing b_edge3 records —
+reversal net ≈ −(xmom gross) − costs, so it needs xmom_net < −2×RT-cost
+at some horizon to clear zero; check the Iter-72 lookback sweep before
+spending a backtest); B-SCALE doc once real G2 evidence exists.

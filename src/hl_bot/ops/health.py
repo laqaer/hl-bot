@@ -8,6 +8,7 @@
   * is any agent paused by a guardrail?  (agent_state.enabled = 0)
   * is it bleeding?                       (24h realized PnL vs a floor)
   * is the auto-deployer alive/shipping? (``DeploySignals``; warn-only)
+  * can a bad verdict reach a human?     (``PagerSignals``; warn-only)
 
 The verdict drives a dead-man switch: ``hlbot health`` pings ``HEALTHCHECK_URL``
 only when status is ok, so a missed ping (crashed/hung bot) pages you. Anything
@@ -58,6 +59,41 @@ class DeploySignals:
     head_sha: str | None                # repo HEAD on disk (fetched, maybe undeployed)
     deployed_sha: str | None            # content of data/.deployed_sha
     update_beat_age_s: float | None     # age of data/.update_heartbeat; None = missing
+
+
+@dataclass
+class PagerSignals:
+    """Can a bad verdict actually reach a human? (env truth at call time)"""
+
+    healthcheck_url: bool   # HEALTHCHECK_URL set → dead-man switch wired
+    telegram_token: bool    # TG_BOT_TOKEN set (or the Hermes config fallback)
+
+
+def read_pager_signals(
+    env: Mapping[str, str] | None = None,
+    *,
+    tg_fallback: object = None,
+) -> PagerSignals:
+    """Resolve which alert channels ``hlbot health`` could actually use.
+
+    Mirrors the send paths: ``ping_heartbeat`` needs HEALTHCHECK_URL;
+    ``telegram_alert`` needs TG_BOT_TOKEN or the Hermes config file it falls
+    back to (``tg_fallback`` overrides that lookup for tests — the default
+    consults the same ``_load_tg_token`` the alert path uses).
+    """
+    env = os.environ if env is None else env
+    tg = bool(env.get("TG_BOT_TOKEN"))
+    if not tg:
+        if tg_fallback is None:
+            with contextlib.suppress(Exception):
+                from ..exec.orders import _load_tg_token
+                tg = bool(_load_tg_token())
+        else:
+            tg = bool(tg_fallback())  # type: ignore[operator]
+    return PagerSignals(
+        healthcheck_url=bool(env.get("HEALTHCHECK_URL")),
+        telegram_token=tg,
+    )
 
 
 def _read_git_head(repo_dir: Path) -> str | None:
@@ -140,6 +176,7 @@ def assess_health(
     daily_loss_floor: float = -1e9,   # set to a negative $ to flag bleeding
     deploy: DeploySignals | None = None,
     max_update_age_s: int = 7200,     # 2 h ≈ 8 missed 15-min updater fires
+    pager: PagerSignals | None = None,
 ) -> HealthReport:
     now_ms = now_ms or int(time.time() * 1000)
     checks: list[tuple[str, Level, str]] = []
@@ -247,6 +284,30 @@ def assess_health(
                 if deploy.update_beat_age_s is not None:
                     detail += f", updater ran {deploy.update_beat_age_s/60:.1f} min ago"
                 checks.append(("deploy", "ok", detail))
+
+    # --- pager reachability (can any verdict here reach a human?) ---
+    # The Jun-12 incidents were detected in-DB but alerted nobody: the live
+    # box ran with HEALTHCHECK_URL/TG_* all empty, so DOWN verdicts died in
+    # the journal. Warn-only, and gated to boxes that have actually ticked —
+    # a dev clone running `hlbot health` ad hoc never needed a pager.
+    if pager is not None and (last_beat is not None or last_decision is not None):
+        wired = [name for name, on in
+                 (("dead-man URL", pager.healthcheck_url),
+                  ("telegram", pager.telegram_token)) if on]
+        metrics["pager_channels"] = float(len(wired))
+        if not wired:
+            checks.append(("pager", "warn",
+                           "DOWN pages nobody — set HEALTHCHECK_URL and/or "
+                           "TG_BOT_TOKEN"))
+        elif pager.healthcheck_url:
+            checks.append(("pager", "ok", " + ".join(wired)))
+        else:
+            # Telegram fires only when a *running* health check goes DOWN; a
+            # fully dead box (loop/timer gone) sends nothing — only a missed
+            # dead-man ping catches that. Operator's call, so ok not warn.
+            checks.append(("pager", "ok",
+                           "telegram only — a fully dead box pages nobody "
+                           "(no HEALTHCHECK_URL dead-man switch)"))
 
     # --- 24h realized PnL ---
     since = now_ms - 86_400_000

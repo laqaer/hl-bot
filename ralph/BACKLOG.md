@@ -398,6 +398,16 @@ Keep it ruthlessly prioritized: the top item should always be the highest-levera
   pinned by test against update.sh's text. The new update.sh self-deploys;
   the marker appears on the fire after that (one transient
   "never completed" warn cycle, by design).
+- [x] **B-PAGER — `hlbot health` warns when no alert channel is wired.** Done
+  (Iter 82, the operator nudge filed in Iter 81): the live box runs with
+  `HEALTHCHECK_URL`/`TG_BOT_TOKEN`/`TG_CHAT_ID` all empty and no Hermes
+  fallback, so every DOWN verdict died in the journal — perfect detection,
+  zero reach. `PagerSignals`/`read_pager_signals` (env truth, mirrors the
+  send paths incl. the Hermes token fallback) + a warn-only `pager` check in
+  `assess_health`, gated to DBs that have actually ticked so dev/loop clones
+  never nag. Telegram-only is ok-with-caveat, not a warn (it can't catch a
+  fully dead box — only the missed dead-man ping does; operator's call).
+  Clears when the operator sets either env in `/etc/hl-bot/env`.
 - [x] **B-M5 — Spot-mid normalization fixed + tested (REVIEW M5, the last
   unpicked finding).** Done (Iter 66): the basis feed was silently dead, not
   merely fragile — the inline parser zipped `universe` with the ctx array

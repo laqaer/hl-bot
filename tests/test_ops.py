@@ -14,8 +14,10 @@ from hl_bot.ops.health import (
     DEPLOYED_SHA,
     UPDATE_HEARTBEAT,
     DeploySignals,
+    PagerSignals,
     assess_health,
     read_deploy_signals,
+    read_pager_signals,
 )
 
 
@@ -286,6 +288,82 @@ def test_health_cli_reports_deploy(monkeypatch, tmp_path):
     res = CliRunner().invoke(app, ["health", "--no-heartbeat"])
     assert res.exit_code == 0, res.output
     assert "deploy" in res.output and "never completed" in res.output
+
+
+def test_health_pager_unwired_warns(conn):
+    # The Jun-12 shape: a ticking box whose DOWN verdicts die in the journal
+    # because no alert channel is configured.
+    now = int(time.time() * 1000)
+    _fresh(conn, now)
+    rep = assess_health(conn, now_ms=now, pager=PagerSignals(
+        healthcheck_url=False, telegram_token=False))
+    assert rep.status == "warn"
+    assert any(n == "pager" and lvl == "warn" and "pages nobody" in d
+               for n, lvl, d in rep.checks)
+    assert rep.metrics["pager_channels"] == 0.0
+
+
+def test_health_pager_wired_ok(conn):
+    now = int(time.time() * 1000)
+    _fresh(conn, now)
+    rep = assess_health(conn, now_ms=now, pager=PagerSignals(
+        healthcheck_url=True, telegram_token=True))
+    assert rep.status == "ok"
+    assert any(n == "pager" and lvl == "ok" and d == "dead-man URL + telegram"
+               for n, lvl, d in rep.checks)
+    assert rep.metrics["pager_channels"] == 2.0
+
+
+def test_health_pager_telegram_only_notes_dead_man_gap(conn):
+    # Telegram fires only from a *running* health check; a fully dead box
+    # sends nothing. Visibility (detail), not a nag (still ok).
+    now = int(time.time() * 1000)
+    _fresh(conn, now)
+    rep = assess_health(conn, now_ms=now, pager=PagerSignals(
+        healthcheck_url=False, telegram_token=True))
+    assert rep.status == "ok"
+    assert any(n == "pager" and lvl == "ok" and "fully dead box" in d
+               for n, lvl, d in rep.checks)
+
+
+def test_health_pager_quiet_on_never_ticked_box(conn):
+    # A dev/loop clone with an empty DB never needed a pager — no nudge line.
+    rep = assess_health(conn, pager=PagerSignals(
+        healthcheck_url=False, telegram_token=False))
+    assert not any(n == "pager" for n, _, _ in rep.checks)
+
+
+def test_read_pager_signals():
+    # Env wins; the Hermes fallback is consulted only when TG_BOT_TOKEN is
+    # unset (injected here so the test ignores the machine's real config).
+    sig = read_pager_signals(
+        {"HEALTHCHECK_URL": "https://hc.example/ping", "TG_BOT_TOKEN": "t"},
+        tg_fallback=lambda: None)
+    assert sig == PagerSignals(healthcheck_url=True, telegram_token=True)
+    assert read_pager_signals({}, tg_fallback=lambda: "tok").telegram_token
+    empty = read_pager_signals({"HEALTHCHECK_URL": ""}, tg_fallback=lambda: None)
+    assert empty == PagerSignals(healthcheck_url=False, telegram_token=False)
+
+
+def test_health_cli_reports_pager(monkeypatch, tmp_path):
+    # Wiring pin: `hlbot health` must feed real pager signals — a ticking box
+    # with the pager env empty prints the nudge.
+    from typer.testing import CliRunner
+
+    from hl_bot.cli.main import app
+    from hl_bot.db.schema import init_db
+
+    db = tmp_path / "data" / "h.sqlite"
+    c = init_db(db)
+    _beat(c, int(time.time() * 1000) - 60_000)
+    c.commit()
+    monkeypatch.setenv("HLBOT_DB", str(db))
+    monkeypatch.delenv("HEALTHCHECK_URL", raising=False)
+    monkeypatch.delenv("TG_BOT_TOKEN", raising=False)
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path))
+    res = CliRunner().invoke(app, ["health", "--no-heartbeat"])
+    assert res.exit_code == 0, res.output
+    assert "pager" in res.output and "pages nobody" in res.output
 
 
 def test_update_sh_touches_heartbeat():
