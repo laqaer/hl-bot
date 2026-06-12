@@ -645,9 +645,10 @@ def femr_tick(live: bool = False, execution: str = "auto"):
         return  # nothing enabled for live execution
 
     from ..ops.kill import kill_active
-    if kill_active(s.db_path.parent):
+    kill_reason = kill_active(s.db_path.parent)
+    if kill_reason:
         console.print(
-            f"[red]KILL ACTIVE[/red]: {kill_active(s.db_path.parent)} — "
+            f"[red]KILL ACTIVE[/red]: {kill_reason} — "
             "new entries blocked; flatten/cancel still allowed (`hlbot resume` to clear)"
         )
 
@@ -700,10 +701,12 @@ def femr_tick(live: bool = False, execution: str = "auto"):
 
     # Execute through the single audited router (exec/router.py): per-agent
     # maker/taker entries (maker quotes priced off the live book), taker exits,
-    # guardrail/cooldown gates, fill-confirmed decision logging.
+    # guardrail/cooldown gates, fill-confirmed decision logging. The sticky
+    # kill switch vetoes new entries; risk-reducing flatten/closes still run.
     outcomes = execute_decisions(
         conn, exchange, all_decisions,
-        exec_modes=exec_modes, entries_allowed=ok, book_top=view.book_top,
+        exec_modes=exec_modes, entries_allowed=ok and not kill_reason,
+        book_top=view.book_top,
     )
     for oc in outcomes:
         if oc.status == "filled":
