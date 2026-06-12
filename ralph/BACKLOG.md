@@ -315,19 +315,22 @@ Keep it ruthlessly prioritized: the top item should always be the highest-levera
   breaches count against its G1; xmom refusal names the true day-0 span).
   GO_LIVE.md + deploy/README updated — run agent-mode with the DEFAULT
   HLBOT_DB.
-- [ ] **B-PAPERDB2 — split-DB paper evidence for `score --paper` and the
-  track record's paper section.** Same hole, lower stakes (pure readouts
-  with a documented HLBOT_DB override): on the live box `hlbot track-record`
-  reads live fills from the live DB but its "Paper agents (NOT live)"
-  section replays the live DB's near-empty paper rows — the real forward-
-  test evidence in hlbot_paper.sqlite is invisible in the public artifact,
-  and no env override can show both books at once. Wire
-  `_paper_evidence_conn` into `score --paper` (replacing the README's
-  override recipe) and `build_track_record` (paper sections read the paper
-  conn). Also `hlbot supervisor` on the live box evaluates paper-mode agents
-  from the live DB (sees no book → fills path) — harmless today because the
-  paper loop runs its own supervisor against the paper DB, but worth a
-  comment or the same plumbing when touched.
+- [x] **B-PAPERDB2 — split-DB paper evidence for `score --paper` and the
+  track record's paper section.** Done (Iter 96): `build_track_record`/
+  `export` take `paper_conn` — the paper section (roster, cards, daily
+  series, open positions) reads the paper DB while fills/equity/live table
+  stay on the main conn; paper-only-by-EITHER-book agents stay out of the
+  live table (agent_state rows for paper candidates live in the live DB),
+  and pre-split legacy paper rows in the live DB are NOT resurrected (the
+  authoritative book is the paper DB, matching gates/agent-mode). CLI:
+  `score --paper` + `track-record` wire `_paper_evidence_conn` (read-only)
+  and print which paper DB supplied evidence; `hlbot supervisor` stays
+  deliberately single-DB (guardrail evaluations must land beside the book
+  they judged — run-paper-tick.sh runs the paper pass), now said in code +
+  README. README override recipes replaced. 6 tests; live-fired read-only
+  on the deploy DBs: one `track-record` now shows live fills (twap_mr_v1
+  954 trades) AND the real paper books (33/33/6 legs) in one artifact.
+  Single-DB boxes byte-identical (paper_conn=None).
 - [x] **B-G1SPAN — Promotion gates enforce evidence SPAN + clean guardrail
   history (G1 pre-registration, day 0 of the paper books).** Done (Iter 89):
   every promotion block keyed on `window: 30d` metrics, which bound the

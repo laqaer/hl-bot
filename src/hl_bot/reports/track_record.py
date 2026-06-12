@@ -26,6 +26,13 @@ and the account equity curve so the headline record stays fills-based. Open
 paper positions are marked to market when the caller supplies current mids
 (B-PAPER3e, ``mark_paper_positions``): the open-uPnL column shows the
 flatten-now value beside each card, never folded into net/sharpe/DD.
+
+On a split-DB box (B-PAPERLOOP) the real paper book lives in its own DB
+while fills/equity stay in the live DB, so callers pass ``paper_conn``
+(B-PAPERDB2): the paper section reads that connection — the authoritative
+forward-test book — and everything else stays on the main conn. Without it
+the live box's track record replayed the live DB's near-empty paper rows
+and the real evidence was invisible in the public artifact.
 """
 
 from __future__ import annotations
@@ -195,9 +202,11 @@ def build_track_record(
     conn: sqlite3.Connection,
     *,
     now_ms: int | None = None,
+    paper_conn: sqlite3.Connection | None = None,
     paper_funding_by_coin: dict[str, list[dict[str, Any]]] | None = None,
     paper_mids: dict[str, float] | None = None,
 ) -> dict[str, Any]:
+    pconn = paper_conn if paper_conn is not None else conn
     now_ms = now_ms or int(time.time() * 1000)
     curve = _account_equity_curve(conn)
     acct = score_agent(conn, "_account", "all")
@@ -217,7 +226,13 @@ def build_track_record(
             "total_return_pct": (curve[-1][1] / curve[0][1] - 1.0) if curve[0][1] else None,
         })
 
-    paper_roster = set(list_paper_agents(conn))
+    paper_roster = set(list_paper_agents(pconn))
+    # Paper-only by EITHER book stays out of the live table: with a separate
+    # paper DB the live DB can still hold pre-split legacy paper rows, and
+    # agent_state rows for paper candidates live here too — neither is a
+    # live record. The paper SECTION shows only the authoritative book
+    # (paper_roster), matching gates/agent-mode (B-PAPERDB).
+    paper_like = paper_roster | set(list_paper_agents(conn))
     agents = [
         a for a in list_agents(conn)
         if a not in ("_account", "manual") and not a.startswith("unknown:")
@@ -225,7 +240,7 @@ def build_track_record(
     per_agent: list[dict[str, Any]] = []
     for a in agents:
         all_sc = score_agent(conn, a, "all")
-        if all_sc.n_trades == 0 and a in paper_roster:
+        if all_sc.n_trades == 0 and a in paper_like:
             continue  # paper-only agent: its record lives in the paper section
         daily = _agent_daily_pnl(conn, a)
         per_agent.append({
@@ -245,10 +260,10 @@ def build_track_record(
     paper: list[dict[str, Any]] = []
     for a in sorted(paper_roster):
         sc = score_paper_agent(
-            conn, a, "all", now_ms=now_ms, funding_by_coin=paper_funding_by_coin)
+            pconn, a, "all", now_ms=now_ms, funding_by_coin=paper_funding_by_coin)
         daily = paper_daily_pnl(
-            conn, a, now_ms=now_ms, funding_by_coin=paper_funding_by_coin)
-        opens = paper_open_positions(conn, a)
+            pconn, a, now_ms=now_ms, funding_by_coin=paper_funding_by_coin)
+        opens = paper_open_positions(pconn, a)
         # Flatten-now value of the open book (mark_paper_positions semantics:
         # exit crosses the spread + pays the taker fee). No open positions is
         # exactly 0; any unmarked position makes the sum dishonest -> None.
@@ -271,7 +286,7 @@ def build_track_record(
             "open_upnl": open_upnl,
             "windows": {
                 w: score_paper_agent(
-                    conn, a, w,  # type: ignore[arg-type]
+                    pconn, a, w,  # type: ignore[arg-type]
                     now_ms=now_ms, funding_by_coin=paper_funding_by_coin,
                 ).as_dict()
                 for w in ("24h", "7d", "30d")
@@ -482,12 +497,14 @@ def export(
     conn: sqlite3.Connection,
     out_dir: str | Path,
     *,
+    paper_conn: sqlite3.Connection | None = None,
     paper_funding_by_coin: dict[str, list[dict[str, Any]]] | None = None,
     paper_mids: dict[str, float] | None = None,
 ) -> tuple[Path, Path, Path]:
     """Write track_record.{json,md,html}; return their paths."""
     track = build_track_record(
-        conn, paper_funding_by_coin=paper_funding_by_coin, paper_mids=paper_mids)
+        conn, paper_conn=paper_conn,
+        paper_funding_by_coin=paper_funding_by_coin, paper_mids=paper_mids)
     d = Path(out_dir)
     d.mkdir(parents=True, exist_ok=True)
     jp = d / "track_record.json"

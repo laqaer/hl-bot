@@ -241,3 +241,127 @@ def test_gates_cli_reads_split_paper_db(monkeypatch, tmp_path):
     assert res.exit_code == 0, res.output
     assert "G1" in res.output
     assert "no evidence yet" not in res.output
+
+
+# --- score / track record (B-PAPERDB2) --------------------------------------
+
+def _fill(conn, agent, t_ms, pnl, fee=0.1):
+    conn.execute(
+        """INSERT INTO fills(hash, tid, time_ms, coin, side, px, sz,
+           start_position, dir, closed_pnl, fee, fee_token, builder_fee,
+           cloid, agent, raw_json)
+           VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+        (f"h{agent}{t_ms}", t_ms, t_ms, "BTC", "B", 100.0, 1.0, 0,
+         "Close Long", pnl, fee, "USDC", 0, None, agent, "{}"),
+    )
+    conn.commit()
+
+
+def test_track_record_paper_section_reads_paper_conn(live, paper):
+    from hl_bot.reports.track_record import build_track_record
+
+    _fill(live, AGENT, NOW_MS - DAY_MS, 5.0)
+    _fill(live, AGENT, NOW_MS - 2 * DAY_MS, 7.0)
+    _paper_rows(paper, "xmom_v1", span_days=10, round_trips=5)
+
+    # Without paper_conn the live DB has no paper rows: the forward-test
+    # evidence is invisible — the pre-fix shape on a split-DB box.
+    assert "paper_agents" not in build_track_record(live)
+
+    tr = build_track_record(live, paper_conn=paper)
+    assert [a["agent"] for a in tr["agents"]] == [AGENT]
+    cards = {a["agent"]: a for a in tr["paper_agents"]}
+    assert cards["xmom_v1"]["n_trades"] == 10  # legs, not round trips
+    assert cards["xmom_v1"]["net_pnl"] > 0  # 100 -> 110 round trips
+
+
+def test_track_record_paper_candidate_with_live_state_row_stays_paper_only(
+        live, paper):
+    """agent_state lives in the LIVE DB even for paper-mode candidates, so a
+    promotion candidate appears in list_agents(live) with zero fills. It must
+    land in the paper section (its real book), never the live table."""
+    from hl_bot.reports.track_record import build_track_record
+
+    _paper_rows(paper, "xmom_v1", span_days=10, round_trips=5)
+    live.execute(
+        "INSERT INTO agent_state(agent, mode) VALUES('xmom_v1', 'paper')")
+    live.commit()
+    tr = build_track_record(live, paper_conn=paper)
+    assert [a["agent"] for a in tr["agents"]] == []
+    assert [a["agent"] for a in tr["paper_agents"]] == ["xmom_v1"]
+
+
+def test_track_record_legacy_live_paper_rows_not_resurrected(live, paper):
+    """Pre-split paper rows left in the live DB are NOT the authoritative
+    book: they stay out of the live table AND out of the paper section
+    (which reads only the paper DB, matching gates/agent-mode)."""
+    from hl_bot.reports.track_record import build_track_record
+
+    _paper_rows(live, "femr_v1", span_days=5, round_trips=3)   # legacy rows
+    _paper_rows(paper, "xmom_v1", span_days=10, round_trips=5)
+    tr = build_track_record(live, paper_conn=paper)
+    assert [a["agent"] for a in tr["agents"]] == []
+    assert [a["agent"] for a in tr["paper_agents"]] == ["xmom_v1"]
+
+
+def test_track_record_open_positions_marked_from_paper_conn(live, paper):
+    from hl_bot.reports.track_record import build_track_record
+
+    paper.execute(
+        """INSERT INTO agent_decisions(ts_ms, agent, action, coin, side,
+           sz, px, is_paper) VALUES(?,?,'place','ETH','B',1.0,200.0,1)""",
+        (NOW_MS - 3_600_000, "xmom_v1"),
+    )
+    paper.commit()
+    tr = build_track_record(live, paper_conn=paper, paper_mids={"ETH": 220.0})
+    card = next(a for a in tr["paper_agents"] if a["agent"] == "xmom_v1")
+    assert card["open_positions"] == 1
+    assert card["open_upnl"] is not None and card["open_upnl"] > 0
+
+
+def test_score_paper_cli_reads_split_paper_db(monkeypatch, tmp_path):
+    from rich.console import Console
+    from typer.testing import CliRunner
+
+    from hl_bot.cli import main as cli
+
+    live_db = tmp_path / "hlbot.sqlite"
+    paper_db = tmp_path / "hlbot_paper.sqlite"
+    init_db(live_db).close()
+    pconn = init_db(paper_db)
+    _paper_rows(pconn, AGENT, span_days=31)
+    pconn.close()
+    monkeypatch.setenv("HLBOT_DB", str(live_db))
+    monkeypatch.setenv("HLBOT_PAPER_DB", str(paper_db))
+    monkeypatch.setattr(cli, "console", Console(width=250))
+    res = CliRunner().invoke(
+        cli.app, ["score", "--paper", "--no-funding", "--no-mark"])
+    assert res.exit_code == 0, res.output
+    assert "separate paper DB" in res.output
+    assert AGENT in res.output and "160" in res.output  # all-window legs
+
+
+def test_track_record_cli_reads_split_paper_db(monkeypatch, tmp_path):
+    from rich.console import Console
+    from typer.testing import CliRunner
+
+    from hl_bot.cli import main as cli
+
+    live_db = tmp_path / "hlbot.sqlite"
+    paper_db = tmp_path / "hlbot_paper.sqlite"
+    init_db(live_db).close()
+    pconn = init_db(paper_db)
+    _paper_rows(pconn, AGENT, span_days=31)
+    pconn.close()
+    monkeypatch.setenv("HLBOT_DB", str(live_db))
+    monkeypatch.setenv("HLBOT_PAPER_DB", str(paper_db))
+    monkeypatch.setattr(cli, "console", Console(width=250))
+    res = CliRunner().invoke(
+        cli.app,
+        ["track-record", "--out", str(tmp_path / "tr"),
+         "--no-paper-funding", "--no-paper-mark"])
+    assert res.exit_code == 0, res.output
+    assert "separate paper DB" in res.output
+    md = (tmp_path / "tr" / "track_record.md").read_text()
+    assert "Paper agents (NOT live)" in md
+    assert f"| {AGENT} | 160 |" in md  # legs, not round trips

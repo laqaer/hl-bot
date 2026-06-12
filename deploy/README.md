@@ -141,11 +141,13 @@ no orders ever). It is enabled by install.sh and self-enables via update.sh's
 timer loop on existing boxes. It exists because the live tick in live mode
 runs only promoted agents — paper evidence for a candidate accumulates only
 where paper ticks actually run, and a live-mode box without this timer accrues
-NONE (found Iter 85). Read the book with
-`HLBOT_DB=data/hlbot_paper.sqlite uv run hlbot score --paper`.
-`hlbot gates` and `hlbot agent-mode` need no override: they resolve the
-paper DB beside the live DB themselves (read-only) and judge paper evidence
-from it while agent_state stays in the live DB.
+NONE (found Iter 85). No `HLBOT_DB` override is needed to read it:
+`hlbot score --paper`, `hlbot track-record`, `hlbot gates`, and
+`hlbot agent-mode` all resolve the paper DB beside the live DB themselves
+(read-only; `HLBOT_PAPER_DB` relocates it) and judge paper evidence from it
+while agent_state and fills stay in the live DB (B-PAPERDB/B-PAPERDB2).
+Reserve the `HLBOT_DB=data/hlbot_paper.sqlite` override for commands that
+must *write* the paper book (a manual paper tick, below).
 
 One-off manual paper tick (same DB the unit uses):
 
@@ -171,14 +173,16 @@ entry fees and accrued funding but no mark-to-market. Promotion stays
 human-gated; this is the evidence readout, not an auto-promoter.
 
 ```bash
-sudo -u hlbot bash -c 'cd /opt/hl-bot && HLBOT_DB=data/hlbot_paper.sqlite uv run hlbot score --paper'
+sudo -u hlbot bash -c 'cd /opt/hl-bot && uv run hlbot score --paper'
 ```
 
 `hlbot track-record` includes the same paper cards as a clearly-labeled
 "Paper agents (NOT live)" section (B-PAPER3b) in all three exports
 (json/md/html) — paper-only agents never appear in the live per-agent table,
 and the account equity curve stays fills-based. `--no-paper-funding` skips
-the funding-rate fetches like `score --no-funding`.
+the funding-rate fetches like `score --no-funding`. On a split-DB box the
+paper section reads the separate paper DB (B-PAPERDB2), so one command shows
+live fills and the real forward-test book together — no override can do that.
 
 The supervisor judges paper-mode agents on these same paper cards
 (B-PAPER3c): pause/demote/alert guardrails in the agent's `configs/*.yaml`
@@ -188,7 +192,11 @@ passing every promotion gate logs a "promotion-ready … human-gated, not
 applied" evaluation and stays paper until the operator flips it in
 `agent_state`. `hlbot supervisor` fetches modeled funding for the paper book
 by default (one funding-history call per paper coin, every tick via
-run-tick.sh); `--no-paper-funding` keeps it offline.
+run-tick.sh); `--no-paper-funding` keeps it offline. Unlike the readouts
+above, the supervisor deliberately judges only the DB it is pointed at —
+guardrail evaluations must land beside the book they judged — so on a
+split-DB box the live unit's pass sees fills evidence and run-paper-tick.sh
+runs the paper book's own pass against the paper DB.
 
 ## Kill switch
 

@@ -274,7 +274,9 @@ def test_mark_missing_or_bad_mid_is_unmarked():
     assert marked[0].entry_px == 50.0 and marked[0].sz == 3.0
 
 
-def test_cli_score_paper_marks_open_positions(monkeypatch):
+def test_cli_score_paper_marks_open_positions(monkeypatch, tmp_path):
+    from types import SimpleNamespace
+
     from rich.console import Console
     from typer.testing import CliRunner
 
@@ -282,7 +284,11 @@ def test_cli_score_paper_marks_open_positions(monkeypatch):
 
     c = init_db(":memory:")
     _log(c, "breakout_v1", 1000, "place", "SOL", "B", 2.0, 100.0)
-    monkeypatch.setattr(cli, "_conn", lambda: (c, None))
+    # db_path feeds the paper-DB resolver (B-PAPERDB2); no paper DB beside
+    # it here, so the command scores the main conn's book.
+    s = SimpleNamespace(db_path=tmp_path / "hlbot.sqlite")
+    monkeypatch.delenv("HLBOT_PAPER_DB", raising=False)
+    monkeypatch.setattr(cli, "_conn", lambda: (c, s))
     monkeypatch.setattr(cli, "console", Console(width=250))
 
     monkeypatch.setattr(cli, "_fetch_mids", lambda s: {"SOL": 110.0})

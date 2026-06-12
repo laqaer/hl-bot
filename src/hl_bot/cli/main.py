@@ -181,9 +181,17 @@ def score(
 ):
     """Print per-agent scorecards (--paper: replayed paper book, B-PAPER3)."""
     conn, s = _conn()
+    book = conn
     if paper:
-        funding_by_coin = _fetch_paper_funding(conn, s) if funding else {}
-        cards = score_paper_all(conn, funding_by_coin=funding_by_coin or None)
+        # On a split-DB box the real paper book lives in its own DB
+        # (B-PAPERLOOP); read it from there, no HLBOT_DB override needed
+        # (B-PAPERDB2). Single-DB setups fall back to the main conn.
+        pconn, ppath = _paper_evidence_conn(s)
+        if pconn is not None:
+            book = pconn
+            console.print(f"[dim]paper book: {ppath} (separate paper DB)[/dim]")
+        funding_by_coin = _fetch_paper_funding(book, s) if funding else {}
+        cards = score_paper_all(book, funding_by_coin=funding_by_coin or None)
         fund_note = "modeled funding" if funding_by_coin else "funding=0"
         title = f"Paper scorecards (decision-book replay · modeled taker costs · {fund_note})"
     else:
@@ -206,8 +214,8 @@ def score(
     if paper:
         now_ms = int(time.time() * 1000)
         open_rows = [
-            (a, p) for a in list_paper_agents(conn)
-            for p in paper_open_positions(conn, a)
+            (a, p) for a in list_paper_agents(book)
+            for p in paper_open_positions(book, a)
         ]
         if open_rows:
             mids = _fetch_mids(s) if mark else {}
@@ -285,6 +293,11 @@ def supervisor(
     human-gated) — the supervisor never flips an agent live on modeled fills.
     """
     conn, s = _conn()
+    # Deliberately single-DB (no _paper_evidence_conn): guardrail evaluations
+    # must land in the SAME DB as the book they judged. On a split-DB box
+    # (B-PAPERLOOP) this run sees the live DB's fills evidence only;
+    # run-paper-tick.sh runs its own supervisor pass against the paper DB,
+    # where the real paper book lives (B-PAPERDB2).
     funding_by_coin = _fetch_paper_funding(conn, s) if paper_funding else {}
     actions = supervise(conn, configs, paper_funding_by_coin=funding_by_coin or None)
     console.print(json.dumps(actions, indent=2) if actions else "[dim]no actions taken[/dim]")
@@ -1651,13 +1664,21 @@ def track_record(
     from ..reports.track_record import export
 
     conn, s = _conn()
-    funding_by_coin = _fetch_paper_funding(conn, s) if paper_funding else {}
+    # Paper section reads the separate paper DB when one exists (B-PAPERDB2):
+    # on the live box the real forward-test book lives there, not in the
+    # live DB's near-empty paper rows. Read-only; single-DB boxes unchanged.
+    pconn, ppath = _paper_evidence_conn(s)
+    book = pconn if pconn is not None else conn
+    if ppath is not None:
+        console.print(f"[dim]paper evidence: {ppath} (separate paper DB)[/dim]")
+    funding_by_coin = _fetch_paper_funding(book, s) if paper_funding else {}
     mids: dict[str, float] = {}
     if paper_mark and any(
-            paper_open_positions(conn, a) for a in list_paper_agents(conn)):
+            paper_open_positions(book, a) for a in list_paper_agents(book)):
         mids = _fetch_mids(s)
     jp, mp, hp = export(
         conn, out,
+        paper_conn=pconn,
         paper_funding_by_coin=funding_by_coin or None,
         paper_mids=mids or None,
     )

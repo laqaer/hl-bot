@@ -223,6 +223,8 @@ def test_paper_open_upnl_unmarked_is_none(conn):
 def test_cli_track_record_marks_open_paper(tmp_path, monkeypatch):
     """`hlbot track-record` fetches mids only when open paper positions exist;
     --no-paper-mark skips the fetch and the column degrades to '—'."""
+    from types import SimpleNamespace
+
     from rich.console import Console
     from typer.testing import CliRunner
 
@@ -230,7 +232,11 @@ def test_cli_track_record_marks_open_paper(tmp_path, monkeypatch):
 
     c = init_db(tmp_path / "cli.sqlite")
     now = int(time.time() * 1000)
-    monkeypatch.setattr(cli, "_conn", lambda: (c, None))
+    # db_path feeds the paper-DB resolver (B-PAPERDB2); no paper DB beside
+    # it here, so the command runs single-DB.
+    s = SimpleNamespace(db_path=tmp_path / "cli.sqlite")
+    monkeypatch.delenv("HLBOT_PAPER_DB", raising=False)
+    monkeypatch.setattr(cli, "_conn", lambda: (c, s))
     monkeypatch.setattr(cli, "console", Console(width=250))
     calls: list[int] = []
 

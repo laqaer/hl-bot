@@ -5353,3 +5353,71 @@ B-PAPERDB2 (split-DB paper evidence for score/track-record);
 B-STOREBKP2 once the operator arms HLBOT_STORE_BACKUP_S3; operator nudges —
 wire HEALTHCHECK_URL, consider arming HLBOT_DAILY_LOSS_FLOOR + the S3
 store backup.
+
+## Iteration 96 — 2026-06-12 — B-PAPERDB2: the public track record can now show both books at once
+
+**Ripeness checks** (per-iteration readout): b_edge2b NOT RIPE (15m span
+52.9d < 60d, ~Jun 20); b_g014 NOT RIPE (1m span 4.3d < 14d, ~Jun 26). Store
+fresh (harvest exit 0; peer sync +0 bars here, +443 bars pushed to the
+deploy clone). Backup still unarmed (no HLBOT_STORE_BACKUP_S3 in
+/etc/hl-bot/env → B-STOREBKP2 stays blocked); HEALTHCHECK_URL/TG_BOT_TOKEN
+present but EMPTY (pager nag stands).
+
+**The work.** Closed the readout half of the split-DB hole (B-PAPERDB,
+Iter 95, fixed the *decision* half). On the live box `hlbot track-record` —
+the artifact capital decisions are made on — read live fills from the live
+DB but replayed the live DB's near-empty paper rows for its "Paper agents
+(NOT live)" section, so the real forward-test evidence accruing in
+hlbot_paper.sqlite since Jun 12 was invisible in the public artifact; the
+README's documented workaround (`HLBOT_DB=...paper.sqlite score --paper`)
+could only ever show ONE book at a time. At the ~Jul-12 G1 window the
+allocator-facing artifact would have shown promotion candidates with empty
+paper sections.
+
+**Changed:**
+- `reports/track_record.py`: `build_track_record(paper_conn=)` + `export`
+  passthrough — the paper section (roster, cards, daily series, open
+  positions, windows) reads the paper conn; fills/equity/account and the
+  live table stay on the main conn. Live-table exclusion now keys on
+  paper-only-by-EITHER-book (`paper_like`): paper candidates' agent_state
+  rows live in the live DB, so without this they'd surface as 0-trade live
+  rows. Pre-split legacy paper rows in the live DB are NOT resurrected —
+  the paper SECTION shows only the authoritative book, matching
+  gates/agent-mode.
+- `cli/main.py`: `score --paper` and `track-record` wire
+  `_paper_evidence_conn` (read-only; unreadable degrades to main conn with
+  a warning) and print which paper DB supplied evidence. `hlbot supervisor`
+  deliberately NOT wired — guardrail evaluations must land in the same DB
+  as the book they judged (run-paper-tick.sh runs the paper book's own
+  supervisor pass) — now stated in code + README instead of being implicit.
+- deploy/README.md: override recipes replaced (`score --paper` /
+  `track-record` need no HLBOT_DB override; reserve the override for
+  commands that WRITE the paper book, e.g. a manual paper tick).
+
+**Evidence.** 611 → **617 tests** pass (+6: paper section read from the
+paper conn while the live table stays fills-based — and the no-paper_conn
+arm pins the pre-fix hole (`"paper_agents" not in build_track_record(live)`);
+a paper candidate with a live-DB agent_state row lands in the paper
+section, never the live table; legacy live-DB paper rows stay out of both
+tables; open positions marked from the paper conn; two CLI wiring tests on
+real split HLBOT_DB/HLBOT_PAPER_DB envs). Two pre-existing CLI stub tests
+updated to carry a real `db_path` (the resolver needs it). Ruff clean.
+Live-fired read-only on the deploy box's real DBs: `score --paper` header
+names the paper DB and shows the real book (twap_mr_v1/regime 33 legs at
++$0.07, xmom_v1 6 legs at −$0.02, 10 open positions); `track-record` (out
+to /tmp, since removed) shows live fills (twap_mr_v1 954 trades $+160.26,
+femr_v1 67 trades $+40.13) AND those paper books in ONE artifact — the
+thing no env override could produce. Single-DB boxes byte-identical
+(paper_conn=None; all prior tests pass untouched).
+
+**Live watch.** Health: WARN only on the standing pager nag (tick 3.8m,
+ingest 4.0m, paper tick 2.2m, none paused). pnl_24h: bot $+0.84 (account
+−$210.32, manual −$211.15). Equity $700.21 (account-level, includes the
+operator's manual book).
+
+**What's next (loop).** Per-iteration readouts unchanged (b_edge2b ~Jun 20,
+b_g014 ~Jun 26, b_edge3 + b_edge2_1h reruns ~Jul 10, B-EDGE2f paper readout
+~Jul 12 — every paper-evidence reader now points at the right book for it).
+Idle queue: B-STOREBKP2 once the operator arms HLBOT_STORE_BACKUP_S3;
+operator nudges — fill the EMPTY HEALTHCHECK_URL/TG_BOT_TOKEN values,
+consider arming HLBOT_DAILY_LOSS_FLOOR + the S3 store backup.
