@@ -33,20 +33,25 @@ from .engine import Frame
 
 # 15m is included even though its ~52d retention isn't urgent yet: one extra
 # paginated call per coin per run buys the >52d 15m history B-CAD's longer
-# walk-forwards will eventually need.
-DEFAULT_INTERVALS: tuple[str, ...] = ("1m", "5m", "15m")
+# walk-forwards will eventually need. 1h (≈208d retention) feeds the xmom_v1
+# pre-registered reruns (B-EDGE3b, configs/experiments/b_edge3.json) — its
+# validated config is native 1h bars, and only the store lets those samples
+# outgrow what the API still returns.
+DEFAULT_INTERVALS: tuple[str, ...] = ("1m", "5m", "15m", "1h")
 
 # Breadth-validation universe (B-EDGE2d): ten liquid coins OUTSIDE the main
 # harvest universe, on which breakout_v1's original-universe G0 PASS failed to
 # generalize (fresh-universe OOS −31.5bps taker on the very window the
 # original universe earned +70.4). Momentum-family breadth re-tests need this
 # history as samples lengthen, and the API's rolling ~52d 15m retention
-# destroys it otherwise. 15m ONLY — tripling these coins across 1m/5m would
-# double the per-run API load the B-G014 1m sample depends on.
+# destroys it otherwise. 15m + 1h ONLY (no 1m/5m — that would double the
+# per-run API load the B-G014 1m sample depends on); 1h is one ~208d-
+# retention page per coin and the xmom reruns (B-EDGE3b) judge the combined
+# 20-coin universe at 1h.
 BREADTH_COINS: tuple[str, ...] = (
     "CRV", "ENA", "LIT", "NEAR", "SUI", "TON", "WLD", "XMR", "XPL", "XRP",
 )
-BREADTH_INTERVALS: tuple[str, ...] = ("15m",)
+BREADTH_INTERVALS: tuple[str, ...] = ("15m", "1h")
 
 
 def store_dir(root: str | Path | None = None) -> Path:

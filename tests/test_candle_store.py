@@ -141,13 +141,17 @@ def test_breadth_universe_cli_defaults_match_store_constants():
     # drifting from the documented constants would silently change coverage.
     import inspect
 
-    from hl_bot.backtest.store import BREADTH_COINS, BREADTH_INTERVALS
+    from hl_bot.backtest.store import BREADTH_COINS, BREADTH_INTERVALS, DEFAULT_INTERVALS
     from hl_bot.cli.main import harvest_candles
 
     params = inspect.signature(harvest_candles).parameters
+    assert params["intervals"].default == ",".join(DEFAULT_INTERVALS)
     assert params["breadth_coins"].default == ",".join(BREADTH_COINS)
     assert params["breadth_intervals"].default == ",".join(BREADTH_INTERVALS)
     assert not set(BREADTH_COINS) & set(params["coins"].default.split(","))
+    # the xmom_v1 rerun spec (b_edge3.json) reads the store at 1h for BOTH
+    # universes — dropping 1h here would silently starve those reruns
+    assert "1h" in DEFAULT_INTERVALS and "1h" in BREADTH_INTERVALS
 
 
 def test_noop_harvest_adds_nothing(tmp_path):

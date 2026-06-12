@@ -1,0 +1,34 @@
+{
+  "name": "b_edge3",
+  "description": "B-EDGE3b: three-armed xmom_v1 revalidation on the 1h store. Frozen 2026-06-12, the day 1h harvesting began: the first harvest captured ~208d (LIT 171.9d, worst coin), so unlike b_edge2b the first pre-registered run is ripe immediately — everything before ~2026-03-13 is out-of-selection history no xmom run has touched (the Iter-72 selection sample was the 90d ending 2026-06-11, where lb=336 was picked after 7d/3d failed walk-forward). lb=336 (14d), skip=0 (skip_bars=24 HURT, Iter 72). Taker arms only — optimistic maker fills are not promotion evidence for momentum.",
+  "agent": "xmom_v1",
+  "coins": ["ADA", "AVAX", "BTC", "DOGE", "ETH", "HYPE", "LINK", "SOL", "TRX", "ZEC", "CRV", "ENA", "LIT", "NEAR", "SUI", "TON", "WLD", "XMR", "XPL", "XRP"],
+  "interval": "1h",
+  "days": 0,
+  "source": "store",
+  "vwap_window": 337,
+  "min_span_days": 200,
+  "min_edge_bps": 3.0,
+  "min_sharpe": 1.0,
+  "min_trades": 20,
+  "arms": [
+    {
+      "name": "combined-taker",
+      "prefer": "taker",
+      "config": {"lookback_bars": 336, "skip_bars": 0}
+    },
+    {
+      "name": "original-taker",
+      "prefer": "taker",
+      "coins": ["ADA", "AVAX", "BTC", "DOGE", "ETH", "HYPE", "LINK", "SOL", "TRX", "ZEC"],
+      "config": {"lookback_bars": 336, "skip_bars": 0}
+    },
+    {
+      "name": "breadth-taker",
+      "prefer": "taker",
+      "coins": ["CRV", "ENA", "LIT", "NEAR", "SUI", "TON", "WLD", "XMR", "XPL", "XRP"],
+      "config": {"lookback_bars": 336, "skip_bars": 0}
+    }
+  ],
+  "decision": "The promotion-relevant arm is combined-taker (the xmom_v1 roster/paper configuration): it must keep PASSING G0 as samples lengthen or xmom_v1's promotion case dies. original-taker tracks whether the edge stays concentrated in the liquid-majors set (Iter 72: original-10 PASSED alone); breadth-taker is expected weak/FAIL (Iter 72: IS -10.0) — a breadth PASS would upgrade the thesis. Overlap caveat for early runs: the confirm harness splits 70/30 by time, so on a ~208d sample the OOS tail (~62d) lies INSIDE the Iter-72 selection window — an OOS PASS there is partly re-seen data; the in-sample leg (mostly pre-March, never touched) is the genuinely fresh evidence, so weigh IS-on-extended-history at least as heavily as OOS until post-Jun-12 accrual dominates the tail. Rerun every few weeks as the store grows (bump min_span_days after each rerun so the next run waits for new data); promotion stays human-gated via the paper G1 path (B-PAPER3c), never off a backtest alone."
+}

@@ -704,9 +704,9 @@ def backtest_fetch(
 @app.command()
 def harvest_candles(
     coins: str = "ADA,AVAX,BTC,DOGE,ETH,HYPE,LINK,SOL,TRX,ZEC",
-    intervals: str = "1m,5m,15m",
+    intervals: str = "1m,5m,15m,1h",
     breadth_coins: str = "CRV,ENA,LIT,NEAR,SUI,TON,WLD,XMR,XPL,XRP",
-    breadth_intervals: str = "15m",
+    breadth_intervals: str = "15m,1h",
 ):
     """Append the latest fine-interval candles to the rolling local store (B-HIST).
 

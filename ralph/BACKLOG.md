@@ -696,20 +696,23 @@ each on ≥90d real history (`hlbot confirm` / `hlbot backtest --config`) before
     uncorrelated (n=54 → ±0.27 CI95; claim is "uncorrelated", not "hedge").
     Diversification thesis holds; rerun alongside B-EDGE2b as the store grows.
 
-- [~] **B-EDGE3 — third edge candidate: cross-sectional momentum (`xmom_v1`).**
-  Found (Iter 72): `agents/xmom.py` — rank coins by trailing return, long
-  top-K / short bottom-K dollar-neutral, rank-hysteresis exits (xfund's
-  rotation-churn lesson) + stop/max-hold. On 90d × 1h × 20-coin real history
-  the **14d lookback passes G0 at taker** (IS +19.5bps/122tr, OOS
-  +131.7bps/80tr, full-sample +67.0bps/sharpe +1.80, robust to taker-3×;
-  IS sharpe +0.70 — gate checks OOS sharpe only); original-10 sub-universe
-  also PASSES (IS +9.2/OOS +107.0), breadth-10 alone FAILS (IS −10.0) — the
-  edge lives in the liquid majors set, like breakout. Daily-PnL corr vs
-  breakout-ER on identical frames: **−0.01** (uncorrelated). Caveats (why
-  [~] not promotable): the 14d arm was picked after 7d/3d FAILED walk-forward
-  on the same window (same-window selection); one 90d sample whose OOS is a
-  momentum-friendly pocket; skip_bars=24 HURTS (−14.3) so the lever stays 0.
-  Numbers in PROGRESS Iter 72.
+- [~] **B-EDGE3 — third edge candidate: cross-sectional momentum (`xmom_v1`).
+  Promotion case DEAD on extended history (Iter 74)** — the first
+  pre-registered b_edge3 run (208d × 1h, 2.3× the selection sample) FAILS
+  all three arms: combined IS **−11.8bps**/470tr, original-10 IS −13.1,
+  breadth IS −27.4; the +51/+45 OOS tails are exactly the already-seen
+  momentum pocket the 14d lookback was selected on. Iter 72's +67bps
+  full-sample edge was the pocket, not the strategy (full-sample taker on
+  208d: +4.2bps ≈ nothing). Paper agent stays (zero-risk out-of-time
+  forward test, the cleanest arbiter if the regime returns); promotion bar
+  unchanged and this record now stands in front of it. Original finding
+  (Iter 72): `agents/xmom.py` — rank coins by trailing return, long top-K /
+  short bottom-K dollar-neutral, rank-hysteresis exits + stop/max-hold; on
+  90d × 1h × 20 coins the 14d lookback passed G0 at taker (IS +19.5, OOS
+  +131.7, full +67.0, robust to taker-3×) with same-window-selection
+  caveats — which the extended sample has now confirmed were fatal.
+  Daily-PnL corr vs breakout-ER: −0.01 (uncorrelated). Numbers in PROGRESS
+  Iters 72/74.
   - [x] **B-EDGE3a — paper wiring.** Done (Iter 73): `closes_1h` feed in
     `enrich_view` (sized by `runtime.closes_1h_bars` — shared
     `_closes_feed_bars` helper with the 15m feed; covers `skip_bars`; 0 ⇒
@@ -721,13 +724,18 @@ each on ≥90d real history (`hlbot confirm` / `hlbot backtest --config`) before
     full dollar-neutral book (WLD+LIT long / SOL+ZEC short, ranks 1/2/15/16
     of 16), next tick replayed and held it. G1 paper evidence accumulates
     wherever paper ticks run (~30d sample ≈ mid-July).
-  - [ ] **B-EDGE3b — pre-registered rerun spec.** Freeze `b_edge3.json`
-    (arms: 20-coin lb336, original-10 lb336, breadth-10 lb336, all taker)
-    so reruns are tamper-evident like b_edge2b. Blocker: the experiment
-    runner reads the candle store (1m/5m/15m only) — either add 1h to
-    `harvest-candles` intervals (lets reruns outgrow the rolling API
-    retention) or run xmom at 15m bars with lookback 1344 (= 14d) once the
-    15m store is long enough; decide when freezing.
+  - [x] **B-EDGE3b — pre-registered rerun spec.** Done (Iter 74): decided
+    1h-harvest over 15m-rescaling (native bars = the validated config;
+    rescaling changes exit/stop timing). `harvest-candles` now collects 1h
+    for both universes (DEFAULT_INTERVALS + BREADTH_INTERVALS; loop.sh and
+    the systemd timer pick it up via defaults, CLI-default drift pinned by
+    test) — first harvest captured ~208d (LIT 171.9d worst). Froze
+    `b_edge3.json` (three taker arms, lb336/skip0, vwap_window 337) and ran
+    the first pre-registered verdict same-day on the immediately-ripe
+    extended sample: **all arms FAIL** (record:
+    `results/b_edge3.20260612T124331Z.json`; see umbrella above).
+    min_span_days bumped 150→200 post-run per the frozen protocol — next
+    rerun ~Jul 10 with ~28d of post-selection accrual.
 
 ## P3 — capital formation (see docs/CAPITAL.md)
 

@@ -1,0 +1,417 @@
+{
+  "spec": {
+    "name": "b_edge3",
+    "sha256": "e85d5c06cce8c3d21b8929ec37f29880366529ed611168bd58dbfd625e83a5d7",
+    "agent": "xmom_v1",
+    "interval": "1h",
+    "source": "store",
+    "days": 0.0,
+    "thresholds": {
+      "min_edge_bps": 3.0,
+      "min_sharpe": 1.0,
+      "min_trades": 20
+    },
+    "decision": "The promotion-relevant arm is combined-taker (the xmom_v1 roster/paper configuration): it must keep PASSING G0 as samples lengthen or xmom_v1's promotion case dies. original-taker tracks whether the edge stays concentrated in the liquid-majors set (Iter 72: original-10 PASSED alone); breadth-taker is expected weak/FAIL (Iter 72: IS -10.0) \u2014 a breadth PASS would upgrade the thesis. Overlap caveat for early runs: the confirm harness splits 70/30 by time, so on a ~208d sample the OOS tail (~62d) lies INSIDE the Iter-72 selection window \u2014 an OOS PASS there is partly re-seen data; the in-sample leg (mostly pre-March, never touched) is the genuinely fresh evidence, so weigh IS-on-extended-history at least as heavily as OOS until post-Jun-12 accrual dominates the tail. Rerun every few weeks as the store grows (bump min_span_days after each rerun so the next run waits for new data); promotion stays human-gated via the paper G1 path (B-PAPER3c), never off a backtest alone."
+  },
+  "ran_at": "2026-06-12T12:43:31Z",
+  "forced": false,
+  "code_rev": "d0dac44592b5b06e55a18200dcd7f302c5b2bdb8",
+  "ripeness": {
+    "ripe": true,
+    "min_span_days_required": 150.0,
+    "min_span_days": 171.875,
+    "max_missing_pct": 1.0,
+    "spans": [
+      {
+        "coin": "ADA",
+        "interval": "1h",
+        "span_days": 208.29166666666666,
+        "bars": 5000,
+        "missing": 0,
+        "missing_pct": 0.0
+      },
+      {
+        "coin": "AVAX",
+        "interval": "1h",
+        "span_days": 208.33333333333334,
+        "bars": 5001,
+        "missing": 0,
+        "missing_pct": 0.0
+      },
+      {
+        "coin": "BTC",
+        "interval": "1h",
+        "span_days": 208.33333333333334,
+        "bars": 5001,
+        "missing": 0,
+        "missing_pct": 0.0
+      },
+      {
+        "coin": "DOGE",
+        "interval": "1h",
+        "span_days": 208.33333333333334,
+        "bars": 5001,
+        "missing": 0,
+        "missing_pct": 0.0
+      },
+      {
+        "coin": "ETH",
+        "interval": "1h",
+        "span_days": 208.33333333333334,
+        "bars": 5001,
+        "missing": 0,
+        "missing_pct": 0.0
+      },
+      {
+        "coin": "HYPE",
+        "interval": "1h",
+        "span_days": 208.29166666666666,
+        "bars": 5000,
+        "missing": 0,
+        "missing_pct": 0.0
+      },
+      {
+        "coin": "LINK",
+        "interval": "1h",
+        "span_days": 208.33333333333334,
+        "bars": 5001,
+        "missing": 0,
+        "missing_pct": 0.0
+      },
+      {
+        "coin": "SOL",
+        "interval": "1h",
+        "span_days": 208.33333333333334,
+        "bars": 5001,
+        "missing": 0,
+        "missing_pct": 0.0
+      },
+      {
+        "coin": "TRX",
+        "interval": "1h",
+        "span_days": 208.33333333333334,
+        "bars": 5001,
+        "missing": 0,
+        "missing_pct": 0.0
+      },
+      {
+        "coin": "ZEC",
+        "interval": "1h",
+        "span_days": 208.33333333333334,
+        "bars": 5001,
+        "missing": 0,
+        "missing_pct": 0.0
+      },
+      {
+        "coin": "CRV",
+        "interval": "1h",
+        "span_days": 208.33333333333334,
+        "bars": 5001,
+        "missing": 0,
+        "missing_pct": 0.0
+      },
+      {
+        "coin": "ENA",
+        "interval": "1h",
+        "span_days": 208.33333333333334,
+        "bars": 5001,
+        "missing": 0,
+        "missing_pct": 0.0
+      },
+      {
+        "coin": "LIT",
+        "interval": "1h",
+        "span_days": 171.875,
+        "bars": 4126,
+        "missing": 0,
+        "missing_pct": 0.0
+      },
+      {
+        "coin": "NEAR",
+        "interval": "1h",
+        "span_days": 208.33333333333334,
+        "bars": 5001,
+        "missing": 0,
+        "missing_pct": 0.0
+      },
+      {
+        "coin": "SUI",
+        "interval": "1h",
+        "span_days": 208.33333333333334,
+        "bars": 5001,
+        "missing": 0,
+        "missing_pct": 0.0
+      },
+      {
+        "coin": "TON",
+        "interval": "1h",
+        "span_days": 208.29166666666666,
+        "bars": 5000,
+        "missing": 0,
+        "missing_pct": 0.0
+      },
+      {
+        "coin": "WLD",
+        "interval": "1h",
+        "span_days": 208.33333333333334,
+        "bars": 5001,
+        "missing": 0,
+        "missing_pct": 0.0
+      },
+      {
+        "coin": "XMR",
+        "interval": "1h",
+        "span_days": 189.79166666666666,
+        "bars": 4556,
+        "missing": 0,
+        "missing_pct": 0.0
+      },
+      {
+        "coin": "XPL",
+        "interval": "1h",
+        "span_days": 208.33333333333334,
+        "bars": 5001,
+        "missing": 0,
+        "missing_pct": 0.0
+      },
+      {
+        "coin": "XRP",
+        "interval": "1h",
+        "span_days": 208.33333333333334,
+        "bars": 5001,
+        "missing": 0,
+        "missing_pct": 0.0
+      }
+    ]
+  },
+  "arms": [
+    {
+      "name": "combined-taker",
+      "coins": [
+        "ADA",
+        "AVAX",
+        "BTC",
+        "DOGE",
+        "ETH",
+        "HYPE",
+        "LINK",
+        "SOL",
+        "TRX",
+        "ZEC",
+        "CRV",
+        "ENA",
+        "LIT",
+        "NEAR",
+        "SUI",
+        "TON",
+        "WLD",
+        "XMR",
+        "XPL",
+        "XRP"
+      ],
+      "vwap_window": 337,
+      "prefer": "taker",
+      "maker_fill": "optimistic",
+      "config": {
+        "lookback_bars": 336,
+        "skip_bars": 0
+      },
+      "confirmed": false,
+      "reasons": [
+        "in-sample edge -11.8bps < +3bps"
+      ],
+      "robust_to_2x_slippage": true,
+      "n_frames": 5001,
+      "in_sample": {
+        "name": "in-sample(taker)",
+        "net_pnl": -11.552402181487814,
+        "edge_bps": -11.815139034223419,
+        "sharpe": -0.588165647914104,
+        "n_trades": 470
+      },
+      "out_of_sample": {
+        "name": "oos(taker)",
+        "net_pnl": 17.816975888273763,
+        "edge_bps": 51.44417930026662,
+        "sharpe": 1.5591586272316593,
+        "n_trades": 166
+      },
+      "cost_ladder": [
+        {
+          "name": "maker",
+          "net_pnl": 18.250738010993715,
+          "edge_bps": 13.868385175728044,
+          "sharpe": 0.6080459810767312,
+          "n_trades": 638
+        },
+        {
+          "name": "taker-1x",
+          "net_pnl": 5.533482990506249,
+          "edge_bps": 4.19072038888691,
+          "sharpe": 0.20567797699990129,
+          "n_trades": 640
+        },
+        {
+          "name": "taker-2x",
+          "net_pnl": 2.8926571742546825,
+          "edge_bps": 2.190721538143993,
+          "sharpe": 0.12219689423763679,
+          "n_trades": 640
+        },
+        {
+          "name": "taker-3x",
+          "net_pnl": 1.022154812273107,
+          "edge_bps": 0.7796311736505507,
+          "sharpe": 0.06358550747972247,
+          "n_trades": 644
+        }
+      ]
+    },
+    {
+      "name": "original-taker",
+      "coins": [
+        "ADA",
+        "AVAX",
+        "BTC",
+        "DOGE",
+        "ETH",
+        "HYPE",
+        "LINK",
+        "SOL",
+        "TRX",
+        "ZEC"
+      ],
+      "vwap_window": 337,
+      "prefer": "taker",
+      "maker_fill": "optimistic",
+      "config": {
+        "lookback_bars": 336,
+        "skip_bars": 0
+      },
+      "confirmed": false,
+      "reasons": [
+        "in-sample edge -13.1bps < +3bps"
+      ],
+      "robust_to_2x_slippage": true,
+      "n_frames": 5001,
+      "in_sample": {
+        "name": "in-sample(taker)",
+        "net_pnl": -9.676108137670507,
+        "edge_bps": -13.129975191769942,
+        "sharpe": -0.6367540048873245,
+        "n_trades": 348
+      },
+      "out_of_sample": {
+        "name": "oos(taker)",
+        "net_pnl": 13.447384292160628,
+        "edge_bps": 45.32766261577113,
+        "sharpe": 1.8832532344019755,
+        "n_trades": 132
+      },
+      "cost_ladder": [
+        {
+          "name": "maker",
+          "net_pnl": 10.192718181934914,
+          "edge_bps": 10.110486590162363,
+          "sharpe": 0.4859114492373511,
+          "n_trades": 472
+        },
+        {
+          "name": "taker-1x",
+          "net_pnl": 5.227529440853187,
+          "edge_bps": 5.140712153465244,
+          "sharpe": 0.25579317823675946,
+          "n_trades": 476
+        },
+        {
+          "name": "taker-2x",
+          "net_pnl": 2.4205253418995873,
+          "edge_bps": 2.368297882054369,
+          "sharpe": 0.12979625950402407,
+          "n_trades": 478
+        },
+        {
+          "name": "taker-3x",
+          "net_pnl": -7.205263834394636,
+          "edge_bps": -6.919773182446692,
+          "sharpe": -0.2991569572675655,
+          "n_trades": 486
+        }
+      ]
+    },
+    {
+      "name": "breadth-taker",
+      "coins": [
+        "CRV",
+        "ENA",
+        "LIT",
+        "NEAR",
+        "SUI",
+        "TON",
+        "WLD",
+        "XMR",
+        "XPL",
+        "XRP"
+      ],
+      "vwap_window": 337,
+      "prefer": "taker",
+      "maker_fill": "optimistic",
+      "config": {
+        "lookback_bars": 336,
+        "skip_bars": 0
+      },
+      "confirmed": false,
+      "reasons": [
+        "in-sample edge -27.4bps < +3bps",
+        "oos sharpe +0.21 < 1.0",
+        "edge does not survive 2x taker slippage (info; not required if maker-only)"
+      ],
+      "robust_to_2x_slippage": false,
+      "n_frames": 5001,
+      "in_sample": {
+        "name": "in-sample(taker)",
+        "net_pnl": -20.54707345827638,
+        "edge_bps": -27.376969853006514,
+        "sharpe": -1.0794818326114703,
+        "n_trades": 342
+      },
+      "out_of_sample": {
+        "name": "oos(taker)",
+        "net_pnl": 1.7599867701860574,
+        "edge_bps": 4.366470915619459,
+        "sharpe": 0.210525160914689,
+        "n_trades": 194
+      },
+      "cost_ladder": [
+        {
+          "name": "maker",
+          "net_pnl": -10.195679575364633,
+          "edge_bps": -9.173684658903916,
+          "sharpe": -0.3208959938567565,
+          "n_trades": 522
+        },
+        {
+          "name": "taker-1x",
+          "net_pnl": -17.03452069914793,
+          "edge_bps": -15.249342714183689,
+          "sharpe": -0.5521691844817157,
+          "n_trades": 524
+        },
+        {
+          "name": "taker-2x",
+          "net_pnl": -19.404477907712558,
+          "edge_bps": -17.341376085810417,
+          "sharpe": -0.6351579654623698,
+          "n_trades": 528
+        },
+        {
+          "name": "taker-3x",
+          "net_pnl": -17.161385965845366,
+          "edge_bps": -15.168310962890851,
+          "sharpe": -0.5512678303115599,
+          "n_trades": 532
+        }
+      ]
+    }
+  ]
+}

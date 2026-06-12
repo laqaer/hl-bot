@@ -3966,3 +3966,79 @@ breadth fix did). B-EDGE2f at ≥30d paper books (~Jul 8); xmom's paper
 card hits 30d ~Jul 12. Idle queue unchanged (B-SCALE doc on real G2
 evidence; per-agent funding clamp if mixed funding-sign agents ever share
 the live book).
+
+## Iteration 74 — 2026-06-12 — B-EDGE3b: 1h harvest + frozen xmom rerun spec — first verdict KILLS the promotion case
+
+**Ripeness checks** (per-iteration readout): b_edge2b NOT RIPE (15m span
+52.3d < 60d, ETA ~Jun 20); b_g014 NOT RIPE (1m span 3.9d < 14d, ETA
+~Jun 26). Store healthy (0 missing bars on both spec universes); loop
+harvest topped everything up this session (15m → 52.6d, 1m → 4.0d).
+
+**Why this.** Iter 73's named next step. xmom_v1's G0 PASS (Iter 72) was
+explicitly caveated as same-window-selected; the rerun spec is how that
+claim gets adjudicated honestly. The B-EDGE3b blocker was a data decision:
+the store had no 1h series (harvester collected 1m/5m/15m only).
+
+**Decision: 1h-harvest over 15m-rescaling.** The validated config is
+native 1h bars; rescaling to 15m (lb=1344) changes exit/stop evaluation
+cadence — a different experiment, not a rerun. And 1h retention turned
+out to be ~5000 bars ≈ **208d**, so the first harvest captures ~7 months
+at once and reruns then outgrow API retention like breakout's breadth fix.
+
+**Changed.**
+- `backtest/store.py`: `DEFAULT_INTERVALS` + `BREADTH_INTERVALS` grow
+  "1h" (both universes — the spec judges the combined 20-coin book).
+  loop.sh and the systemd harvest timer pick it up automatically (both
+  call with CLI defaults); `test_breadth_universe_cli_defaults_match_
+  store_constants` now also pins the main `intervals` default against
+  `DEFAULT_INTERVALS` (that drift hole was open) + pins "1h" in both.
+- First 1h harvest live-fired: 18/20 coins at 208.3d (5001 bars), LIT
+  171.9d, XMR 189.8d — zero missing bars, all contiguous.
+- `configs/experiments/b_edge3.json` frozen: xmom_v1, 1h, source=store,
+  days=0, vwap_window 337 (= lb+skip+1), three taker arms (combined-20 /
+  original-10 / breadth-10, all lb336/skip0 — skip pinned because
+  skip_bars=24 HURT in Iter 72), maker excluded by design. Decision rule
+  discloses the overlap caveat up front: on a ~208d sample the 70/30
+  walk-forward's OOS tail (~62d) lies INSIDE the Iter-72 selection window,
+  so IS-on-extended-history (mostly pre-March, never touched) is the
+  genuinely fresh evidence. Pin test `test_b_edge3_spec_pins` mirrors the
+  b_edge2b one.
+
+**The verdict (pre-registered, ripe, not forced — record
+`configs/experiments/results/b_edge3.20260612T124331Z.json`):**
+- combined-taker **FAIL**: IS **−11.8bps**/470tr/sharpe −0.59, OOS
+  +51.4/166tr/+1.56; full-sample taker +4.2bps (Iter 72 printed +67.0 on
+  90d). robust-to-2× True but the gate fails on IS sign.
+- original-taker **FAIL**: IS −13.1/348tr, OOS +45.3/132tr/+1.88.
+- breadth-taker **FAIL**: IS −27.4, OOS +4.4, full −15.2, not robust.
+
+**Honest read.** The ~146d IS leg is mostly out-of-selection history and
+xmom LOSES on it across every universe; the fat OOS tails are exactly the
+already-seen June momentum pocket the 14d lookback was picked on. By the
+spec's own frozen weighting, Iter 72's edge was the pocket, not the
+strategy — **the promotion case is dead on this evidence.** This is the
+pre-registration machinery doing precisely what it was built for, one
+iteration after the candidate looked promotable. xmom_v1 stays a paper
+agent (zero-risk out-of-time forward test — the cleanest arbiter if the
+regime returns); the FAIL record now stands in front of its promotion
+bar. min_span_days bumped 150→200 post-run per the frozen protocol (next
+rerun ~Jul 10, when ~28d of post-selection data exists; the recorded
+sha256 pins the spec as it ran).
+
+**Evidence.** 480 → **481 tests pass**; ruff clean. Harvest + experiment
+both live-fired on the real API (numbers above); verdict record committed
+beside the specs.
+
+**Found.** (a) HL 1h candle retention ≈ 208d (5000-bar pattern holds).
+(b) LIT has only ~172d of 1h history (listed later) — it is the
+min_span_days binding coin for b_edge3 ripeness.
+
+**What's next (loop).** Per-iteration: the two `--check-only` readouts
+(b_edge2b ~Jun 20 FIRST — after it runs, commit the auto-written record +
+bump min_span_days; b_g014 ~Jun 26; b_edge3 ~Jul 10). B-EDGE2f at ≥30d
+paper books (~Jul 8); xmom's paper card hits 30d ~Jul 12 (still worth
+reading even with the promotion case dead — forward test is out-of-time).
+Idle queue unchanged (B-SCALE doc on real G2 evidence; per-agent funding
+clamp if mixed funding-sign agents ever share the live book). The edge
+hunt (P0.6) is back to two candidates: twap_mr (proven, live) +
+breakout-ER (paper, b_edge2b pending).

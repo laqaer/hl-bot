@@ -331,6 +331,23 @@ def test_b_edge2b_spec_pins():
         assert a.config["lookback_bars"] == 384 and a.config["exit_lookback_bars"] == 96
 
 
+def test_b_edge3_spec_pins():
+    spec = load_spec(SPECS_DIR / "b_edge3.json")
+    assert (spec.agent, spec.interval, spec.source, spec.days) == ("xmom_v1", "1h", "store", 0.0)
+    assert spec.min_span_days >= 150  # bumped after each rerun so the next waits for fresh data
+    assert spec.max_missing_pct == 1.0
+    assert spec.vwap_window == 337  # xmom needs window >= lookback+skip+1 to carry closes
+    assert all(a.prefer == "taker" for a in spec.arms)  # maker fills aren't momentum evidence
+    by_name = {a.name: a for a in spec.arms}
+    assert set(by_name) == {"combined-taker", "original-taker", "breadth-taker"}
+    assert len(spec.arm_coins(by_name["combined-taker"])) == 20
+    assert len(spec.arm_coins(by_name["original-taker"])) == 10
+    assert len(spec.arm_coins(by_name["breadth-taker"])) == 10
+    for a in spec.arms:
+        # lb=336 was the selected knob; skip stays 0 (skip_bars=24 HURT, Iter 72)
+        assert a.config["lookback_bars"] == 336 and a.config["skip_bars"] == 0
+
+
 # ---------------------------------------------------------------------------
 # experiment_record / write_experiment_record — the verdict must outlive stdout
 # ---------------------------------------------------------------------------
