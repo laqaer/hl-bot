@@ -715,6 +715,7 @@ def backtest(
     vwap_window: int = 60,
     source: str = "api",
     funding: bool = True,
+    maker_fill: str = "optimistic",
 ):
     """Replay an agent over real Hyperliquid history with an explicit cost model.
 
@@ -728,6 +729,11 @@ def backtest(
     retention-capped API (B-HIST2): --days trims to the most recent N days,
     --days 0 uses everything stored, and --no-funding skips the funding fetch
     (price-only economics) when the network is down.
+
+    --maker-fill resting replays the live maker lifecycle honestly (entries
+    rest and only fill if price comes to them, stale quotes cancel, exits pay
+    taker) instead of the default optimistic instant-fill-at-mid. The truth
+    for a live maker book lies between the two.
     """
     from ..backtest.engine import Backtester, CostModel
 
@@ -742,6 +748,9 @@ def backtest(
     factories = _backtest_factories(cfg)
     if agent not in factories:
         console.print(f"[red]unknown agent {agent}; choose from {list(factories)}[/red]")
+        raise typer.Exit(1)
+    if maker_fill not in ("optimistic", "resting"):
+        console.print(f"[red]unknown maker-fill {maker_fill!r}; choose optimistic or resting[/red]")
         raise typer.Exit(1)
 
     frames = _load_backtest_frames(
@@ -761,18 +770,19 @@ def backtest(
     table = Table(title=title)
     for col in ("exec", "net_pnl", "edge_bps", "trades", "win", "sharpe", "maxDD"):
         table.add_column(col)
+    fill_notes: list[str] = []
     for is_maker in modes:
         from ..db.schema import init_db as _init
         conn = _init(":memory:")
-        bt = Backtester(CostModel(maker=is_maker), conn=conn,
-                        starting_capital=starting_capital)
+        cost = CostModel(maker=is_maker, maker_fill=maker_fill)
+        bt = Backtester(cost, conn=conn, starting_capital=starting_capital)
         res = bt.run(factories[agent](conn), frames)
         # recompute curve stats at the right cadence
         from ..backtest.engine import _curve_stats
         sh, dd, _ = _curve_stats(res.equity_curve, periods_per_year=per_year)
         sc = res.scorecard
         table.add_row(
-            "maker" if is_maker else "taker",
+            ("maker-rest" if cost.resting else "maker") if is_maker else "taker",
             f"{sc.net_pnl:+.2f}",
             "—" if sc.edge_bps is None else f"{sc.edge_bps:+.1f}",
             str(sc.n_trades),
@@ -780,7 +790,15 @@ def backtest(
             "—" if sh is None else f"{sh:+.2f}",
             "—" if dd is None else f"{dd*100:+.1f}%",
         )
+        st = res.maker_fill_stats
+        if st and st.get("rested"):
+            fill_notes.append(
+                f"maker-rest quotes: {st['rested']} rested, {st['filled']} filled "
+                f"({st['filled']/st['rested']*100:.0f}%), {st['expired']} expired/cancelled"
+            )
     console.print(table)
+    for note in fill_notes:
+        console.print(f"[dim]{note}[/dim]")
     console.print("[dim]taker→maker gap ≈ the spread/fee tax this strategy is paying.[/dim]")
 
 
@@ -798,6 +816,7 @@ def confirm(
     config: str = "",
     vwap_window: int = 60,
     source: str = "api",
+    maker_fill: str = "optimistic",
 ):
     """Confirm a strategy through the G0 gate: walk-forward + cost stress.
 
@@ -807,6 +826,9 @@ def confirm(
     (--days 0 = everything stored); funding is always fetched — a G0 verdict
     with funding stripped out would be dishonest. --min-trades floors the
     per-split sample size: a verdict from a handful of trades is noise.
+    --maker-fill resting makes every maker-priced arm replay the live maker
+    lifecycle (rest → fill only on cross → stale cancel; exits taker) instead
+    of the optimistic instant-fill upper bound.
     """
     from ..backtest.confirm import confirm_strategy
 
@@ -821,6 +843,9 @@ def confirm(
     if agent not in factories:
         console.print(f"[red]unknown agent {agent}; choose from {list(factories)}[/red]")
         raise typer.Exit(1)
+    if maker_fill not in ("optimistic", "resting"):
+        console.print(f"[red]unknown maker-fill {maker_fill!r}; choose optimistic or resting[/red]")
+        raise typer.Exit(1)
     per_year = {"1m": 525_600, "5m": 105_120, "15m": 35_040,
                 "1h": 8_760, "4h": 2_190, "1d": 365}.get(interval, 8_760)
     frames = _load_backtest_frames(
@@ -829,7 +854,7 @@ def confirm(
     res = confirm_strategy(
         factories[agent], frames, prefer=prefer,
         min_edge_bps=min_edge_bps, min_sharpe=min_sharpe, min_trades=min_trades,
-        periods_per_year=per_year,
+        periods_per_year=per_year, maker_fill=maker_fill,
     )
     console.print(res.summary())
     if not res.confirmed:

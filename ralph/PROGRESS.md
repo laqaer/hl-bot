@@ -2503,3 +2503,87 @@ for momentum; all promotion-relevant numbers quoted taker.
 reruns now three-armed (original / breadth / ER-filtered combined). B-EDGE2f
 (ER-arm correlation + paper A/B readout) once the paper books have ≥30d.
 B12j / B14a if idle.
+
+## Iteration 50 — 2026-06-12 — B-MAKERFILL: honest maker-fill model; the twap_mr maker case was a fill-assumption artifact
+
+**What.** B-G014 still blocked (1m store ~3.7d). Closed the highest-leverage
+honest-measurement gap instead: the backtester's maker mode filled every order
+instantly at mid with maker fees — an admitted "optimistic upper bound" — yet
+it was the entire evidence base for B-MAKER-LIVE ("maker +5.4 vs taker −0.0bps
+at the live config") and for every maker-arm G0 number. Shipped
+`CostModel(maker_fill="resting")` (+ `--maker-fill resting` on
+`hlbot backtest`/`confirm`): a faithful replica of the live `--execution
+maker` lifecycle (`exec/maker.py`) — entries rest as post-only limits at the
+decision bar's mid, fill only when a LATER bar's mid trades strictly through
+the limit (equality = unknowable queue position), stale quotes cancel after
+1800s (live `DEFAULT_MAX_REST_S`), one working quote per coin (live
+`has_resting_order`), fills land before `decide()` (live WS userFills
+fold-in), and exits pay full taker fee+slip (the live proposal keeps exits
+taker). Fill stats (rested/filled/expired) surface in results. Default
+behavior byte-identical (`maker_fill="optimistic"`).
+
+**Results (twap_mr_v1, 10-coin universe, store data, funding fetched).**
+- **Exact live config (1m w=60, 3.7d, 5335 frames):** taker −1.2bps (1044 tr)
+  · maker-optimistic **+4.2** (1042 tr, win 68%) · maker-rest **−4.5** (784
+  tr, win 57%, 473 quotes / 83% filled / 80 expired). G0 confirm at
+  prefer=maker-rest: **❌ FAIL** (IS −4.7 / OOS −3.6; the Iter-30 maker PASS
+  was the optimistic model). Decomposition (counterfactual maker-priced
+  exits): resting entries alone −1.7bps ⇒ **entry adverse selection ≈ −6bps,
+  taker exit leg ≈ −2.8bps** of the optimistic→honest gap.
+- **w=240 arm (B-WIN candidate, 1m, 3.7d):** taker +2.4 · optimistic +8.2 ·
+  maker-rest **+0.3** (287 tr, 83% filled). The 4h window survives honest
+  fills but its maker advantage over taker evaporates.
+- **15m w=16, 52.3d (long sample):** taker −4.3 · optimistic +1.2 ·
+  maker-rest **−13.9** (win 48%, 1930 quotes / 57% filled / 43% expired —
+  the 1800s TTL is only 2 bars at 15m, and close-only fill detection is
+  crudest at coarse bars; treat this arm as direction-only).
+
+**Interpretation.** The mechanism is structural, not a window artifact: a
+passive limit fading a deviation fills exactly when the deviation keeps
+growing (the losers) and misses the instant reversions (the winners) — the
+textbook adverse selection of maker execution for mean reversion. The
+optimistic model assumed that selection away, which is why "maker" looked
+like pure fee savings. REVIEW C1's "the taker tax is the structural bleed"
+now has a corrected corollary: you cannot simply post your way out of it;
+the spread you stop paying comes back as adverse selection.
+
+**Honesty about bounds.** Resting mode is a PESSIMISTIC bound: close-only
+mids miss intrabar wick fills, and those misses skew toward winners (price
+touched the limit and reverted within the bar). Truth ∈ (−4.5, +4.2) at the
+live config — the bracket straddles zero, so B-MAKER-LIVE is *unproven*, not
+disproven. But the only positive number was the upper bound, so
+evidence-before-capital flips the standing recommendation: do NOT enable
+`--execution maker` live (deploy/README §Going-live updated; B-MAKER-LIVE
+re-gated on maker-rest/B-FILL2 evidence; B-G014 maker arms must use
+`--maker-fill resting`). Filed **B-FILL2** (intrabar h/l fill detection from
+the store's candles) to tighten the bracket. Breakout promotion numbers are
+unaffected (always quoted taker — the "maker fills optimistic for momentum"
+caveat is now quantified). Carry pruning stands a fortiori (already FAIL on
+the optimistic bound).
+
+**Changed (code).** `backtest/engine.py`: `CostModel.maker_fill`
+("optimistic"/"resting", validated) + `maker_ttl_s` + exit-leg cost
+properties; `_Resting` book + `_process_resting` (stale-first, then
+strict-cross fill at the limit); `_open` split into rest/fill paths
+(`_fill_open` takes an explicit fill px; flip/average semantics unchanged);
+`run()` processes quotes before decide; `BacktestResult.maker_fill_stats`.
+`backtest/confirm.py`: `maker_fill` threaded through the gate (scenario named
+`maker-rest`). `cli/main.py`: `--maker-fill` on backtest+confirm with early
+validation + fill-stats print. deploy/README: going-live steps judge on taker
+or maker-rest.
+
+**Evidence.** 286 → **299 tests pass** (new `tests/test_maker_fill.py`, 13:
+cross/no-cross/equality, TTL expiry incl. cancel-beats-same-bar-cross, one
+quote per coin, taker exit pricing, fill-before-decide visibility, optimistic
+default unchanged, taker mode ignores the flag, bad value rejected, confirm
+threading). `ruff check src tests scripts` clean. All runs reproducible:
+`hlbot backtest --agent twap_mr_v1 --coins ADA,…,ZEC --interval 1m
+--vwap-window 60 --days 0 --source store --no-compare --maker --maker-fill
+resting`; store topped up this iteration (40/40 pairs ok, 1m last bar <1h
+old).
+
+**What's next (loop).** B-G014 when 1m span ≥14d (~Jun 23–26) — now
+taker-judged with maker-rest arms. B-FILL2 (intrabar h/l fills) is the
+natural next slice and also benefits breakout if a maker variant is ever
+considered. B-EDGE2b three-armed reruns as the store grows. B12j / B14a if
+idle.

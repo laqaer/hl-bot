@@ -157,6 +157,22 @@ Keep it ruthlessly prioritized: the top item should always be the highest-levera
   agent already promoted in agent_state can't be re-promoted off a stale
   YAML `mode:`. Live-fire verified both directions on scratch DBs.
 
+- [x] **B-MAKERFILL — Honest maker-fill model in the backtester.** Done
+  (Iter 50): `CostModel(maker_fill="resting")` + `--maker-fill resting` on
+  backtest/confirm replay the live maker lifecycle (entries rest at the
+  decision bar's mid, fill only when a later bar's mid trades strictly
+  through, 1800s stale cancel like `exec/maker.py`, one quote per coin,
+  exits taker); fill stats (rested/filled/expired) reported. Headline: the
+  optimistic maker model was carrying the whole twap_mr maker case — live
+  config flips +4.2 → −4.5bps under honest fills (G0 FAIL, IS −4.7/OOS −3.6).
+  Numbers in PROGRESS Iter 50; B-MAKER-LIVE re-gated on maker-rest evidence.
+- [ ] **B-FILL2 — Intrabar high/low fill detection.** The resting model judges
+  fills on close-only mids — pessimistic (misses intrabar touches that would
+  fill at the limit). Store candles carry h/l: extend `Frame` with per-bar
+  high/low (mind cache compatibility) and fill resting quotes on wick-through.
+  Tightens the optimistic↔resting bracket; do before trusting any maker-rest
+  number for a promotion (currently they only need to be trusted for
+  REJECTIONS, where pessimism is safe).
 - [x] **B6/B7 — Per-agent funding attribution + Sharpe.** Done: funding split to
   the agent holding the coin at funding time (scoring includes it in net/edge);
   per-agent Sharpe from daily PnL so sharpe-gates evaluate. Tested. (Iteration 7.)
@@ -310,14 +326,18 @@ each on ≥90d real history (`hlbot confirm` / `hlbot backtest --config`) before
   store 1m span ≥ ~14d** (harvester started 2026-06-12 → ETA ~2026-06-26; check
   spans via `hlbot harvest-candles`). Run `hlbot confirm --agent twap_mr_v1
   --coins ADA,...,ZEC --interval 1m --vwap-window 60 --days 0 --source store
-  --prefer maker`. A PASS on ≥2 weeks is the durable-edge evidence B-MAKER-LIVE
-  and B-SCALE are waiting on; a FAIL means the Iter-29 PASS was the recent
-  pocket, not the strategy. **Run a second arm with `--config
-  '{"stop_loss_pct":0.03}'`** (B-EXIT's robust lever, Iter 31) **and a third
-  arm with `--vwap-window 240`** (B-WIN's 4h window, Iter 33 — the strongest
-  lever so far; test arms SEPARATELY, the stop+window combo is anti-synergistic):
-  whichever passes AND beats baseline on the multi-week sample, propose the
-  default flip to the operator (live strategy change — not loop-flippable).
+  --prefer taker` **and judge any maker claim with `--prefer maker
+  --maker-fill resting`** (Iter 50: the optimistic maker model is an upper
+  bound that flipped sign under honest fills — a PASS that needs optimistic
+  maker pricing is not evidence). A PASS on ≥2 weeks is the durable-edge
+  evidence B-MAKER-LIVE and B-SCALE are waiting on; a FAIL means the Iter-29
+  PASS was the recent pocket, not the strategy. **Run a second arm with
+  `--config '{"stop_loss_pct":0.03}'`** (B-EXIT's robust lever, Iter 31)
+  **and a third arm with `--vwap-window 240`** (B-WIN's 4h window, Iter 33 —
+  the strongest lever so far; test arms SEPARATELY, the stop+window combo is
+  anti-synergistic): whichever passes AND beats baseline on the multi-week
+  sample, propose the default flip to the operator (live strategy change —
+  not loop-flippable).
   _Store continuity now guarded by loop.sh per-iteration top-up (Iter 33: the
   systemd harvest timer was found NOT running on the loop box — no root; a
   >3.5d gap would have silently invalidated this sample)._
@@ -331,13 +351,21 @@ each on ≥90d real history (`hlbot confirm` / `hlbot backtest --config`) before
   maker) but is inert at 15m and unneeded at 1m; size_by_signal dampens losses
   where edge<0 but cut net profit 42% at 1m where edge>0. **Both stay default
   OFF; no live change.**
-- [B] **B-MAKER-LIVE — Route live entries through maker execution.** *Human-gated
-  (live change).* The 1m exact-replica backtest: maker +5.4bps vs taker −0.0bps —
-  the taker tax is the whole edge at live cadence. The machinery exists and is
-  tested (`--execution maker`, B2b + B10b instant fill detection). Operator: set
-  `HLBOT_TICK_ARGS="--live --execution maker"` in /etc/hl-bot/env per
-  deploy/README.md §4 and watch the first session at current size. Risk: maker
-  entries can miss fills in fast moves (fewer trades, not losses; exits stay taker).
+- [B] **B-MAKER-LIVE — Route live entries through maker execution.** *Was
+  human-gated; now ALSO evidence-blocked (Iter 50).* The "+5.4bps maker vs
+  −0.0 taker" case was built on the optimistic fill model (every quote fills
+  instantly at mid). The honest resting-fill replica (`--maker-fill resting`,
+  B-MAKERFILL) flips it: at the exact live config (1m w=60, same window)
+  maker-rest is **−4.5bps vs taker −1.2** — adverse selection (fade quotes
+  fill exactly when price keeps moving against them; instant-reversion
+  winners never fill, win 68%→57%) costs ~6bps and taker exits ~3bps more.
+  Same direction at w=240 (+8.2 optimistic → +0.3 rest vs +2.4 taker) and
+  15m/52d (+1.2 → −13.9). The bounds bracket zero (resting is pessimistic:
+  close-only data misses wick fills, which skew toward winners — B-FILL2
+  tightens this), so the case is UNPROVEN, not disproven — but
+  evidence-before-capital says do NOT flip until a maker-rest (or
+  B-FILL2-tightened) backtest beats taker on a multi-week sample (B-G014
+  arms). Machinery (`--execution maker`, B2b/B10b) stays built and tested.
 - [x] **B-SIZE — A/B `size_by_signal`.** Done as part of Iter 29 (see B-CAD):
   helps only when the strategy is losing; at the live config it cut profit 42%
   (winners get sized down too). Keep OFF. The vol-targeting variant is pruned

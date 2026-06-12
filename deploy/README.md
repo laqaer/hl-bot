@@ -76,11 +76,20 @@ so the trader stays light.
 ## Going live (gated)
 
 1. Confirm a strategy on real history:
-   `sudo -u hlbot bash -c 'cd /opt/hl-bot && uv run hlbot backtest-fetch ... && uv run hlbot confirm --agent <a> --prefer maker'`
+   `sudo -u hlbot bash -c 'cd /opt/hl-bot && uv run hlbot backtest-fetch ... && uv run hlbot confirm --agent <a> --prefer taker'`
+   Judge maker-based verdicts only with `--prefer maker --maker-fill resting`:
+   the default maker pricing assumes every quote fills instantly (an upper
+   bound); `resting` replays the real lifecycle (fill only if price comes to
+   the quote, stale cancel, taker exits).
 2. Place the API wallet at `~hlbot/.config/hermes/hl-bot-api-wallet.env` (chmod 600).
 3. Enable the agent to `live_small` in `agent_state` (see `docs/GO_LIVE.md`).
-4. Set `HLBOT_TICK_ARGS="--live --execution maker"` in `/etc/hl-bot/env`, then
-   `systemctl restart hlbot-tick.timer`. Watch the first ticks closely.
+4. (Only with `--maker-fill resting` evidence in hand) set
+   `HLBOT_TICK_ARGS="--live --execution maker"` in `/etc/hl-bot/env`, then
+   `systemctl restart hlbot-tick.timer`. Watch the first ticks closely. As of
+   2026-06-12 the twap_mr maker case does not survive fill realism: the
+   optimistic model says +4.2bps, the resting lower bound −4.5bps (adverse
+   selection — see PROGRESS Iter 50). The bracket straddles zero, so there is
+   no positive evidence to flip on.
 
 The mean-reversion VWAP window defaults to 60×1m (the historical config). To
 flip it (e.g. to the 4h window once B-G014's multi-week evidence confirms

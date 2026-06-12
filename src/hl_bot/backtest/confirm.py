@@ -97,15 +97,17 @@ def confirm_strategy(
     min_trades: int = 20,
     periods_per_year: float = 8_760,
     starting_capital: float = 1_000.0,
+    maker_fill: str = "optimistic",
 ) -> ConfirmationResult:
     """Run the walk-forward + cost-stress confirmation. ``prefer`` ('taker' or
     'maker') selects the execution basis the PASS/FAIL verdict is judged on.
     ``min_trades`` is the per-split sample floor: each of in-sample and
     out-of-sample must contain at least this many trades or the verdict is
-    FAIL regardless of edge."""
+    FAIL regardless of edge. ``maker_fill`` ('optimistic'/'resting') sets the
+    maker fill realism for every maker-priced arm (see ``CostModel``)."""
     n = len(frames)
     reasons: list[str] = []
-    pref_cost = CostModel(maker=(prefer == "maker"))
+    pref_cost = CostModel(maker=(prefer == "maker"), maker_fill=maker_fill)
 
     if n < 10:
         empty = ScenarioResult("insufficient", 0.0, None, None, 0)
@@ -117,13 +119,15 @@ def confirm_strategy(
     split = max(1, int(n * (1 - oos_fraction)))
     in_frames, oos_frames = frames[:split], frames[split:]
 
-    in_sample = _run(factory, in_frames, pref_cost, f"in-sample({prefer})",
+    pref_label = "maker-rest" if pref_cost.resting else prefer
+    in_sample = _run(factory, in_frames, pref_cost, f"in-sample({pref_label})",
                      periods_per_year, starting_capital)
-    out_of_sample = _run(factory, oos_frames, pref_cost, f"oos({prefer})",
+    out_of_sample = _run(factory, oos_frames, pref_cost, f"oos({pref_label})",
                          periods_per_year, starting_capital)
 
+    maker_name = "maker-rest" if maker_fill == "resting" else "maker"
     ladder = [
-        _run(factory, frames, CostModel(maker=True), "maker",
+        _run(factory, frames, CostModel(maker=True, maker_fill=maker_fill), maker_name,
              periods_per_year, starting_capital),
         _run(factory, frames, CostModel(maker=False, slippage_bps=2.0), "taker-1x",
              periods_per_year, starting_capital),

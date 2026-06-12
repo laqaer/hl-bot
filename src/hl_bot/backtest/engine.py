@@ -20,9 +20,11 @@ Assumptions (documented so results are interpretable, not hidden):
   annualized). Funding is folded into a position's realized PnL on close — this
   also fixes the live measurement gap where per-agent scorecards ignore funding.
 * Orders always fill at ``mid`` adjusted by slippage (no partial fills, no queue
-  position). Maker mode assumes the post-only limit rests and fills at mid with
-  zero slippage — an optimistic but useful upper bound for "what if we stopped
-  crossing the spread".
+  position). Maker mode defaults to assuming the post-only limit rests and fills
+  at mid with zero slippage — an optimistic upper bound for "what if we stopped
+  crossing the spread". ``CostModel(maker_fill="resting")`` instead replays the
+  live maker lifecycle honestly: entries rest and fill only if price comes to
+  them, stale quotes cancel, exits stay taker (a pessimistic lower bound).
 * One position per (agent, coin); a same-direction re-entry averages in.
 """
 
@@ -65,12 +67,36 @@ class CostModel:
 
     Hyperliquid base fees are ~3.5 bps taker / ~1.0 bp maker (lower at volume).
     ``slippage_bps`` is the half-spread + impact crossed on a taker order.
+
+    ``maker_fill`` selects the fill realism of maker mode:
+
+    * ``"optimistic"`` (default, the historical behavior): every order fills
+      instantly at mid with maker fees — an upper bound for "what if we stopped
+      crossing the spread".
+    * ``"resting"``: a faithful replica of the live ``--execution maker``
+      proposal (entries maker, exits taker — see ``exec/maker.py``). Entries
+      rest as post-only limits at the decision bar's mid and fill only when a
+      LATER bar's mid trades strictly through the limit (queue-conservative);
+      quotes unfilled after ``maker_ttl_s`` are cancelled, like the live
+      stale-quote sweep. Exits pay full taker fee + slippage. Close-only data
+      understates intrabar touches, so this is a pessimistic lower bound — the
+      truth lies between the two modes.
     """
 
     taker_fee_bps: float = 4.5
     maker_fee_bps: float = 1.0
     slippage_bps: float = 2.0
     maker: bool = False
+    maker_fill: str = "optimistic"
+    maker_ttl_s: int = 1800   # live exec.maker.DEFAULT_MAX_REST_S
+
+    def __post_init__(self) -> None:
+        if self.maker_fill not in ("optimistic", "resting"):
+            raise ValueError(f"maker_fill must be 'optimistic' or 'resting', got {self.maker_fill!r}")
+
+    @property
+    def resting(self) -> bool:
+        return self.maker and self.maker_fill == "resting"
 
     @property
     def fee_bps(self) -> float:
@@ -83,6 +109,16 @@ class CostModel:
     @property
     def fee_rate(self) -> float:
         return self.fee_bps / 10_000.0
+
+    # Exits: identical to entries except in resting-maker mode, where the live
+    # design keeps exits taker (urgency beats fee savings on stops/reversions).
+    @property
+    def exit_fee_rate(self) -> float:
+        return self.taker_fee_bps / 10_000.0 if self.resting else self.fee_rate
+
+    @property
+    def exit_slip(self) -> float:
+        return self.slippage_bps / 10_000.0 if self.resting else self.slip
 
 
 # ---------------------------------------------------------------------------
@@ -103,6 +139,18 @@ class _Pos:
         return self.sz if self.side == "B" else -self.sz
 
 
+@dataclass
+class _Resting:
+    """A post-only entry quote waiting for the market to come to it."""
+
+    side: str
+    sz: float
+    px: float            # limit price (decision bar's mid — offline touch proxy)
+    placed_ts_ms: int
+    cloid: str | None
+    reasoning: str | None
+
+
 # ---------------------------------------------------------------------------
 # Output
 # ---------------------------------------------------------------------------
@@ -119,6 +167,7 @@ class BacktestResult:
     n_bars: int
     starting_capital: float
     cost: CostModel
+    maker_fill_stats: dict[str, int] | None = None   # resting mode: rested/filled/expired
 
     @property
     def net_pnl(self) -> float:
@@ -134,11 +183,20 @@ class BacktestResult:
         dd = "—" if self.max_drawdown is None else f"{self.max_drawdown*100:+.1f}%"
         edge = "—" if sc.edge_bps is None else f"{sc.edge_bps:+.1f}bps"
         exec_mode = "maker" if self.cost.maker else "taker"
-        return (
+        if self.cost.resting:
+            exec_mode = "maker-rest"
+        out = (
             f"{self.agent} [{exec_mode}] over {self.n_bars} bars: "
             f"net ${sc.net_pnl:+.2f} · edge {edge} · trades {sc.n_trades} · "
             f"win {sc.win_rate*100:.0f}% · sharpe {sh} · maxDD {dd}"
         )
+        st = self.maker_fill_stats
+        if st and st.get("rested"):
+            out += (
+                f" · quotes {st['rested']} filled {st['filled']}"
+                f" ({st['filled']/st['rested']*100:.0f}%) expired {st['expired']}"
+            )
+        return out
 
 
 # ---------------------------------------------------------------------------
@@ -179,6 +237,8 @@ class Backtester:
         self.starting_capital = float(starting_capital)
         self._book: dict[str, _Pos] = {}        # coin -> position
         self._realized = 0.0                     # cumulative realized incl. funding, net of fees
+        self._resting: dict[str, _Resting] = {}  # coin -> working maker quote
+        self.maker_fill_stats = {"rested": 0, "filled": 0, "expired": 0}
 
     # -- market view ------------------------------------------------------
     def _view(self, frame: Frame, agent: Agent) -> MarketView:
@@ -239,7 +299,46 @@ class Backtester:
         mid = frame.mids.get(coin)
         if not mid or not d.sz or d.side not in ("B", "A"):
             return
+        if self.cost.resting:
+            # Live `has_resting_order`: one working quote per coin; a re-signal
+            # while a quote rests is dropped, not re-priced.
+            if coin not in self._resting:
+                self._resting[coin] = _Resting(
+                    side=d.side, sz=d.sz, px=mid, placed_ts_ms=frame.ts_ms,
+                    cloid=d.cloid, reasoning=d.reasoning,
+                )
+                self.maker_fill_stats["rested"] += 1
+            return
+        fill_px = mid * (1 + self.cost.slip) if d.side == "B" else mid * (1 - self.cost.slip)
+        self._fill_open(agent, d, frame, fill_px)
 
+    def _process_resting(self, agent: str, frame: Frame) -> None:
+        """Fill or expire working maker quotes against this frame's mids.
+
+        Stale check first: live cancels at the first tick past the TTL, so a
+        cross on the same bar the quote went stale does not fill (pessimistic
+        by at most one bar). Fill requires the mid to trade strictly through
+        the limit — equality means an unknowable queue position.
+        """
+        for coin, o in list(self._resting.items()):
+            if frame.ts_ms - o.placed_ts_ms > self.cost.maker_ttl_s * 1000:
+                del self._resting[coin]
+                self.maker_fill_stats["expired"] += 1
+                continue
+            mid = frame.mids.get(coin)
+            if not mid:
+                continue
+            crossed = mid < o.px if o.side == "B" else mid > o.px
+            if crossed:
+                del self._resting[coin]
+                self.maker_fill_stats["filled"] += 1
+                self._fill_open(agent, Decision(
+                    agent=agent, action="place", coin=coin, side=o.side, sz=o.sz,
+                    px=o.px, cloid=o.cloid, reasoning=o.reasoning,
+                ), frame, o.px)
+
+    def _fill_open(self, agent: str, d: Decision, frame: Frame, fill_px: float) -> None:
+        coin = d.coin or ""
         existing = self._book.get(coin)
         if existing and existing.side != d.side:
             # Opposite-side order: close up to the existing size first, then open
@@ -250,14 +349,13 @@ class Backtester:
             existing_sz = existing.sz
             self._close(agent, Decision(
                 agent=agent, action="flatten", coin=coin,
-                sz=min(d.sz, existing_sz), px=mid, cloid=d.cloid), frame)
-            open_sz = d.sz - existing_sz
+                sz=min(d.sz or 0.0, existing_sz), px=frame.mids.get(coin), cloid=d.cloid), frame)
+            open_sz = (d.sz or 0.0) - existing_sz
             if open_sz <= 1e-12:
                 return  # pure reduce / exact flat — the close already booked it
         else:
-            open_sz = d.sz
+            open_sz = d.sz or 0.0
 
-        fill_px = mid * (1 + self.cost.slip) if d.side == "B" else mid * (1 - self.cost.slip)
         fee = fill_px * open_sz * self.cost.fee_rate
         self._realized -= fee
         existing = self._book.get(coin)  # may have been removed by the close above
@@ -285,17 +383,18 @@ class Backtester:
         if close_sz <= 0:
             return
         # Closing a long = sell (hit bid); closing a short = buy (lift ask).
+        # Exit costs may differ from entry (resting-maker mode keeps exits taker).
         if pos.side == "B":
-            exit_px = mid * (1 - self.cost.slip)
+            exit_px = mid * (1 - self.cost.exit_slip)
             price_pnl = (exit_px - pos.entry_px) * close_sz
             close_side = "A"
         else:
-            exit_px = mid * (1 + self.cost.slip)
+            exit_px = mid * (1 + self.cost.exit_slip)
             price_pnl = (pos.entry_px - exit_px) * close_sz
             close_side = "B"
         frac = close_sz / pos.sz if pos.sz else 1.0
         funding = pos.funding_accrued * frac
-        fee = exit_px * close_sz * self.cost.fee_rate
+        fee = exit_px * close_sz * self.cost.exit_fee_rate
         closed_pnl = price_pnl + funding  # funding folded in; fee tracked separately
         self._realized += closed_pnl - fee
         self._record_fill(agent, coin, close_side, close_sz, exit_px, fee, closed_pnl, d.cloid)
@@ -352,6 +451,11 @@ class Backtester:
         for frame in frames:
             with frozen_clock(frame.ts_ms / 1000.0):
                 self._accrue_funding(frame)
+                # Working maker quotes fill/expire BEFORE decide so the agent
+                # sees the new position this bar (live: WS userFills fold in
+                # before gather_decisions). A position filled this bar starts
+                # accruing funding next bar, same as a taker entry.
+                self._process_resting(agent.name, frame)
                 view = self._view(frame, agent)
                 decisions = agent.decide(view)
                 for d in decisions:
@@ -361,6 +465,11 @@ class Backtester:
                 for coin, pos in self._book.items()
             )
             equity_curve.append((frame.ts_ms, self.starting_capital + self._realized + unreal))
+
+        if self._resting:
+            # End-of-run quotes never filled: cancelled, counted as expired.
+            self.maker_fill_stats["expired"] += len(self._resting)
+            self._resting.clear()
 
         if liquidate_at_end and self._book and frames:
             last = frames[-1]
@@ -385,6 +494,7 @@ class Backtester:
             n_bars=len(frames),
             starting_capital=self.starting_capital,
             cost=self.cost,
+            maker_fill_stats=dict(self.maker_fill_stats) if self.cost.resting else None,
         )
 
 
