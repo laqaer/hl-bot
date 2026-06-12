@@ -2587,3 +2587,81 @@ taker-judged with maker-rest arms. B-FILL2 (intrabar h/l fills) is the
 natural next slice and also benefits breakout if a maker variant is ever
 considered. B-EDGE2b three-armed reruns as the store grows. B12j / B14a if
 idle.
+
+## Iteration 51 — 2026-06-12 — B-FILL2: intrabar wick fills; close-only detection was adverse-selecting the fills themselves
+
+**What.** B-G014 still blocked (1m store 3.7d, ETA ~Jun 23–26). Did the queued
+next slice: the Iter-50 resting maker-fill model judged fills on close mids
+only, which doesn't just *miss* fills — it selects for the bad ones (a quote
+fills on close-through only when the move keeps going; the touch-and-revert
+winners vanish). Store candles carry h/l, so: `Frame.highs/lows` (per-bar
+intrabar extremes, populated by `build_frames` from candle `h`/`l`; rows with
+missing/garbage h/l and legacy caches degrade silently to close-only),
+`_process_resting` now fills a buy quote when the bar's LOW trades strictly
+below the limit (sell: high strictly above; equality still no-fill — queue
+position unknowable; TTL cancel-first unchanged), and a `filled_wick` stat
+counts fills the close mid alone would have missed. The pre-B-FILL2 bound is
+kept runnable as `--maker-fill resting-close` so the tightening is A/B-able
+on identical data. Labels: `CostModel.exec_label` ("maker-rest"/"maker-restc")
+shared by engine summary, confirm scenarios, and the CLI table.
+
+**Results (twap_mr_v1, 10-coin store universe, funding fetched; same windows
+as Iter 50 — the resting-close control reproduces Iter 50 EXACTLY: −4.5bps,
+784 tr, 473 quotes/83%/80 expired).**
+- **Exact live config (1m w=60, 3.7d, 5335 frames):** taker −1.2bps (1044 tr)
+  · optimistic +4.2 (win 68%) · close-only rest −4.5 (win 57%) · **wick-aware
+  rest +0.3bps** (976 tr, win 65%, 508 quotes / 96% filled / 19 expired —
+  **226 of 489 fills (46%) were wick-only**). The honest bracket is now
+  (+0.3, +4.2) — both ends ≥ 0 — vs (−4.5, +4.2) before. G0 confirm at
+  prefer=maker-rest: **still ❌ FAIL** (IS +0.8/678 tr, OOS −0.7/262 tr,
+  oos sharpe −3.39 — bar is +3bps/+1.0).
+- **w=240 arm (1m, 3.7d):** taker +2.4 (346 tr) · **wick rest +4.7** (334 tr,
+  98% filled, 85/168 fills wick-only) vs close-rest +0.3 / optimistic +8.2.
+  **First config where maker beats taker on the pessimistic bound.**
+- **15m w=16, 52.3d:** taker −4.3 · **wick rest −2.1** (3266 tr, 95% filled
+  vs 57% close-only) vs close-rest −13.9 / optimistic +1.2. The anomalous
+  "rest worse than taker" Iter-50 print is resolved as a detection artifact:
+  at coarse bars almost every fill is intrabar, so close-only kept just the
+  adverse tail.
+
+**Interpretation.** Decomposing the Iter-50 "adverse selection ≈ −6bps": most
+of it was the *model's* selection bias, not the market's — wick detection
+recovers ~+4.8bps at the live config and ~+11.8bps at 15m. The remaining gap
+to optimistic (+0.3 vs +4.2 at w=60) is the true adverse-selection +
+taker-exit cost. Remaining model pessimism: an exact touch (low == limit)
+never fills. Remaining optimism: the backtest posts at the decision bar's
+close mid while live posts at the near touch (book-aware, ≤ mid for buys) —
+fewer live fills at slightly better prices; direction ambiguous, small.
+Verdict unchanged where it matters: **B-MAKER-LIVE stays evidence-blocked**
+(G0 FAIL at the live config; all 1m numbers are one 3.7d window), but the
+B-G014 multi-week maker-rest arms — especially w=240, where maker already
+beats taker — are now judged with a bound tight enough to trust for a
+PROMOTION, not just rejections.
+
+**Changed (code).** `backtest/engine.py`: `Frame.highs/lows` (default-empty —
+legacy caches load fine), `CostModel` `maker_fill="resting-close"` +
+`wick_fills`/`exec_label` properties, `_process_resting` wick-through fill +
+`filled_wick` stat, summary prints wick count. `backtest/data.py`:
+`build_frames` carries candle h/l onto frames (skips rows with l>h or
+missing). `backtest/confirm.py`: scenario labels via `exec_label`
+("maker-restc" arm). `cli/main.py`: `--maker-fill resting-close` on
+backtest/confirm, exec column + fill-note via `exec_label`, wick count in the
+fill note.
+
+**Evidence.** 299 → **308 tests pass** (9 new: wick fill buy/sell at the
+limit px, exact-touch no-fill, close-cross not counted as wick, TTL beats
+same-bar wick, resting-close ignores wicks + labels, confirm threads
+resting-close, build_frames h/l carry + garbage-row skip, legacy-cache
+load + fresh round-trip; 3 existing stats asserts gained the filled_wick
+key). `ruff check src tests scripts` clean. All runs reproducible, e.g.
+`hlbot backtest --agent twap_mr_v1 --coins ADA,AVAX,BTC,DOGE,ETH,HYPE,LINK,
+SOL,TRX,ZEC --interval 1m --vwap-window 60 --days 0 --source store
+--maker-fill resting` (store topped up by loop.sh, 1m last bar <1h old;
+control via `--maker-fill resting-close`).
+
+**What's next (loop).** B-G014 when 1m span ≥14d (~Jun 23–26): taker-judged,
+maker-rest arms now wick-aware — w=240 maker-rest is the arm to watch. After
+that, the next dead measurement gap would be live maker-rest entry pricing at
+the touch vs mid (only if a maker arm passes). B-EDGE2b three-armed reruns as
+the 15m store grows. B-EDGE2f at ≥30d paper books (~Jul 8). B12j / B14a if
+idle.

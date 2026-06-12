@@ -17,8 +17,15 @@ from hl_bot.db.schema import init_db
 MIN = 60_000  # 1m bars: well inside the 1800s TTL
 
 
-def _frame(i: int, mid: float, *, coin: str = "TST", step_ms: int = MIN) -> Frame:
-    return Frame(ts_ms=i * step_ms, mids={coin: mid})
+def _frame(
+    i: int, mid: float, *, coin: str = "TST", step_ms: int = MIN,
+    hi: float | None = None, lo: float | None = None,
+) -> Frame:
+    f = Frame(ts_ms=i * step_ms, mids={coin: mid})
+    if hi is not None and lo is not None:
+        f.highs[coin] = hi
+        f.lows[coin] = lo
+    return f
 
 
 class ScriptedAgent(Agent):
@@ -61,7 +68,7 @@ def test_buy_quote_fills_only_when_mid_crosses_below_limit():
     assert px == 100.0                       # filled AT the limit, not bar2's 99
     assert side == "B"
     assert abs(fee - 100.0 * 1.0 * 1.0 / 10_000) < 1e-12   # maker 1bp, zero slip
-    assert res.maker_fill_stats == {"rested": 1, "filled": 1, "expired": 0}
+    assert res.maker_fill_stats == {"rested": 1, "filled": 1, "expired": 0, "filled_wick": 0}
     assert "TST" in bt._book and bt._book["TST"].entry_px == 100.0
 
 
@@ -76,7 +83,7 @@ def test_no_cross_means_no_fill_and_no_position():
     assert conn.execute("SELECT COUNT(*) FROM fills").fetchone()[0] == 0
     assert not bt._book
     # end-of-run cancel counts as expired
-    assert res.maker_fill_stats == {"rested": 1, "filled": 0, "expired": 1}
+    assert res.maker_fill_stats == {"rested": 1, "filled": 0, "expired": 1, "filled_wick": 0}
 
 
 def test_equality_at_limit_does_not_fill():
@@ -116,7 +123,7 @@ def test_stale_quote_cancels_after_ttl_even_if_price_later_crosses():
     res = bt.run(agent, frames, liquidate_at_end=False)
 
     assert conn.execute("SELECT COUNT(*) FROM fills").fetchone()[0] == 0
-    assert res.maker_fill_stats == {"rested": 1, "filled": 0, "expired": 1}
+    assert res.maker_fill_stats == {"rested": 1, "filled": 0, "expired": 1, "filled_wick": 0}
 
 
 def test_stale_check_wins_over_same_bar_cross():
@@ -206,6 +213,108 @@ def test_bad_maker_fill_value_rejected():
 
     with pytest.raises(ValueError):
         CostModel(maker_fill="hopeful")
+
+
+# ---------------------------------------------------------------------------
+# B-FILL2: intrabar high/low fill detection. Close-only mids miss wick touches
+# (which skew toward winners — the limit filled and price reverted within the
+# bar), so resting mode prefers the bar's extreme when frames carry highs/lows.
+# ---------------------------------------------------------------------------
+
+
+def test_wick_through_fills_buy_quote_at_limit():
+    """The bar's low trades through the limit even though the close stays above."""
+    conn = init_db(":memory:")
+    bt = Backtester(_resting_cost(), conn=conn)
+    agent = ScriptedAgent({0: [_place("B")]})
+    # quote at 100; bar1 closes at 100.5 (no close-cross) but wicked to 99.4
+    frames = [_frame(0, 100.0), _frame(1, 100.5, hi=100.8, lo=99.4)]
+    res = bt.run(agent, frames, liquidate_at_end=False)
+
+    fills = conn.execute("SELECT px, side FROM fills").fetchall()
+    assert len(fills) == 1
+    assert fills[0]["px"] == 100.0           # filled AT the limit, not the low
+    assert res.maker_fill_stats == {"rested": 1, "filled": 1, "expired": 0, "filled_wick": 1}
+    assert bt._book["TST"].entry_px == 100.0
+
+
+def test_sell_quote_fills_on_high_wick():
+    conn = init_db(":memory:")
+    bt = Backtester(_resting_cost(), conn=conn)
+    agent = ScriptedAgent({0: [_place("A")]})
+    frames = [_frame(0, 100.0), _frame(1, 99.8, hi=100.6, lo=99.5)]
+    res = bt.run(agent, frames, liquidate_at_end=False)
+
+    fills = conn.execute("SELECT px, side FROM fills").fetchall()
+    assert len(fills) == 1
+    assert fills[0]["px"] == 100.0 and fills[0]["side"] == "A"
+    assert res.maker_fill_stats["filled_wick"] == 1
+
+
+def test_wick_touching_limit_exactly_does_not_fill():
+    """Low == limit: price touched but never traded through -> queue unknowable."""
+    conn = init_db(":memory:")
+    bt = Backtester(_resting_cost(), conn=conn)
+    agent = ScriptedAgent({0: [_place("B")]})
+    frames = [_frame(0, 100.0), _frame(1, 100.5, hi=100.8, lo=100.0)]
+    res = bt.run(agent, frames, liquidate_at_end=False)
+    assert conn.execute("SELECT COUNT(*) FROM fills").fetchone()[0] == 0
+    # never filled: the end-of-run sweep cancels the still-working quote
+    assert res.maker_fill_stats == {"rested": 1, "filled": 0, "expired": 1, "filled_wick": 0}
+
+
+def test_close_cross_is_not_counted_as_wick_fill():
+    """filled_wick counts only fills the close mid alone would have missed."""
+    conn = init_db(":memory:")
+    bt = Backtester(_resting_cost(), conn=conn)
+    agent = ScriptedAgent({0: [_place("B")]})
+    frames = [_frame(0, 100.0), _frame(1, 99.0, hi=100.4, lo=98.9)]
+    res = bt.run(agent, frames, liquidate_at_end=False)
+    assert res.maker_fill_stats == {"rested": 1, "filled": 1, "expired": 0, "filled_wick": 0}
+
+
+def test_stale_check_wins_over_same_bar_wick_cross():
+    """Cancel-first applies to wick fills too: a past-TTL bar's wick can't fill."""
+    conn = init_db(":memory:")
+    bt = Backtester(_resting_cost(), conn=conn)
+    agent = ScriptedAgent({0: [_place("B")]})
+    frames = [
+        _frame(0, 100.0, step_ms=3_600_000),
+        _frame(1, 100.5, step_ms=3_600_000, hi=100.9, lo=99.0),
+    ]
+    res = bt.run(agent, frames, liquidate_at_end=False)
+    assert conn.execute("SELECT COUNT(*) FROM fills").fetchone()[0] == 0
+    assert res.maker_fill_stats["expired"] == 1
+
+
+def test_resting_close_mode_ignores_wicks():
+    """maker_fill='resting-close' reproduces the pre-B-FILL2 close-only bound."""
+    cost = CostModel(maker=True, maker_fill="resting-close")
+    assert cost.resting and not cost.wick_fills
+    assert cost.exec_label == "maker-restc"
+    assert CostModel(maker=True, maker_fill="resting").exec_label == "maker-rest"
+
+    conn = init_db(":memory:")
+    bt = Backtester(cost, conn=conn)
+    agent = ScriptedAgent({0: [_place("B")]})
+    # the same wick that fills in 'resting' mode is invisible close-only
+    frames = [_frame(0, 100.0), _frame(1, 100.5, hi=100.8, lo=99.4)]
+    res = bt.run(agent, frames, liquidate_at_end=False)
+    assert conn.execute("SELECT COUNT(*) FROM fills").fetchone()[0] == 0
+    assert res.maker_fill_stats["filled"] == 0
+
+
+def test_confirm_threads_resting_close():
+    from hl_bot.backtest.confirm import confirm_strategy
+
+    def factory(conn):
+        return ScriptedAgent({0: [_place("B")], 5: [_flatten()]})
+
+    frames = [_frame(i, 100.0 + (-1.0 if i == 3 else 0.0)) for i in range(12)]
+    res = confirm_strategy(factory, frames, prefer="maker",
+                           maker_fill="resting-close", min_trades=1)
+    assert res.in_sample.name == "in-sample(maker-restc)"
+    assert "maker-restc" in [s.name for s in res.cost_ladder]
 
 
 def test_confirm_threads_maker_fill():

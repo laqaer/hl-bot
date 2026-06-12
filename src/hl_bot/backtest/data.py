@@ -207,10 +207,13 @@ def build_frames(
 ) -> list[Frame]:
     """Assemble aligned per-timestamp frames from per-coin candle series.
 
-    Each output frame carries, per coin: mid (= close), day volume proxy
-    (rolling sum), rolling VWAP/sigma (as ``candles_1h``), and the funding rate
-    accrued over the bar. Timestamps are the union across coins; coins missing a
-    bar are simply absent from that frame.
+    Each output frame carries, per coin: mid (= close), the bar's intrabar
+    high/low (B-FILL2 — fill detection for resting maker quotes; rows with
+    missing or inconsistent ``h``/``l`` simply omit the coin and the engine
+    degrades to close-only detection), day volume proxy (rolling sum), rolling
+    VWAP/sigma (as ``candles_1h``), and the funding rate accrued over the bar.
+    Timestamps are the union across coins; coins missing a bar are simply
+    absent from that frame.
 
     HL funding rates are hourly; the engine treats ``Frame.funding`` as the
     *per-bar* rate. Fine bars (≤1h) pro-rate the rate in effect by ``bar_hours``
@@ -261,6 +264,8 @@ def build_frames(
     frames: list[Frame] = []
     for ts in sorted(all_ts):
         mids: dict[str, float] = {}
+        highs: dict[str, float] = {}
+        lows: dict[str, float] = {}
         vol: dict[str, float] = {}
         candles_1h: dict[str, dict] = {}
         closes_window: dict[str, list[float]] = {}
@@ -277,6 +282,14 @@ def build_frames(
             if mid <= 0:
                 continue
             mids[coin] = mid
+            try:
+                hi = float(k.get("h", 0) or 0)
+                lo_px = float(k.get("l", 0) or 0)
+            except (TypeError, ValueError):
+                hi = lo_px = 0.0
+            if 0 < lo_px <= hi:
+                highs[coin] = hi
+                lows[coin] = lo_px
             closes, vols, tss = series[coin]
             cur = bar_cursor[coin]
             while cur < len(tss) and tss[cur] <= ts:
@@ -308,6 +321,7 @@ def build_frames(
             frames.append(Frame(
                 ts_ms=ts, mids=mids, funding=funding, funding_hourly=funding_hourly,
                 day_ntl_vlm=vol, candles_1h=candles_1h, closes=closes_window,
+                highs=highs, lows=lows,
             ))
     return frames
 

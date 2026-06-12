@@ -112,6 +112,48 @@ def test_build_frames_from_candles():
     assert last.candles_1h["TST"]["sigma"] > 0
 
 
+def test_build_frames_carries_intrabar_highs_lows():
+    """B-FILL2: candle h/l land on the frame; bad/missing rows degrade silently."""
+    candles = [
+        {"t": i * HOUR, "c": 100.0, "v": 1000, "h": 101.0 + i, "l": 99.0 - i}
+        for i in range(64)
+    ]
+    candles[63] = {"t": 63 * HOUR, "c": 100.0, "v": 1000}                      # no h/l
+    candles[62] = {"t": 62 * HOUR, "c": 100.0, "v": 1000, "h": 90.0, "l": 95}  # l > h garbage
+    frames = build_frames({"TST": candles}, vwap_window=60, warmup=60)
+    by_ts = {f.ts_ms: f for f in frames}
+
+    ok = by_ts[61 * HOUR]
+    assert ok.highs["TST"] == 101.0 + 61 and ok.lows["TST"] == 99.0 - 61
+    assert "TST" not in by_ts[62 * HOUR].highs and "TST" not in by_ts[62 * HOUR].lows
+    assert "TST" not in by_ts[63 * HOUR].highs and "TST" not in by_ts[63 * HOUR].lows
+    # mids are unaffected by missing extremes
+    assert by_ts[63 * HOUR].mids["TST"] == 100.0
+
+
+def test_legacy_cache_without_highs_lows_still_loads(tmp_path):
+    """Pre-B-FILL2 cached frames (no highs/lows keys) load with empty extremes."""
+    import gzip
+    import json
+
+    from hl_bot.backtest.data import load_cached_frames, save_frames
+
+    legacy = {"ts_ms": 0, "mids": {"TST": 100.0}, "funding": {}, "funding_hourly": {},
+              "day_ntl_vlm": {}, "candles_1h": {}, "closes": {}, "spot_mids": {},
+              "liquidations": []}
+    p = tmp_path / "legacy.json.gz"
+    with gzip.open(p, "wt", encoding="utf-8") as fh:
+        json.dump([legacy], fh)
+    loaded = load_cached_frames(p)
+    assert loaded[0].highs == {} and loaded[0].lows == {}
+
+    # and fresh frames round-trip the extremes
+    f = Frame(ts_ms=0, mids={"TST": 100.0}, highs={"TST": 101.0}, lows={"TST": 99.0})
+    p2 = save_frames(tmp_path / "fresh.json.gz", [f])
+    got = load_cached_frames(p2)[0]
+    assert got.highs == {"TST": 101.0} and got.lows == {"TST": 99.0}
+
+
 def test_paginate_by_time_walks_past_the_page_cap():
     """A 500-row page cap must not truncate a long window (the funding bug)."""
     from hl_bot.backtest.data import paginate_by_time

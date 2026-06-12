@@ -59,6 +59,12 @@ class Frame:
     closes: dict[str, list[float]] = field(default_factory=dict)     # coin -> trailing closes
     spot_mids: dict[str, float] = field(default_factory=dict)
     liquidations: list[dict] = field(default_factory=list)
+    # Intrabar extremes of THIS bar (B-FILL2): execution-replay data for the
+    # resting maker-fill model, never shown to agents (live agents can't see
+    # the forming bar's high/low either). Empty on legacy caches — the engine
+    # degrades to close-only fill detection.
+    highs: dict[str, float] = field(default_factory=dict)
+    lows: dict[str, float] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -76,11 +82,17 @@ class CostModel:
     * ``"resting"``: a faithful replica of the live ``--execution maker``
       proposal (entries maker, exits taker — see ``exec/maker.py``). Entries
       rest as post-only limits at the decision bar's mid and fill only when a
-      LATER bar's mid trades strictly through the limit (queue-conservative);
+      LATER bar trades strictly through the limit (queue-conservative);
       quotes unfilled after ``maker_ttl_s`` are cancelled, like the live
-      stale-quote sweep. Exits pay full taker fee + slippage. Close-only data
-      understates intrabar touches, so this is a pessimistic lower bound — the
-      truth lies between the two modes.
+      stale-quote sweep. Exits pay full taker fee + slippage. Fill detection
+      uses the bar's intrabar low/high when frames carry them (B-FILL2) and
+      falls back to the close mid on legacy data — close-only detection
+      misses wick touches, which skew toward winners, so the fallback is
+      extra-pessimistic.
+    * ``"resting-close"``: the resting lifecycle with fill detection forced
+      to close mids only, even when intrabar extremes are available — the
+      pre-B-FILL2 lower bound, kept so the wick-detection tightening can be
+      A/B'd on identical data.
     """
 
     taker_fee_bps: float = 4.5
@@ -91,12 +103,27 @@ class CostModel:
     maker_ttl_s: int = 1800   # live exec.maker.DEFAULT_MAX_REST_S
 
     def __post_init__(self) -> None:
-        if self.maker_fill not in ("optimistic", "resting"):
-            raise ValueError(f"maker_fill must be 'optimistic' or 'resting', got {self.maker_fill!r}")
+        if self.maker_fill not in ("optimistic", "resting", "resting-close"):
+            raise ValueError(
+                f"maker_fill must be 'optimistic', 'resting' or 'resting-close', "
+                f"got {self.maker_fill!r}"
+            )
 
     @property
     def resting(self) -> bool:
-        return self.maker and self.maker_fill == "resting"
+        return self.maker and self.maker_fill in ("resting", "resting-close")
+
+    @property
+    def wick_fills(self) -> bool:
+        return self.maker_fill == "resting"
+
+    @property
+    def exec_label(self) -> str:
+        if not self.maker:
+            return "taker"
+        if not self.resting:
+            return "maker"
+        return "maker-rest" if self.wick_fills else "maker-restc"
 
     @property
     def fee_bps(self) -> float:
@@ -182,11 +209,8 @@ class BacktestResult:
         sh = "—" if self.sharpe is None else f"{self.sharpe:+.2f}"
         dd = "—" if self.max_drawdown is None else f"{self.max_drawdown*100:+.1f}%"
         edge = "—" if sc.edge_bps is None else f"{sc.edge_bps:+.1f}bps"
-        exec_mode = "maker" if self.cost.maker else "taker"
-        if self.cost.resting:
-            exec_mode = "maker-rest"
         out = (
-            f"{self.agent} [{exec_mode}] over {self.n_bars} bars: "
+            f"{self.agent} [{self.cost.exec_label}] over {self.n_bars} bars: "
             f"net ${sc.net_pnl:+.2f} · edge {edge} · trades {sc.n_trades} · "
             f"win {sc.win_rate*100:.0f}% · sharpe {sh} · maxDD {dd}"
         )
@@ -196,6 +220,8 @@ class BacktestResult:
                 f" · quotes {st['rested']} filled {st['filled']}"
                 f" ({st['filled']/st['rested']*100:.0f}%) expired {st['expired']}"
             )
+            if st.get("filled_wick"):
+                out += f" · wick-fills {st['filled_wick']}"
         return out
 
 
@@ -238,7 +264,9 @@ class Backtester:
         self._book: dict[str, _Pos] = {}        # coin -> position
         self._realized = 0.0                     # cumulative realized incl. funding, net of fees
         self._resting: dict[str, _Resting] = {}  # coin -> working maker quote
-        self.maker_fill_stats = {"rested": 0, "filled": 0, "expired": 0}
+        # filled_wick ⊆ filled: fills only the intrabar low/high detected
+        # (the close mid never crossed) — what B-FILL2 adds over close-only.
+        self.maker_fill_stats = {"rested": 0, "filled": 0, "expired": 0, "filled_wick": 0}
 
     # -- market view ------------------------------------------------------
     def _view(self, frame: Frame, agent: Agent) -> MarketView:
@@ -313,12 +341,16 @@ class Backtester:
         self._fill_open(agent, d, frame, fill_px)
 
     def _process_resting(self, agent: str, frame: Frame) -> None:
-        """Fill or expire working maker quotes against this frame's mids.
+        """Fill or expire working maker quotes against this frame's bar.
 
         Stale check first: live cancels at the first tick past the TTL, so a
         cross on the same bar the quote went stale does not fill (pessimistic
-        by at most one bar). Fill requires the mid to trade strictly through
-        the limit — equality means an unknowable queue position.
+        by at most one bar). Fill requires price to trade strictly through
+        the limit — equality means an unknowable queue position. Detection
+        prefers the bar's intrabar extreme (low for buys / high for sells,
+        B-FILL2) over the close mid; frames without highs/lows (legacy
+        caches) and maker_fill="resting-close" judge on the close mid only,
+        which misses wick touches.
         """
         for coin, o in list(self._resting.items()):
             if frame.ts_ms - o.placed_ts_ms > self.cost.maker_ttl_s * 1000:
@@ -329,6 +361,12 @@ class Backtester:
             if not mid:
                 continue
             crossed = mid < o.px if o.side == "B" else mid > o.px
+            if not crossed and self.cost.wick_fills:
+                ext = frame.lows.get(coin) if o.side == "B" else frame.highs.get(coin)
+                if ext:
+                    crossed = ext < o.px if o.side == "B" else ext > o.px
+                    if crossed:
+                        self.maker_fill_stats["filled_wick"] += 1
             if crossed:
                 del self._resting[coin]
                 self.maker_fill_stats["filled"] += 1

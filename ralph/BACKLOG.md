@@ -166,13 +166,17 @@ Keep it ruthlessly prioritized: the top item should always be the highest-levera
   optimistic maker model was carrying the whole twap_mr maker case — live
   config flips +4.2 → −4.5bps under honest fills (G0 FAIL, IS −4.7/OOS −3.6).
   Numbers in PROGRESS Iter 50; B-MAKER-LIVE re-gated on maker-rest evidence.
-- [ ] **B-FILL2 — Intrabar high/low fill detection.** The resting model judges
-  fills on close-only mids — pessimistic (misses intrabar touches that would
-  fill at the limit). Store candles carry h/l: extend `Frame` with per-bar
-  high/low (mind cache compatibility) and fill resting quotes on wick-through.
-  Tightens the optimistic↔resting bracket; do before trusting any maker-rest
-  number for a promotion (currently they only need to be trusted for
-  REJECTIONS, where pessimism is safe).
+- [x] **B-FILL2 — Intrabar high/low fill detection.** Done (Iter 51):
+  `Frame.highs/lows` (built from candle h/l; legacy caches degrade to
+  close-only), resting quotes fill on wick strictly-through (equality still
+  no-fill), `filled_wick` stat, and `--maker-fill resting-close` keeps the
+  old close-only bound for A/B. Close-only detection was *adverse-selecting
+  the fills themselves* — it missed 46% of fills (the touch-and-revert
+  winners): live config maker-rest −4.5 → **+0.3bps** (96% filled, win
+  57%→65%), w=240 +0.3 → **+4.7** (beats taker +2.4 on the pessimistic
+  bound), 15m/52d −13.9 → −2.1. G0 at live config still FAILS at
+  prefer=maker-rest (IS +0.8 / OOS −0.7 vs +3bps bar) so B-MAKER-LIVE
+  stays evidence-blocked, judged by the B-G014 multi-week arms.
 - [x] **B6/B7 — Per-agent funding attribution + Sharpe.** Done: funding split to
   the agent holding the coin at funding time (scoring includes it in net/edge);
   per-agent Sharpe from daily PnL so sharpe-gates evaluate. Tested. (Iteration 7.)
@@ -329,7 +333,9 @@ each on ≥90d real history (`hlbot confirm` / `hlbot backtest --config`) before
   --prefer taker` **and judge any maker claim with `--prefer maker
   --maker-fill resting`** (Iter 50: the optimistic maker model is an upper
   bound that flipped sign under honest fills — a PASS that needs optimistic
-  maker pricing is not evidence). A PASS on ≥2 weeks is the durable-edge
+  maker pricing is not evidence; Iter 51: resting is now wick-aware, a much
+  tighter bound — at w=240 it already beats taker on 3.7d, so the maker-rest
+  w=240 arm is the one to watch). A PASS on ≥2 weeks is the durable-edge
   evidence B-MAKER-LIVE and B-SCALE are waiting on; a FAIL means the Iter-29
   PASS was the recent pocket, not the strategy. **Run a second arm with
   `--config '{"stop_loss_pct":0.03}'`** (B-EXIT's robust lever, Iter 31)
@@ -352,20 +358,20 @@ each on ≥90d real history (`hlbot confirm` / `hlbot backtest --config`) before
   where edge<0 but cut net profit 42% at 1m where edge>0. **Both stay default
   OFF; no live change.**
 - [B] **B-MAKER-LIVE — Route live entries through maker execution.** *Was
-  human-gated; now ALSO evidence-blocked (Iter 50).* The "+5.4bps maker vs
-  −0.0 taker" case was built on the optimistic fill model (every quote fills
-  instantly at mid). The honest resting-fill replica (`--maker-fill resting`,
-  B-MAKERFILL) flips it: at the exact live config (1m w=60, same window)
-  maker-rest is **−4.5bps vs taker −1.2** — adverse selection (fade quotes
-  fill exactly when price keeps moving against them; instant-reversion
-  winners never fill, win 68%→57%) costs ~6bps and taker exits ~3bps more.
-  Same direction at w=240 (+8.2 optimistic → +0.3 rest vs +2.4 taker) and
-  15m/52d (+1.2 → −13.9). The bounds bracket zero (resting is pessimistic:
-  close-only data misses wick fills, which skew toward winners — B-FILL2
-  tightens this), so the case is UNPROVEN, not disproven — but
-  evidence-before-capital says do NOT flip until a maker-rest (or
-  B-FILL2-tightened) backtest beats taker on a multi-week sample (B-G014
-  arms). Machinery (`--execution maker`, B2b/B10b) stays built and tested.
+  human-gated; now ALSO evidence-blocked (Iter 50; bracket tightened
+  Iter 51).* The "+5.4bps maker vs −0.0 taker" case was built on the
+  optimistic fill model (every quote fills instantly at mid). The honest
+  resting replica (B-MAKERFILL) first flipped it to −4.5bps, but that was
+  close-only fill detection adverse-selecting the fills themselves —
+  intrabar wick detection (B-FILL2) shows close-only missed 46% of fills,
+  the touch-and-revert winners. Honest pessimistic bound at the exact live
+  config (1m w=60, 3.7d): maker-rest **+0.3bps vs taker −1.2** — truth ∈
+  (+0.3, +4.2), both ends ≥ 0 now; at w=240 maker-rest **+4.7 beats taker
+  +2.4** outright; 15m/52d −2.1 (was −13.9). Still NOT flippable: G0 at
+  prefer=maker-rest FAILS at the live config (IS +0.8 / OOS −0.7 vs +3bps
+  bar) and the 1m samples are one 3.7d window. Flip only if a B-G014
+  multi-week maker-rest arm beats taker AND passes G0. Machinery
+  (`--execution maker`, B2b/B10b) stays built and tested.
 - [x] **B-SIZE — A/B `size_by_signal`.** Done as part of Iter 29 (see B-CAD):
   helps only when the strategy is losing; at the live config it cut profit 42%
   (winners get sized down too). Keep OFF. The vol-targeting variant is pruned

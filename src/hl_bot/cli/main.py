@@ -731,9 +731,12 @@ def backtest(
     (price-only economics) when the network is down.
 
     --maker-fill resting replays the live maker lifecycle honestly (entries
-    rest and only fill if price comes to them, stale quotes cancel, exits pay
-    taker) instead of the default optimistic instant-fill-at-mid. The truth
-    for a live maker book lies between the two.
+    rest and only fill if price comes to them — judged on the bar's intrabar
+    low/high when available, else the close mid; stale quotes cancel, exits
+    pay taker) instead of the default optimistic instant-fill-at-mid. The
+    truth for a live maker book lies between the two. --maker-fill
+    resting-close forces close-only fill detection (the pre-B-FILL2 extra-
+    pessimistic bound) to A/B the wick detection itself.
     """
     from ..backtest.engine import Backtester, CostModel
 
@@ -749,8 +752,8 @@ def backtest(
     if agent not in factories:
         console.print(f"[red]unknown agent {agent}; choose from {list(factories)}[/red]")
         raise typer.Exit(1)
-    if maker_fill not in ("optimistic", "resting"):
-        console.print(f"[red]unknown maker-fill {maker_fill!r}; choose optimistic or resting[/red]")
+    if maker_fill not in ("optimistic", "resting", "resting-close"):
+        console.print(f"[red]unknown maker-fill {maker_fill!r}; choose optimistic, resting or resting-close[/red]")
         raise typer.Exit(1)
 
     frames = _load_backtest_frames(
@@ -782,7 +785,7 @@ def backtest(
         sh, dd, _ = _curve_stats(res.equity_curve, periods_per_year=per_year)
         sc = res.scorecard
         table.add_row(
-            ("maker-rest" if cost.resting else "maker") if is_maker else "taker",
+            cost.exec_label,
             f"{sc.net_pnl:+.2f}",
             "—" if sc.edge_bps is None else f"{sc.edge_bps:+.1f}",
             str(sc.n_trades),
@@ -793,8 +796,10 @@ def backtest(
         st = res.maker_fill_stats
         if st and st.get("rested"):
             fill_notes.append(
-                f"maker-rest quotes: {st['rested']} rested, {st['filled']} filled "
+                f"{cost.exec_label} quotes: {st['rested']} rested, {st['filled']} filled "
                 f"({st['filled']/st['rested']*100:.0f}%), {st['expired']} expired/cancelled"
+                + (f", {st['filled_wick']} filled on intrabar wick only"
+                   if st.get("filled_wick") else "")
             )
     console.print(table)
     for note in fill_notes:
@@ -827,8 +832,10 @@ def confirm(
     with funding stripped out would be dishonest. --min-trades floors the
     per-split sample size: a verdict from a handful of trades is noise.
     --maker-fill resting makes every maker-priced arm replay the live maker
-    lifecycle (rest → fill only on cross → stale cancel; exits taker) instead
-    of the optimistic instant-fill upper bound.
+    lifecycle (rest → fill only on cross, judged on intrabar low/high when
+    available → stale cancel; exits taker) instead of the optimistic
+    instant-fill upper bound; resting-close forces close-only detection
+    (the pre-B-FILL2 bound).
     """
     from ..backtest.confirm import confirm_strategy
 
@@ -843,8 +850,8 @@ def confirm(
     if agent not in factories:
         console.print(f"[red]unknown agent {agent}; choose from {list(factories)}[/red]")
         raise typer.Exit(1)
-    if maker_fill not in ("optimistic", "resting"):
-        console.print(f"[red]unknown maker-fill {maker_fill!r}; choose optimistic or resting[/red]")
+    if maker_fill not in ("optimistic", "resting", "resting-close"):
+        console.print(f"[red]unknown maker-fill {maker_fill!r}; choose optimistic, resting or resting-close[/red]")
         raise typer.Exit(1)
     per_year = {"1m": 525_600, "5m": 105_120, "15m": 35_040,
                 "1h": 8_760, "4h": 2_190, "1d": 365}.get(interval, 8_760)
