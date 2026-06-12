@@ -24,6 +24,7 @@ from hl_bot.agents.decisions import Decision, log_decision
 from hl_bot.agents.runtime import (
     apply_allocator_caps,
     classify_position_ownership,
+    closes_15m_bars,
     overlay_ws_snapshot,
     positions_from_clearinghouse,
     reconcile_agents,
@@ -320,3 +321,64 @@ def test_enrich_view_skips_coin_with_too_few_bars(monkeypatch):
     view = _enrich_with_window(monkeypatch, candles, 60)
     assert "TST" not in view.extra["candles_1h"]
     assert "TST" not in view.extra["closes"]
+
+
+# ---------------------------------------------------------------------------
+# 15m closes feed for long-horizon channel agents (B-EDGE2a)
+# ---------------------------------------------------------------------------
+
+
+def test_closes_15m_bars_roster_scan():
+    from hl_bot.agents.breakout import BreakoutAgent
+
+    on = BreakoutAgent(config={"lookback_bars": 384, "exit_lookback_bars": 96,
+                               "closes_key": "closes_15m"})
+    off = BreakoutAgent(config={"lookback_bars": 999})  # default key: not a consumer
+    assert closes_15m_bars([]) == 0
+    assert closes_15m_bars([off, SimpleNamespace(name="no_cfg")]) == 0
+    assert closes_15m_bars([off, on]) == 385, "longest channel + in-progress bar"
+    # an exit channel longer than the entry channel still sizes the feed
+    long_exit = BreakoutAgent(config={"lookback_bars": 4, "exit_lookback_bars": 500,
+                                      "closes_key": "closes_15m"})
+    assert closes_15m_bars([on, long_exit]) == 501
+
+
+class _FakeHlClient15m(_FakeHlClient):
+    """Serves 1m and 15m candleSnapshots from separate canned sets."""
+
+    candles_15m: list[dict] = []
+
+    def post(self, url, json=None):
+        req = (json or {}).get("req") or {}
+        if (json or {}).get("type") == "candleSnapshot" and req.get("interval") == "15m":
+            _FakeHlClient.requests.append(req)
+            return _Resp(list(_FakeHlClient15m.candles_15m))
+        return super().post(url, json=json)
+
+
+def test_enrich_view_fetches_15m_closes_only_when_asked(monkeypatch):
+    import httpx
+
+    from hl_bot.cli.main import _enrich_view
+
+    _FakeHlClient.candles = [{"t": i * 60_000, "c": 100.0, "v": 1.0} for i in range(60)]
+    _FakeHlClient15m.candles_15m = [{"t": i * 900_000, "c": 200.0 + i, "v": 1.0}
+                                    for i in range(40)]
+    _FakeHlClient.requests = []
+    monkeypatch.setattr(httpx, "Client", _FakeHlClient15m)
+
+    view = MarketView(ts_ms=0, mids={"TST": 100.0})
+    _enrich_view(view, "http://fake", {"TST": 1e9}, vwap_window=60, closes_15m_bars=33)
+    reqs_15m = [r for r in _FakeHlClient.requests if r["interval"] == "15m"]
+    assert len(reqs_15m) == 1
+    assert reqs_15m[0]["endTime"] - reqs_15m[0]["startTime"] == 33 * 900_000
+    assert view.extra["closes_15m"]["TST"] == [200.0 + i for i in range(7, 40)], \
+        "trailing closes_15m_bars closes, in-progress bar last"
+    assert view.extra["closes"]["TST"], "1m feed unaffected"
+
+    # default bars=0: no 15m traffic at all (live ticks without breakout pay nothing)
+    _FakeHlClient.requests = []
+    view2 = MarketView(ts_ms=0, mids={"TST": 100.0})
+    _enrich_view(view2, "http://fake", {"TST": 1e9}, vwap_window=60)
+    assert all(r["interval"] == "1m" for r in _FakeHlClient.requests)
+    assert view2.extra["closes_15m"] == {}

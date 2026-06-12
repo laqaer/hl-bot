@@ -12,11 +12,13 @@ Entry : mid breaks the prior ``lookback_bars`` close-channel by more than
 Exit  : mid crosses the opposite extreme of the prior ``exit_lookback_bars``
         closes (classic Donchian exit), OR ±stop_loss_pct, OR max hold.
 
-Data  : view.extra['closes'] — trailing closes per coin, current bar last
-        (== mid in backtest frames). Frames carry ``vwap_window`` closes, so a
-        lookback of N needs --vwap-window ≥ N+1; live ``_enrich_view`` fetches
-        the same window. Lookback is in BARS — at 1m bars 240 = a 4h channel,
-        at 15m bars 16 = the same 4h.
+Data  : view.extra[``closes_key``] — trailing closes per coin, current bar
+        last (== mid in backtest frames). Default key 'closes' (backtest frames
+        carry ``vwap_window`` closes, so a lookback of N needs --vwap-window ≥
+        N+1); the live roster sets 'closes_15m' so the validated 15m-bar
+        channel rides ``_enrich_view``'s dedicated 15m feed instead of the 1m
+        VWAP window. Lookback is in BARS — at 1m bars 240 = a 4h channel, at
+        15m bars 16 = the same 4h.
 """
 
 from __future__ import annotations
@@ -85,6 +87,7 @@ class BreakoutConfig:
     max_notional_per_trade: float = 200.0
     max_total_notional: float = float("inf")
     max_concurrent_positions: int = 5
+    closes_key: str = "closes"        # view.extra key carrying trailing closes
 
 
 class BreakoutAgent(Agent):
@@ -107,6 +110,7 @@ class BreakoutAgent(Agent):
             max_notional_per_trade=float(c.get("max_notional_per_trade", 200.0)),
             max_total_notional=float(c.get("max_total_notional", float("inf"))),
             max_concurrent_positions=int(c.get("max_concurrent_positions", 5)),
+            closes_key=str(c.get("closes_key", "closes")),
         )
         self.conn = conn
 
@@ -145,7 +149,9 @@ class BreakoutAgent(Agent):
 
     def decide(self, view: MarketView) -> list[Decision]:
         out: list[Decision] = []
-        closes_by_coin: dict[str, list[float]] = view.extra.get("closes", {}) or {}
+        closes_by_coin: dict[str, list[float]] = (
+            view.extra.get(self.cfg.closes_key, {}) or {}
+        )
         vol: dict[str, float] = view.extra.get("day_ntl_vlm", {}) or {}
         open_pos, last_flat_ms = self._position_state()
         now_ms = int(time.time() * 1000)
@@ -223,7 +229,7 @@ class BreakoutAgent(Agent):
                 agent=self.name, action="hold",
                 reasoning=(
                     f"no {self.cfg.lookback_bars}-bar channel breaks among "
-                    f"{len(closes_by_coin)} coins w/ closes"
+                    f"{len(closes_by_coin)} coins w/ {self.cfg.closes_key}"
                 ),
                 market_snapshot={"n_close_coins": len(closes_by_coin),
                                  "n_active": len(active)},

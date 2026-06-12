@@ -105,6 +105,11 @@ sudo -u hlbot bash -c 'cd /opt/hl-bot && HLBOT_DB=data/hlbot_paper.sqlite uv run
 Note the live tick in live mode runs only promoted agents — paper evidence for
 a candidate accumulates only where paper ticks actually run.
 
+The paper roster includes `breakout_v1` (96h Donchian channel on 15m bars,
+B-EDGE2a), which adds one 15m candleSnapshot call per top-20 coin to each
+paper tick; live ticks skip the feed entirely unless breakout is promoted in
+`agent_state`.
+
 ## Kill switch
 
 ```bash

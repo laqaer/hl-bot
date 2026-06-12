@@ -47,6 +47,29 @@ def resolve_vwap_window(
     return default
 
 
+def closes_15m_bars(agents: list[Agent]) -> int:
+    """Bars of 15m closes this roster needs (0 = no agent consumes the feed).
+
+    An agent opts in by exposing ``cfg.closes_key == "closes_15m"`` (e.g. the
+    breakout roster entry); the feed must carry its longest channel plus the
+    in-progress bar, so the requirement is ``max(lookback, exit_lookback) + 1``.
+    Returns the max across such agents so one fetch serves them all, and 0 when
+    none ask — the tick then pays zero extra API calls (live mode today, where
+    breakout isn't promoted into the roster).
+    """
+    bars = 0
+    for a in agents:
+        cfg = getattr(a, "cfg", None)
+        if getattr(cfg, "closes_key", None) != "closes_15m":
+            continue
+        need = 1 + max(
+            int(getattr(cfg, "lookback_bars", 0)),
+            int(getattr(cfg, "exit_lookback_bars", 0)),
+        )
+        bars = max(bars, need)
+    return bars
+
+
 def fetch_market_view(base_url: str, coins: list[str]) -> MarketView:
     """Fetch mids + 1h funding + 24h volume for all coins via /info.
 

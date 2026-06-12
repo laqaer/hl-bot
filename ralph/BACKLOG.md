@@ -100,6 +100,16 @@ Keep it ruthlessly prioritized: the top item should always be the highest-levera
   replay (entry_px/sz known; position_value=sz·entry; liq/uPnL approximated)
   so femr's section-1 exit logic runs on the paper book too. Other agents are
   unaffected (their exits replay their own log).
+- [ ] **B-PAPER3 — paper-book scorecard.** Found during B-EDGE2a: `score_agent`
+  is fills-based, and a paper book produces no fills — every goals/promotion
+  metric for a paper-only agent is N/A, so the supervisor can't read the
+  forward-test evidence the paper book now records (breakout_v1's declared
+  promotion gates can never fire from paper). Fix: a paper-PnL scorer that
+  replays the paper decision book (entry px → exit px, modeled taker fees,
+  funding from history) into the same Scorecard shape, surfaced via `hlbot
+  score --paper` / track-record, NOT auto-promotion (promotion to live stays
+  human-gated regardless). Until then, G1 judgment on breakout is a manual
+  read of the paper decision log.
 
 - [x] **B6/B7 — Per-agent funding attribution + Sharpe.** Done: funding split to
   the agent holding the coin at funding time (scoring includes it in net/edge);
@@ -310,19 +320,15 @@ each on ≥90d real history (`hlbot confirm` / `hlbot backtest --config`) before
   in channel length (4h −7.4 → 96h +36.4 taker). Caveats: one 52d regime sample;
   maker fills optimistic for momentum (use taker numbers); edge lives at 15m
   cadence / 48–96h horizon, NOT the live 1m loop. Remaining:
-  - [ ] **B-EDGE2a — paper wiring.** Live plumbing for a 15m-cadence agent
-    (96h channel needs 5760×1m or 385×15m bars — beyond `_enrich_view`'s 1m
-    fetch); roster entry paper-only. No live flip (human-gated).
-    _Foundation done (Iter 37, B-PAPER): paper ticks now produce a real,
-    live-separated paper book, so a roster entry accumulates evidence._
-    Remaining: (1) 15m closes feed — fetch `lookback+1`×15m candles per top
-    coin in `_enrich_view` into `view.extra["closes_15m"]` (one API call per
-    coin, ~385 rows, under the ~5000 cap; fresher than the hourly-harvested
-    store and works on any box), gated on breakout being in the roster so live
-    mode (where it isn't promoted) pays nothing; (2) breakout `closes_key`
-    config (default `"closes"` keeps backtests on frame closes; roster entry
-    sets `"closes_15m"`); (3) roster entry with the validated 15m config
-    (lookback 384 / exit 96) + a goals yaml.
+  - [x] **B-EDGE2a — paper wiring.** Done (Iter 38): `closes_key` config on
+    breakout (default `"closes"`, backtests untouched), `closes_15m` feed in
+    `_enrich_view` sized by `runtime.closes_15m_bars(agents)` (0 ⇒ zero extra
+    API calls — live mode today, since the live filter drops unpromoted
+    agents), roster entry with the validated lb=384/ex=96 config ($20/trade,
+    $60 cap) + `configs/breakout_v1.yaml` (paper, promotion→live_small only).
+    Live-fire verified: tick 1 entered XPL long `is_paper=1` (opposite twap_mr's
+    XPL short!), tick 2 replayed it and held. Paper G1 evidence now accumulates
+    wherever paper ticks run.
   - [ ] **B-EDGE2b — revalidate as the store grows** (15m span 52d→90d+):
     rerun both confirms each few weeks; momentum is regime-fragile.
   - [x] **B-EDGE2c — quantify correlation to twap_mr_v1.** Done (Iter 36):

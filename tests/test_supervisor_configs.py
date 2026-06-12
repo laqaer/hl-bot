@@ -47,6 +47,14 @@ def test_twap_and_femr_configs_load():
         assert goals[0].promotion.to_mode == "live_small"
 
 
+def test_breakout_config_loads_paper_only():
+    goals = load_goals(CONFIG_DIR / "breakout_v1.yaml")
+    assert goals[0].agent == "breakout_v1"
+    assert goals[0].mode == "paper"
+    assert goals[0].promotion is not None
+    assert goals[0].promotion.to_mode == "live_small"
+
+
 def test_bleeding_twap_is_paused_by_supervisor(conn):
     now = int(time.time() * 1000)
     # Simulate a previously promoted agent: pause must force it back to paper,

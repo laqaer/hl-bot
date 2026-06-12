@@ -236,13 +236,19 @@ def tick(coins: str = "BTC,ETH,SOL,HYPE,ZEC"):
 
 
 def _enrich_view(view, api_url: str, vol: dict[str, float],
-                 vwap_window: int = 60) -> None:
+                 vwap_window: int = 60, closes_15m_bars: int = 0) -> None:
     """Augment a MarketView with rolling VWAP/σ (top-vol coins), spot mids, liquidations.
 
     ``vwap_window`` is the number of 1m candles in the rolling window (60 = the
     historical 1h live config). VWAP/σ math is the backtester's
     ``rolling_vwap_sigma`` so live and backtest agree bar-for-bar (B-WIN2);
     the ``candles_1h`` key name is kept for agent compatibility.
+
+    ``closes_15m_bars`` > 0 additionally fetches that many 15m candles per top
+    coin into ``view.extra["closes_15m"]`` (current in-progress bar last, like
+    backtest frames) for channel agents whose horizon outruns the 1m window
+    (B-EDGE2a: breakout's 96h channel = 385×15m bars, one API call per coin,
+    well under the ~5000-row cap). 0 = skip, no extra API traffic.
     """
     import httpx as _httpx
 
@@ -254,6 +260,7 @@ def _enrich_view(view, api_url: str, vol: dict[str, float],
 
     candles_1h: dict[str, dict] = {}
     closes_by_coin: dict[str, list[float]] = {}
+    closes_15m_by_coin: dict[str, list[float]] = {}
     spot_mids: dict[str, float] = {}
 
     with _httpx.Client(timeout=15) as cli:
@@ -277,6 +284,25 @@ def _enrich_view(view, api_url: str, vol: dict[str, float],
                 closes_by_coin[coin] = pxs[-vwap_window:]
             except Exception:  # noqa: BLE001
                 continue
+
+        # 15m closes feed for long-horizon channel agents (per-coin error
+        # isolation like the 1m loop; a short history is fine — channel_break
+        # just won't fire until enough bars exist).
+        if closes_15m_bars > 0:
+            start_15m = end_ms - closes_15m_bars * 900_000
+            for coin in top_coins:
+                try:
+                    cs = cli.post(api_url + "/info", json={
+                        "type": "candleSnapshot",
+                        "req": {"coin": coin, "interval": "15m",
+                                "startTime": start_15m, "endTime": end_ms},
+                    }).json() or []
+                    if not isinstance(cs, list) or not cs:
+                        continue
+                    pxs, _vols, _ts = closes_vols(cs)
+                    closes_15m_by_coin[coin] = pxs[-closes_15m_bars:]
+                except Exception:  # noqa: BLE001
+                    continue
 
         # Spot mids for BTC/ETH/SOL. HL spot pairs use wrapped tokens
         # (UBTC/USDC=@142, UETH/USDC=@151, USOL/USDC=@156) and the midPx is
@@ -338,6 +364,7 @@ def _enrich_view(view, api_url: str, vol: dict[str, float],
     # no real feed yet, so it keeps entries disabled (REVIEW C6 / B11).
     view.extra["candles_1h"] = candles_1h
     view.extra["closes"] = closes_by_coin
+    view.extra["closes_15m"] = closes_15m_by_coin
     view.extra["spot_mids"] = spot_mids
     view.extra["liquidations"] = []
     view.extra["liquidations_feed"] = False
@@ -356,6 +383,7 @@ def femr_tick(live: bool = False, execution: str = "taker", vwap_window: int = 0
     from ..agents.runtime import (
         apply_allocator_caps,
         classify_position_ownership,
+        closes_15m_bars,
         fetch_market_view,
         gather_decisions,
         overlay_ws_snapshot,
@@ -432,6 +460,16 @@ def femr_tick(live: bool = False, execution: str = "taker", vwap_window: int = 0
         TwapMrRegimeAgent(config=_cfg("twap_mr_regime_v1", {}), conn=conn),
         LiqCascadeAgent(config=_cfg("liq_cascade_v1", {}), conn=conn),
         BasisAgent(config=_cfg("basis_v1", {}), conn=conn),
+        # B-EDGE2a: the G0-validated 15m-bar Donchian config (96h channel,
+        # 24h exit). Paper-only until promoted in agent_state — the live
+        # filter below drops it, which also zeroes the 15m feed in live mode.
+        BreakoutAgent(config=_cfg("breakout_v1", {
+            "lookback_bars": 384,
+            "exit_lookback_bars": 96,
+            "closes_key": "closes_15m",
+            "max_notional_per_trade": 20.0,
+            "max_total_notional": 60.0,
+        }), conn=conn),
     ]
     if live:
         agents, skipped_live = _filter_live_agents_by_state(conn, agents)
@@ -466,7 +504,9 @@ def femr_tick(live: bool = False, execution: str = "taker", vwap_window: int = 0
 
     view = fetch_market_view(s.hl_api_url, [])
     w = resolve_vwap_window(vwap_window, _os.environ)
-    _enrich_view(view, s.hl_api_url, view.extra.get("day_ntl_vlm", {}), vwap_window=w)
+    bars_15m = closes_15m_bars(agents)
+    _enrich_view(view, s.hl_api_url, view.extra.get("day_ntl_vlm", {}),
+                 vwap_window=w, closes_15m_bars=bars_15m)
 
     # Overlay a fresh WS snapshot if available (sub-second mids, L2 book, and a
     # REAL liquidations feed for liq_cascade). Purely additive; REST is the
@@ -503,9 +543,14 @@ def femr_tick(live: bool = False, execution: str = "taker", vwap_window: int = 0
         conn, all_positions, [a.name for a in agents], paper=not live)
     owned_all = ownership.owned_all
     manual_coins = ownership.manual_coins
+    feed_15m = (
+        f"closes15m: {len(view.extra.get('closes_15m', {}))} coins (≤{bars_15m} bars) · "
+        if bars_15m else ""
+    )
     console.print(
         f"[dim]market: {len(view.mids)} coins, {len(view.funding)} funding · "
         f"candles: {len(view.extra.get('candles_1h', {}))} (vwap w={w}) · "
+        f"{feed_15m}"
         f"spot: {sorted(view.extra.get('spot_mids', {}).keys())} · "
         f"liqs: {len(view.extra.get('liquidations', []))} · "
         f"acct ${acct_val:.2f}, free ${withdrawable:.2f} · "

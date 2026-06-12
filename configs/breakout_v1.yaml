@@ -1,0 +1,37 @@
+agent: breakout_v1
+description: Donchian close-channel momentum — 96h entry / 24h exit channel on 15m bars (B-EDGE2).
+mode: paper
+
+# Numbers are sized for the roster's paper config ($20/trade, $60 book).
+# Backtest basis (15m × 52d store, 10 coins): taker +36.4bps, win 53-55%,
+# maxDD -9.1%. NOTE: score_agent is fills-based, and a paper book produces no
+# fills — these metrics stay N/A (never trigger) until the agent trades
+# live_small or a paper-book scorecard exists. The gates are pre-declared so
+# the promotion bar is on record before any size is at stake.
+goals:
+  primary:
+    metric: edge_bps
+    window: 7d
+    op: ">="
+    threshold: 0
+  secondary:
+    - {metric: net_pnl, window: 30d, op: ">=", threshold: 0}
+    - {metric: win_rate, window: 30d, op: ">=", threshold: 0.45}
+
+guardrails:
+  - {metric: net_pnl,  window: 24h, op: ">=", threshold: -15,
+     action: pause,  reason: "24h realized loss > $15 on a $60 book"}
+  - {metric: edge_bps, window: 7d,  op: ">=", threshold: -20,
+     action: demote, reason: "7d realized edge < -20 bps — momentum regime broke"}
+  - {metric: edge_bps, window: 24h, op: ">=", threshold: -60,
+     action: alert,  reason: "24h edge < -60 bps"}
+
+# Promotion is paper -> live_small ONLY, behind sample + edge gates set at
+# roughly half the backtest edge. It can never auto-promote to full live.
+promotion:
+  from: paper
+  to: live_small
+  conditions:
+    - {metric: edge_bps, window: 30d, op: ">=", threshold: 15}
+    - {metric: net_pnl,  window: 30d, op: ">=", threshold: 5}
+    - {metric: n_trades, window: 30d, op: ">=", threshold: 60}

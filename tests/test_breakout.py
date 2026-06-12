@@ -163,6 +163,35 @@ def test_decide_holds_winner_inside_channel():
 
 
 # ---------------------------------------------------------------------------
+# closes_key: the live roster feeds 15m closes under a different view key
+# ---------------------------------------------------------------------------
+
+
+def test_decide_closes_key_routes_entry_feed():
+    breakout = [100.0] * 12 + [102.0]
+    view = MarketView(ts_ms=20 * MIN, mids={"UP": 102.0},
+                      extra={"closes": {}, "closes_15m": {"UP": breakout},
+                             "day_ntl_vlm": VOL})
+    out = _agent({"closes_key": "closes_15m"}).decide(view)
+    assert any(d.action == "place" and d.coin == "UP" for d in out)
+    # default-key agent on the same view sees no closes -> holds
+    out = _agent().decide(view)
+    assert all(d.action == "hold" for d in out)
+
+
+def test_decide_closes_key_routes_exit_feed():
+    conn = init_db(":memory:")
+    _seed_long(conn, "UP", 100.0)
+    exit_pattern = [100.0, 99.5, 100.5] * 3 + [99.0]  # mid < prior 5-bar min
+    view = MarketView(ts_ms=10 * MIN, mids={"UP": 99.0},
+                      extra={"closes": {}, "closes_15m": {"UP": exit_pattern},
+                             "day_ntl_vlm": VOL})
+    out = _agent({"closes_key": "closes_15m"}, conn).decide(view)
+    flats = [d for d in out if d.action == "flatten"]
+    assert len(flats) == 1 and "CHANNEL-EXIT" in flats[0].reasoning
+
+
+# ---------------------------------------------------------------------------
 # Engine integration: trend pays, chop doesn't trade
 # ---------------------------------------------------------------------------
 

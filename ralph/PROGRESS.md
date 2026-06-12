@@ -1718,3 +1718,63 @@ breakout in roster), breakout `closes_key` config, roster entry with the
 validated lb=384/ex=96 config + goals yaml. Then the paper book starts
 accumulating breakout's G1 evidence while B-G014 waits on the store
 (~2026-06-26).
+
+## Iteration 38 — 2026-06-12 — B-EDGE2a: breakout_v1 is in the paper roster — the second edge starts its forward test
+
+**What.** Wired the G0-validated breakout config (Iter 35: 96h Donchian
+channel on 15m bars, taker +36.4bps / 52d) into the live tick as a paper-only
+roster agent, completing B-EDGE2a on the Iter-37 paper-book foundation:
+
+- `BreakoutConfig.closes_key` (default `"closes"`) — the agent reads its
+  trailing closes from a configurable `view.extra` key, so backtests keep
+  consuming frame closes unchanged while the roster entry consumes a
+  dedicated 15m feed.
+- `_enrich_view(closes_15m_bars=N)` — fetches N×15m candles per top-20 coin
+  into `view.extra["closes_15m"]` (in-progress bar last, matching backtest
+  frame semantics; per-coin error isolation like the 1m loop). Sized by the
+  new `runtime.closes_15m_bars(agents)`: max(lookback, exit_lookback)+1
+  across roster agents that declare `closes_key == "closes_15m"`, 0 when none
+  — and in live mode `_filter_live_agents_by_state` drops unpromoted agents
+  BEFORE the feed size is computed, so live ticks pay zero extra API calls
+  until an operator promotes breakout (the no-silent-cost gate the backlog
+  asked for).
+- Roster entry: lb=384/ex=96 (the validated 96h/24h channels), $20/trade,
+  $60 book — femr-scale paper sizing. `configs/breakout_v1.yaml`: paper mode,
+  guardrails sized to the $60 book (pause at −$15/24h, demote at 7d edge
+  <−20bps), promotion paper→live_small only, gates at ~half the backtest edge
+  (30d: edge ≥15bps, net ≥$5, ≥60 trades).
+
+**Why.** Diversification before AUM: breakout is the only candidate that
+passed G0 with positive taker edge (Iter 35) and is ~uncorrelated with
+twap_mr (Iter 36, corr ≈ −0.1). G1 needs forward-test evidence, which only
+starts accumulating once the agent actually runs — every week of delay is a
+week of missing track record while B-G014 waits on the store (~2026-06-26).
+
+**Evidence.** 220 tests pass (5 new: closes_key routes entry+exit feeds in
+test_breakout.py; closes_15m_bars roster scan incl. exit-channel-longer case
+and the bars=0/no-traffic path in test_tick_harness.py with an
+interval-aware fake client; breakout_v1.yaml loads paper-mode with
+live_small-only promotion in test_supervisor_configs.py); ruff clean.
+Live-fire (real API, scratch DB, 2 paper ticks): tick 1 — `closes15m: 20
+coins (≤385 bars)`, breakout_v1 entered XPL long (+1.05% beyond the 384-bar
+channel) logged `is_paper=1`, while twap_mr SHORTED the same coin — the
+opposite-regime construction visible on the very first tick; tick 2 —
+bot-owned [XMR, XPL], breakout held (no re-entry), hold line correctly
+reports "w/ closes_15m". Docs: deploy/README §Paper book notes the roster
+addition + its API cost. No edge claim beyond Iter 35's; no live change
+(paper rows only; live roster/feed gated as above).
+
+**Honest caveats.** (1) Cadence fidelity: the backtest decides on 15m bar
+CLOSES; the live loop evaluates the current mid every tick, so an intra-bar
+wick that retraces by the close can enter live-paper where the backtest
+wouldn't — expect the paper track to be slightly more trigger-happy than G0;
+judge G1 accordingly. (2) Discovered and filed B-PAPER3: `score_agent` is
+fills-based, so the supervisor sees N/A for every paper-only metric — the
+paper book RECORDS evidence but nothing SCORES it yet; breakout's declared
+promotion gates are inert until a paper-PnL scorecard exists (and promotion
+stays human-gated regardless). (3) Top-20-by-volume universe ≠ the 10-coin
+backtest universe; coins drift in/out with volume rank.
+
+**What's next (loop).** B-PAPER3 (paper scorecard — turns the accumulating
+book into readable G1 numbers), B-PAPER2 (femr paper exits), B-EDGE2b
+re-confirm as the store grows, B12 remainder. B-G014 unblocks ~2026-06-26.
