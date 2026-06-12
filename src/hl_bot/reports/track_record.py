@@ -9,6 +9,12 @@ go-live gates reference.
 
 Everything is computed from the same tables and ``score_agent`` used live, so the
 track record can never flatter the live numbers.
+
+Agents that only trade on paper get their own clearly-labeled section
+(B-PAPER3b): the paper decision book replayed under modeled taker costs +
+modeled funding accrual (``scoring/paper.py``). Paper numbers are forward-test
+evidence, NOT exchange truth — they are kept out of the live per-agent table
+and the account equity curve so the headline record stays fills-based.
 """
 
 from __future__ import annotations
@@ -21,6 +27,17 @@ from pathlib import Path
 from typing import Any
 
 from ..scoring.metrics import list_agents, score_agent
+from ..scoring.paper import (
+    list_paper_agents,
+    paper_daily_pnl,
+    paper_open_positions,
+    score_paper_agent,
+)
+
+PAPER_NOTE = (
+    "forward test — paper decision book replayed under modeled taker costs "
+    "+ modeled funding accrual; not exchange fills"
+)
 
 
 def _account_equity_curve(conn: sqlite3.Connection) -> list[tuple[int, float]]:
@@ -74,6 +91,7 @@ def build_track_record(
     conn: sqlite3.Connection,
     *,
     now_ms: int | None = None,
+    paper_funding_by_coin: dict[str, list[dict[str, Any]]] | None = None,
 ) -> dict[str, Any]:
     now_ms = now_ms or int(time.time() * 1000)
     curve = _account_equity_curve(conn)
@@ -94,6 +112,7 @@ def build_track_record(
             "total_return_pct": (curve[-1][1] / curve[0][1] - 1.0) if curve[0][1] else None,
         })
 
+    paper_roster = set(list_paper_agents(conn))
     agents = [
         a for a in list_agents(conn)
         if a not in ("_account", "manual") and not a.startswith("unknown:")
@@ -101,6 +120,8 @@ def build_track_record(
     per_agent: list[dict[str, Any]] = []
     for a in agents:
         all_sc = score_agent(conn, a, "all")
+        if all_sc.n_trades == 0 and a in paper_roster:
+            continue  # paper-only agent: its record lives in the paper section
         daily = _agent_daily_pnl(conn, a)
         per_agent.append({
             "agent": a,
@@ -116,12 +137,41 @@ def build_track_record(
             },
         })
 
-    return {
+    paper: list[dict[str, Any]] = []
+    for a in sorted(paper_roster):
+        sc = score_paper_agent(
+            conn, a, "all", now_ms=now_ms, funding_by_coin=paper_funding_by_coin)
+        daily = paper_daily_pnl(
+            conn, a, now_ms=now_ms, funding_by_coin=paper_funding_by_coin)
+        paper.append({
+            "agent": a,
+            "n_trades": sc.n_trades,
+            "net_pnl": sc.net_pnl,
+            "funding_pnl": sc.funding_pnl,
+            "edge_bps": sc.edge_bps,
+            "win_rate": sc.win_rate,
+            "sharpe_daily": _daily_sharpe(daily),
+            "max_drawdown_usd": _dollar_max_drawdown(daily),
+            "open_positions": len(paper_open_positions(conn, a)),
+            "windows": {
+                w: score_paper_agent(
+                    conn, a, w,  # type: ignore[arg-type]
+                    now_ms=now_ms, funding_by_coin=paper_funding_by_coin,
+                ).as_dict()
+                for w in ("24h", "7d", "30d")
+            },
+        })
+
+    out: dict[str, Any] = {
         "generated_ms": now_ms,
         "account": account,
         "equity_curve": curve,
         "agents": sorted(per_agent, key=lambda d: d["net_pnl"], reverse=True),
     }
+    if paper:
+        out["paper_note"] = PAPER_NOTE
+        out["paper_agents"] = sorted(paper, key=lambda d: d["net_pnl"], reverse=True)
+    return out
 
 
 def to_markdown(track: dict[str, Any]) -> str:
@@ -148,6 +198,20 @@ def to_markdown(track: dict[str, Any]) -> str:
             f"{_bps(ag['edge_bps'])} | {ag['win_rate']*100:.0f}% | "
             f"{_num(ag['sharpe_daily'])} | {_money(ag['max_drawdown_usd'])} |"
         )
+    if track.get("paper_agents"):
+        lines.append("")
+        lines.append("## Paper agents (NOT live)")
+        lines.append(f"_{track['paper_note']}_")
+        lines.append("")
+        lines.append("| agent | trades | net | funding | edge | win | sharpe(d) | maxDD$ | open |")
+        lines.append("|---|--:|--:|--:|--:|--:|--:|--:|--:|")
+        for ag in track["paper_agents"]:
+            lines.append(
+                f"| {ag['agent']} | {ag['n_trades']} | ${ag['net_pnl']:+.2f} | "
+                f"${ag['funding_pnl']:+.2f} | {_bps(ag['edge_bps'])} | "
+                f"{ag['win_rate']*100:.0f}% | {_num(ag['sharpe_daily'])} | "
+                f"{_money(ag['max_drawdown_usd'])} | {ag['open_positions']} |"
+            )
     return "\n".join(lines)
 
 
@@ -215,6 +279,25 @@ def to_html(track: dict[str, Any]) -> str:
         f"<td>{_money(ag['max_drawdown_usd'])}</td></tr>"
         for ag in track["agents"]
     )
+    paper_section = ""
+    if track.get("paper_agents"):
+        paper_rows = "".join(
+            f"<tr><td>{ag['agent']}</td><td>{ag['n_trades']}</td>"
+            f"<td>${ag['net_pnl']:+.2f}</td><td>${ag['funding_pnl']:+.2f}</td>"
+            f"<td>{_bps(ag['edge_bps'])}</td><td>{ag['win_rate']*100:.0f}%</td>"
+            f"<td>{_num(ag['sharpe_daily'])}</td>"
+            f"<td>{_money(ag['max_drawdown_usd'])}</td>"
+            f"<td>{ag['open_positions']}</td></tr>"
+            for ag in track["paper_agents"]
+        )
+        paper_section = (
+            "<h2>Paper agents (NOT live)</h2>"
+            f"<p class=\"muted\">{track['paper_note']}</p>"
+            "<table><thead><tr><th>agent</th><th>trades</th><th>net</th>"
+            "<th>funding</th><th>edge</th><th>win</th><th>sharpe(d)</th>"
+            "<th>maxDD$</th><th>open</th></tr></thead>"
+            f"<tbody>{paper_rows}</tbody></table>"
+        )
     return (
         "<!doctype html><html><head><meta charset=\"utf-8\">"
         "<title>hl-bot track record</title><style>"
@@ -234,13 +317,18 @@ def to_html(track: dict[str, Any]) -> str:
         "<h2>Per-agent</h2><table><thead><tr><th>agent</th><th>trades</th><th>net</th>"
         "<th>edge</th><th>win</th><th>sharpe(d)</th><th>maxDD$</th></tr></thead><tbody>"
         f"{rows or '<tr><td colspan=7 class=muted>no agent fills yet</td></tr>'}"
-        "</tbody></table></body></html>"
+        f"</tbody></table>{paper_section}</body></html>"
     )
 
 
-def export(conn: sqlite3.Connection, out_dir: str | Path) -> tuple[Path, Path, Path]:
+def export(
+    conn: sqlite3.Connection,
+    out_dir: str | Path,
+    *,
+    paper_funding_by_coin: dict[str, list[dict[str, Any]]] | None = None,
+) -> tuple[Path, Path, Path]:
     """Write track_record.{json,md,html}; return their paths."""
-    track = build_track_record(conn)
+    track = build_track_record(conn, paper_funding_by_coin=paper_funding_by_coin)
     d = Path(out_dir)
     d.mkdir(parents=True, exist_ok=True)
     jp = d / "track_record.json"

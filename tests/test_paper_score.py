@@ -16,6 +16,7 @@ from hl_bot.backtest.engine import CostModel
 from hl_bot.db.schema import init_db
 from hl_bot.scoring.paper import (
     list_paper_agents,
+    paper_daily_pnl,
     paper_open_positions,
     replay_paper_fills,
     score_paper_agent,
@@ -208,6 +209,27 @@ def test_paper_open_positions_and_roster(conn):
     cards = score_paper_all(conn)
     assert {c.agent for c in cards} == {"a", "b"}
     assert {c.window for c in cards} == {"24h", "7d", "30d", "all"}
+
+
+def test_paper_daily_pnl_gap_filled(conn):
+    """Daily series zero-fills idle days, matching the live track-record
+    series, and modeled funding lands on its own day."""
+    now = 100 * DAY_MS
+    # Round trips on day 96 (+10) and day 98 (-5); day 97 idle.
+    for day, (entry, exit_) in [(96, (100.0, 110.0)), (98, (100.0, 95.0))]:
+        _log(conn, "a", day * DAY_MS + 1000, "place", "BTC", "B", 1.0, entry)
+        _log(conn, "a", day * DAY_MS + 2000, "flatten", "BTC", px=exit_)
+    daily = paper_daily_pnl(conn, "a", cost=FREE, now_ms=now)
+    assert daily == pytest.approx([10.0, 0.0, -5.0])
+
+    # A funding event mid-hold lands on its own day (here: the exit day).
+    _log(conn, "b", int(96.5 * DAY_MS), "place", "ETH", "B", 1.0, 100.0)
+    _log(conn, "b", int(97.5 * DAY_MS), "flatten", "ETH", px=100.0)
+    rates = {"ETH": [{"time": 97 * DAY_MS + 1000, "fundingRate": "0.0001"}]}
+    daily_b = paper_daily_pnl(conn, "b", cost=FREE, funding_by_coin=rates, now_ms=now)
+    assert daily_b == pytest.approx([0.0, -0.01])    # day 96 entry, day 97 funding
+
+    assert paper_daily_pnl(conn, "nobody", cost=FREE, now_ms=now) == []
 
 
 def test_default_cost_is_taker(conn):

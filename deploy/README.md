@@ -126,6 +126,12 @@ human-gated; this is the evidence readout, not an auto-promoter.
 sudo -u hlbot bash -c 'cd /opt/hl-bot && HLBOT_DB=data/hlbot_paper.sqlite uv run hlbot score --paper'
 ```
 
+`hlbot track-record` includes the same paper cards as a clearly-labeled
+"Paper agents (NOT live)" section (B-PAPER3b) in all three exports
+(json/md/html) — paper-only agents never appear in the live per-agent table,
+and the account equity curve stays fills-based. `--no-paper-funding` skips
+the funding-rate fetches like `score --no-funding`.
+
 ## Kill switch
 
 ```bash

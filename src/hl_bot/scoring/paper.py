@@ -291,6 +291,39 @@ def score_paper_agent(
     )
 
 
+def paper_daily_pnl(
+    conn: sqlite3.Connection,
+    agent: str,
+    cost: CostModel | None = None,
+    funding_by_coin: dict[str, list[dict[str, Any]]] | None = None,
+    now_ms: int | None = None,
+) -> list[float]:
+    """Gap-filled daily net-PnL series of the agent's paper book.
+
+    Matches the live track record's fills-based series semantics (each fill's
+    ``closed_pnl - fee`` on the fill's UTC day, zero-filled between first and
+    last active day) so report-level Sharpe/drawdown columns mean the same
+    thing for paper and live agents. Modeled funding events land on their own
+    day, like live ``funding_payments``.
+    """
+    now_ms = now_ms if now_ms is not None else int(time.time() * 1000)
+    rows = _paper_rows(conn, agent)
+    fills, _ = replay_paper_fills(rows, cost)
+    buckets: dict[int, float] = {}
+    for f in fills:
+        d = f.ts_ms // 86_400_000
+        buckets[d] = buckets.get(d, 0.0) + f.closed_pnl - f.fee
+    if funding_by_coin:
+        for t, u in modeled_funding_events(
+                replay_paper_holds(rows), funding_by_coin, now_ms):
+            d = t // 86_400_000
+            buckets[d] = buckets.get(d, 0.0) + u
+    if not buckets:
+        return []
+    lo, hi = min(buckets), max(buckets)
+    return [buckets.get(d, 0.0) for d in range(lo, hi + 1)]
+
+
 def paper_open_positions(
     conn: sqlite3.Connection, agent: str, cost: CostModel | None = None
 ) -> list[PaperPosition]:

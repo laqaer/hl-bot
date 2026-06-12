@@ -1955,3 +1955,61 @@ goal readout — femr's paper card is now fully judgeable so the wiring has
 real payload), B12 remainder (femr_tick preamble harness), B-EDGE2b
 re-confirm as the store grows. B-G014 unblocks ~2026-06-26 (store 1m span
 ≥14d).
+
+## Iteration 42 — 2026-06-12 — B-PAPER3b: track record grows a paper section
+
+**What.** The track record (the Path-C artifact capital decisions are made on)
+now surfaces the paper book instead of hiding it behind a separate CLI:
+
+- `build_track_record` adds `paper_agents` (+ a `paper_note` disclaimer):
+  per-agent paper cards from `score_paper_agent` ("all" + 24h/7d/30d windows,
+  modeled taker costs + modeled funding when rates are supplied) plus
+  `open_positions`. New `scoring.paper.paper_daily_pnl` returns the
+  gap-filled daily net series (fills' closed_pnl−fee on their day, modeled
+  funding events on their own day, zero-filled between first and last active
+  day) so the report's sharpe(d)/maxDD$ columns are computed by the SAME
+  `_daily_sharpe`/`_dollar_max_drawdown` helpers as the live table —
+  column-for-column comparable.
+- md/html render it as "Paper agents (NOT live)" with the forward-test
+  disclaimer; JSON carries `paper_note`. The live per-agent table and the
+  account equity curve stay fills-based.
+- Found while wiring: `list_agents` unions `agent_decisions`, so paper-only
+  agents have ALWAYS appeared in the live table as zero-trade clutter rows.
+  Now an agent with no fills whose only presence is the paper roster is
+  excluded from the live table (its record lives in the paper section); an
+  agent with both books shows in both (pinned by test).
+- `hlbot track-record` fetches funding-rate history for the paper section by
+  default via `_fetch_paper_funding` (extracted from `score --paper`, now
+  shared; per-coin failure degrades that coin to funding=0 with a warning;
+  zero network calls when there is no paper book or with `--no-paper-funding`).
+
+**Why.** B-PAPER3b: the paper book is the forward-test evidence pipeline for
+breakout_v1/femr, but the evidence only existed in an ad-hoc CLI readout. The
+track record is the artifact the operator (and eventually allocators) reads —
+candidates' forward tests belong there, clearly separated from exchange truth
+so the headline record can never flatter.
+
+**Evidence.** 256 tests pass (5 new: paper section numbers exact vs modeled
+costs (net +9.7735 on a 100→110 round trip + open entry), paper-only agent
+excluded from live table, both-books agent in both tables with per-book
+trade counts, funding threading (−$0.01 on a 1×100×1e-4 long hold) folded
+into net, no-paper-book → no section/key, `paper_daily_pnl` gap-fill +
+funding-on-own-day + empty-book). Ruff clean. Live-fire (real API, scratch
+DB): `hlbot track-record` rendered twap_mr_v1 (3 fills) in the live table
+ONLY, breakout_v1 closed round trip with real modeled funding −$0.08 over a
+10h BTC long (longs pay) and femr_v1's open ETH short accruing +$0.01, both
+in the paper section ONLY; `--no-paper-funding` made zero httpx calls; JSON
+has paper_note/windows, HTML has the labeled section. deploy/README §Paper
+book documents the new section.
+
+**Honest caveats.** (1) Paper cards inherit all B-PAPER3/3a limits (modeled
+fills, entry-mid funding marks, realized-only price PnL) — the disclaimer
+line travels with the table. (2) `hlbot track-record` now makes one
+funding-history call per paper coin by default (was fully offline); no-op
+without a paper book, `--no-paper-funding` restores offline.
+
+**What's next (loop).** B-PAPER3c (goal evaluation on paper cards —
+pause/demote only; promotion MUST be suppressed there since `run_once`
+auto-applies promote actions — design note in the backlog), B12 remainder
+(femr_tick preamble harness), B-EDGE2b re-confirm as the store grows.
+B-G014 unblocks ~2026-06-26 (store 1m span ≥14d).

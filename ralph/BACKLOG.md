@@ -120,11 +120,24 @@ Keep it ruthlessly prioritized: the top item should always be the highest-levera
   the hourly mark), window-filtered by event time like live
   funding_payments. femr's paper revenue line is now visible; `funding`
   column added to `hlbot score` output. Live-fire verified on real rates.
-- [ ] **B-PAPER3b — surface paper scorecards in track-record/goals.** The
-  readout exists (`hlbot score --paper`); wire it into `hlbot track-record`
-  as a clearly-labeled paper section, and consider letting goal evaluation
-  consume paper cards for paper-mode agents (pause/demote signals only —
-  promotion stays human-gated).
+- [x] **B-PAPER3b — paper section in the track record.** Done (Iter 42):
+  `build_track_record` grows a `paper_agents` section (per-agent paper cards
+  via `score_paper_agent` + gap-filled `paper_daily_pnl` so sharpe(d)/maxDD$
+  are computed identically to the live columns), rendered as "Paper agents
+  (NOT live)" in md/html/json with an explicit forward-test disclaimer.
+  Paper-only agents no longer leak into the live table as zero-trade rows
+  (`list_agents` sees `agent_decisions`); an agent with both books shows in
+  both. `hlbot track-record` fetches modeled funding for the paper section
+  by default (`--no-paper-funding` opt-out; per-coin failure degrades to 0),
+  sharing `_fetch_paper_funding` with `score --paper`.
+- [ ] **B-PAPER3c — goal evaluation on paper cards (pause/demote ONLY).**
+  Let `supervisor.goals.evaluate` score paper-mode agents from
+  `score_paper_agent` (their fills-based cards are permanently N/A so
+  guardrails can never fire today). **Design constraint:** when paper cards
+  feed the evaluation, the promotion check MUST be suppressed or downgraded
+  to an informational "promotion-ready (human-gated)" alert — `run_once`
+  auto-applies `promote` actions via `_set_mode`, and paper evidence
+  auto-flipping an agent to live_small violates the live-gate hard rule.
 
 - [x] **B6/B7 — Per-agent funding attribution + Sharpe.** Done: funding split to
   the agent holding the coin at funding time (scoring includes it in net/edge);

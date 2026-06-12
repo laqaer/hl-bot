@@ -50,6 +50,29 @@ def _conn():
     return init_db(s.db_path), s
 
 
+def _fetch_paper_funding(conn, s) -> dict[str, list[dict[str, Any]]]:
+    """Funding-rate history covering every paper hold, for modeled accrual.
+
+    One paginated API call per paper coin; a per-coin failure warns and
+    degrades that coin to funding=0 — never crashes the readout. Empty dict
+    when there is no paper book (zero network calls).
+    """
+    from ..backtest.data import fetch_funding_history
+    from ..scoring.paper import paper_funding_spans
+
+    funding_by_coin: dict[str, list[dict[str, Any]]] = {}
+    for coin, (t0, t1) in sorted(paper_funding_spans(conn).items()):
+        try:
+            funding_by_coin[coin] = fetch_funding_history(
+                coin, t0, t1, base_url=s.hl_api_url)
+        except Exception as e:  # noqa: BLE001
+            console.print(
+                f"[yellow]warn:[/yellow] funding history fetch failed for "
+                f"{coin} ({e}); its paper funding_pnl counts as 0"
+            )
+    return funding_by_coin
+
+
 def _filter_live_agents_by_state(conn, agents):
     """Return agents allowed to place live orders plus skipped reasons.
 
@@ -113,20 +136,7 @@ def score(
     """Print per-agent scorecards (--paper: replayed paper book, B-PAPER3)."""
     conn, s = _conn()
     if paper:
-        funding_by_coin: dict[str, list[dict[str, Any]]] = {}
-        if funding:
-            from ..backtest.data import fetch_funding_history
-            from ..scoring.paper import paper_funding_spans
-
-            for coin, (t0, t1) in sorted(paper_funding_spans(conn).items()):
-                try:
-                    funding_by_coin[coin] = fetch_funding_history(
-                        coin, t0, t1, base_url=s.hl_api_url)
-                except Exception as e:  # noqa: BLE001
-                    console.print(
-                        f"[yellow]warn:[/yellow] funding history fetch failed for "
-                        f"{coin} ({e}); its paper funding_pnl counts as 0"
-                    )
+        funding_by_coin = _fetch_paper_funding(conn, s) if funding else {}
         cards = score_paper_all(conn, funding_by_coin=funding_by_coin or None)
         fund_note = "modeled funding" if funding_by_coin else "funding=0"
         title = f"Paper scorecards (decision-book replay · modeled taker costs · {fund_note})"
@@ -1157,16 +1167,26 @@ def doctor(require_live: bool = False):
 
 
 @app.command()
-def track_record(out: Path = Path("data/track_record")):
+def track_record(
+    out: Path = Path("data/track_record"),
+    paper_funding: bool = typer.Option(
+        True, "--paper-funding/--no-paper-funding",
+        help="Model funding accrual over paper holds from HL funding-rate "
+             "history for the paper section (network; per-coin failures "
+             "degrade to funding=0 with a warning). No-op without a paper book.",
+    ),
+):
     """Export a public-grade track record (equity curve, Sharpe, DD, per-agent).
 
     Writes track_record.{json,md} for capital/AUM due diligence (Path C) and the
-    go-live gates. Read-only on the DB.
+    go-live gates. Read-only on the DB. Paper agents appear in their own
+    clearly-labeled forward-test section, never in the live table.
     """
     from ..reports.track_record import export
 
-    conn, _ = _conn()
-    jp, mp, hp = export(conn, out)
+    conn, s = _conn()
+    funding_by_coin = _fetch_paper_funding(conn, s) if paper_funding else {}
+    jp, mp, hp = export(conn, out, paper_funding_by_coin=funding_by_coin or None)
     console.print(mp.read_text())
     console.print(f"[green]✓[/green] wrote {jp}, {mp}, and {hp} (open the .html to share)")
 
