@@ -177,6 +177,22 @@ Keep it ruthlessly prioritized: the top item should always be the highest-levera
   bound), 15m/52d −13.9 → −2.1. G0 at live config still FAILS at
   prefer=maker-rest (IS +0.8 / OOS −0.7 vs +3bps bar) so B-MAKER-LIVE
   stays evidence-blocked, judged by the B-G014 multi-week arms.
+- [x] **B-GATES — Roadmap gate readout (G1–G3 as code).** Done (Iter 53):
+  `supervisor/gates.py` operationalizes ROADMAP §4's evidence ladder — G1
+  paper (≥30d *calendar span*, edge ≥+5bps, ≥150 trades, zero guardrail
+  breaches in the audit trail), G2 live-small (≥30d live span, net>0 incl.
+  attributed funding, maxDD<10%), G3 track record (≥60d, sharpe(all)≥1 AND
+  sharpe(30d)≥0, maxDD<10%) — + read-only `hlbot gates [--agent]`. Closes
+  three holes the YAML promotion gates leave: a hot 5-day book passing
+  30d-*window* checks, breach *history* being invisible (only currently-
+  failing guardrails blocked promotion), and G2/G3 having no code at all.
+  Informational only; promotion stays human-gated. G0 stays `hlbot confirm`.
+- [ ] **B-GATES2 — `capital:` bases for evidence-bearing agents.** `hlbot
+  gates` shows twap_mr_v1's G2/G3 maxDD as unknown-blocked: its YAML has no
+  `capital:` so fractional DD is N/A (same for the breakout configs). Pick
+  bases matching the actual book caps (e.g. breakout's $60) — operator-
+  checkable one-liners; a wrong base makes DD% misleading, so don't guess
+  silently.
 - [x] **B6/B7 — Per-agent funding attribution + Sharpe.** Done: funding split to
   the agent holding the coin at funding time (scoring includes it in net/edge);
   per-agent Sharpe from daily PnL so sharpe-gates evaluate. Tested. (Iteration 7.)
@@ -281,8 +297,12 @@ Keep it ruthlessly prioritized: the top item should always be the highest-levera
   from `HL_TRADER_ADDRESS`/`HL_ADDRESS` env, legacy default only as fallback.
 - [x] **B14 — Go-live runbook in-repo.** `docs/GO_LIVE.md`: gated checklist,
   secrets/env, promote/kill-switch/rollback, monitoring. (REVIEW D3.)
-- [ ] **B14a — Deploy automation.** Codify the EC2/systemd/Hermes cron + DB sync
-  (without secrets) so the live loop is reproducible from the repo.
+- [x] **B14a — Deploy automation.** Done — this entry was a stale duplicate of
+  the Iter-5/6 Done item; audited (Iter 53): `deploy/` covers the whole
+  description (install.sh idempotent EC2 bootstrap, test-gated auto-update.sh,
+  systemd tick/report/ws/update/harvest units + timers, Litestream DB
+  replication, aws/ Terraform, setup-loop.sh) with no secrets in-repo.
+  Nothing left to build.
 
 ## P0.5 — prove the edge at scale (now that twap_mr_v1 is live + profitable)
 

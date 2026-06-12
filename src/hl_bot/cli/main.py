@@ -1075,6 +1075,86 @@ def track_record(
 
 
 @app.command()
+def gates(
+    agent: str = typer.Option(None, "--agent", help="Only this agent."),
+    funding: bool = typer.Option(
+        True, "--funding/--no-funding",
+        help="Model funding accrual for paper-book (G1) cards from HL "
+             "funding-rate history (network; per-coin failures degrade to "
+             "funding=0 with a warning; zero calls without a paper book).",
+    ),
+):
+    """Read-only roadmap gate readout (ROADMAP_TO_1M.md §4: G1/G2/G3).
+
+    Where each agent stands on the evidence ladder — paper span/edge/sample/
+    breaches (G1), live net + drawdown (G2), Sharpe stability (G3) — with the
+    blocking checks named. Informational only: never flips a mode (promotion
+    stays human-gated). G0 (sim) is `hlbot confirm`, not recorded in the DB.
+    """
+    from ..supervisor.gates import (
+        GATE_TITLES,
+        GATE_UNLOCKS,
+        effective_mode,
+        evaluate_roadmap_gates,
+        fills_span_ms,
+        paper_span_ms,
+    )
+    from ..supervisor.goals import AgentGoals, load_goals
+
+    conn, s = _conn()
+    cfg_by_agent: dict[str, AgentGoals] = {}
+    for p in sorted(Path(CONFIG_DIR).glob("*.yaml")):
+        try:
+            for g in load_goals(p):
+                cfg_by_agent[g.agent] = g
+        except Exception as e:  # noqa: BLE001
+            console.print(f"[yellow]warn:[/yellow] skipping {p.name}: {e}")
+    evidence_agents = {a for a in list_paper_agents(conn)} | {
+        r[0] for r in conn.execute(
+            "SELECT DISTINCT agent FROM fills WHERE agent IS NOT NULL")
+    }
+    names = sorted((set(cfg_by_agent) | evidence_agents) - {"_account", "manual"})
+    if agent:
+        names = [n for n in names if n == agent]
+        if not names:
+            console.print(f"[red]no config or evidence for agent '{agent}'[/red]")
+            raise typer.Exit(1)
+
+    funding_by_coin = _fetch_paper_funding(conn, s) if funding else {}
+    table = Table(title="Roadmap gates (read-only; promotion is human-gated)")
+    for col in ("agent", "mode", "gate", "verdict", "unlocks", "blockers"):
+        table.add_column(col)
+    for name in names:
+        cfg = cfg_by_agent.get(name)
+        mode = effective_mode(conn, name, default=cfg.mode if cfg else "paper")
+        results = evaluate_roadmap_gates(
+            conn, name, capital=cfg.capital if cfg else None,
+            funding_by_coin=funding_by_coin or None)
+        if not results:
+            no_paper = paper_span_ms(conn, name) is None
+            no_fills = fills_span_ms(conn, name) is None
+            if no_paper and no_fills:
+                table.add_row(name, mode, "—", "[dim]no evidence yet[/dim]", "", "")
+            continue
+        for r in results:
+            verdict = (
+                "[green]PASS[/green]" if r.passed
+                else f"[red]{len(r.checks) - len(r.blockers)}/{len(r.checks)}[/red]"
+            )
+            table.add_row(
+                name, mode, GATE_TITLES[r.gate], verdict,
+                GATE_UNLOCKS[r.gate] if r.passed else "",
+                "" if r.passed else "; ".join(c.detail for c in r.blockers),
+            )
+    console.print(table)
+    console.print(
+        "[dim]G0 (sim) = hlbot confirm — judge maker claims with "
+        "--prefer maker --maker-fill resting. A PASS here is evidence for the "
+        "operator, never an automatic promotion.[/dim]"
+    )
+
+
+@app.command()
 def report(send: bool = False):
     """Build daily report; optionally send to Telegram."""
     conn, s = _conn()

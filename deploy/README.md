@@ -51,6 +51,7 @@ systemctl list-timers 'hlbot-*'        # schedule
 journalctl -u hlbot-tick -f            # live logs
 sudo -u hlbot bash -c 'cd /opt/hl-bot && uv run hlbot health'   # ad-hoc health
 sudo -u hlbot bash -c 'cd /opt/hl-bot && uv run hlbot doctor'   # preflight
+sudo -u hlbot bash -c 'cd /opt/hl-bot && uv run hlbot gates'    # roadmap G1–G3 readout
 ```
 
 Monitoring: set `HEALTHCHECK_URL` (e.g. Healthchecks.io) in `/etc/hl-bot/env` —
@@ -86,10 +87,12 @@ so the trader stays light.
 4. (Only with `--maker-fill resting` evidence in hand) set
    `HLBOT_TICK_ARGS="--live --execution maker"` in `/etc/hl-bot/env`, then
    `systemctl restart hlbot-tick.timer`. Watch the first ticks closely. As of
-   2026-06-12 the twap_mr maker case does not survive fill realism: the
-   optimistic model says +4.2bps, the resting lower bound −4.5bps (adverse
-   selection — see PROGRESS Iter 50). The bracket straddles zero, so there is
-   no positive evidence to flip on.
+   2026-06-12 the twap_mr maker case is unproven, not disproven: under the
+   wick-aware resting fill model the live config posts +0.3bps (vs +4.2
+   optimistic, taker −1.2 — see PROGRESS Iter 51), but the G0 confirm at
+   `--prefer maker --maker-fill resting` still FAILS walk-forward and every
+   1m sample is one ~3.7d window. Flip only if a B-G014 multi-week
+   maker-rest arm beats taker AND passes G0.
 
 The mean-reversion VWAP window defaults to 60×1m (the historical config). To
 flip it (e.g. to the 4h window once B-G014's multi-week evidence confirms

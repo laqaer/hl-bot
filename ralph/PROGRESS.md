@@ -2712,3 +2712,68 @@ maker-rest arms wick-aware, w=240 maker-rest the arm to watch. B-EDGE2b
 three-armed reruns as the 15m store grows. B-EDGE2f at ≥30d paper books
 (~Jul 8). Idle queue: B14a (deploy automation — check what's actually left
 vs the Iter-5/6 deliverables), B16b/B-PROP/B17 capital-formation specs.
+
+## Iteration 53 — 2026-06-12 — B-GATES: roadmap G1–G3 as code (+ B14a audit-closed)
+
+**Why this.** All research tasks are time-blocked (B-G014 needs 1m store
+span ≥14d, ~Jun 23–26; B-EDGE2b just reran Iters 48–49; B-EDGE2f needs ≥30d
+paper books, ~Jul 8), so took the idle queue. First audited B14a per Iter 52's
+note: it is **fully delivered** — `deploy/` has the idempotent EC2 install,
+test-gated auto-update, tick/report/ws/update/harvest systemd timers,
+Litestream DB replication, AWS Terraform, and loop setup, no secrets in-repo.
+The unticked P2 entry was a stale duplicate of the Iter-5/6 Done item; ticked,
+nothing built. Then spent the iteration on a real measurement gap the audit
+trail surfaced.
+
+**The gap.** ROADMAP §4 gates capital on an evidence ladder (G1 paper → G2
+live-small → G3 track record) and the mission says every iteration should move
+a gate closer — but nothing in the repo could *answer where an agent stands*.
+The YAML promotion gates cover only paper→live_small, and leave three holes:
+(1) they check 30d-**window** scorecards, so a hot 5-day book can pass on
+recency alone (nothing verified calendar evidence span); (2) breach **history**
+is invisible — only a currently-failing guardrail blocks promotion, a pause
+last week doesn't; (3) G2/G3 (live net incl. funding, DD, Sharpe stability)
+existed only as prose. With two breakout paper arms maturing toward G1 and
+twap_mr_v1 live accruing G2 evidence, the operator's "is it ready?" question
+had no auditable answer.
+
+**Changed.** (a) `supervisor/gates.py`: pure evaluators over existing
+machinery (paper-replay/fills scorecards, book spans, `goal_evaluations`) —
+`evaluate_g1` (paper span ≥30d, 30d edge ≥+5bps, ≥150 trades, 0 guardrail-fail
+rows in 30d), `evaluate_g2` (live span ≥30d, net>0 incl. attributed funding,
+maxDD<10%), `evaluate_g3` (≥60d, sharpe(all)≥1 AND sharpe(30d)≥0 — the
+stability bar pre-declared conservatively — maxDD<10%),
+`evaluate_roadmap_gates` composition. Evidence span = first→last row/fill (a
+dead loop doesn't age into a pass); an N/A metric blocks as *unknown*, never
+passes (missing `capital:` ⇒ DD unknown). (b) read-only `hlbot gates
+[--agent] [--no-funding]`: per-agent per-gate verdict + named blockers,
+modeled paper funding by default, footer states G0 = `hlbot confirm` and that
+a PASS is operator evidence, never an auto-promotion. Nothing here mutates
+state. (c) Stale operator doc fixed: deploy/README §Going-live cited Iter-50
+maker numbers (−4.5bps lower bound) that Iter 51's wick-aware model
+superseded (+0.3bps, G0 still FAIL — direction unchanged, numbers now
+honest); added `hlbot gates` to the operate block.
+
+**Evidence.** 314 → **332 tests pass** (18 new in `tests/test_gates.py`:
+span helpers ignore live rows / return None without evidence; breach counting
+filters guardrail-fail rows + since_ms; G1 pass on a mature profitable book,
+blocked by short-span-with-strong-window-card (the exact hole), thin sample,
+negative edge, recent-but-not-stale breaches; G2 pass with capital, unknown-DD
+blocks without capital, negative net + fee drag; G3 pass on steady 61d,
+short-span block, 30d-stability check catches a 25d recent collapse after 60
+good days; composition by evidence). `ruff check src tests scripts` clean.
+Live-fired on a scratch DB (3 seeded agents + configs roster): breakout_er_v1
+G1 2/4 ("spans 17.6d need ≥30; trades 100 need ≥150"), breakout_v1 G1 0/4
+(incl. the seeded breach), twap_mr_v1 (live_small via agent_state) G2 2/3 +
+G3 2/4, no-evidence config'd agents render dim, `--agent` filter works.
+
+**Found.** twap_mr_v1's G2/G3 DD check reads unknown-blocked: no `capital:`
+in its YAML (breakout configs likewise). Filed B-GATES2 — bases should match
+the real book caps and be operator-checkable, not guessed silently.
+
+**What's next (loop).** B-G014 when 1m span ≥14d (~Jun 23–26; w=240
+maker-rest the arm to watch) — judge the winner's readiness with `hlbot
+gates` + confirm together. B-EDGE2b three-armed reruns as the 15m store
+grows. B-EDGE2f at ≥30d paper books (~Jul 8) — `hlbot gates` now shows the
+countdown blockers directly. Idle queue: B-GATES2 (capital bases),
+B16b/B-PROP/B17 capital-formation specs.
