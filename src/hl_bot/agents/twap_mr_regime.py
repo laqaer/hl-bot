@@ -11,7 +11,7 @@ long into a downtrend). A fade in a choppy/range market — where mean reversion
 actually works — is allowed through unchanged.
 
 It needs a recent close series per coin in ``view.extra['closes'][coin]`` (the
-backtest data loader and the live ``_enrich_view`` both populate it).
+backtest data loader and the live ``runtime.enrich_view`` both populate it).
 """
 
 from __future__ import annotations

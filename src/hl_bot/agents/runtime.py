@@ -1,10 +1,13 @@
-"""Runtime harness: pull a MarketView, ask each enabled agent to decide,
-route decisions (paper logging only by default; live placement requires
-HL_SECRET_KEY and agent mode != 'paper').
+"""Runtime harness: the tested tick pipeline shared by paper and live paths.
 
-Live order placement is intentionally NOT wired yet — the harness logs all
-decisions and a separate `place_order` adapter would be plugged in. This keeps
-the default behavior risk-free.
+One function owns each slice of a tick (REVIEW M3 / B12): roster construction
+(`build_roster` + `load_agent_overrides`), the view pipeline (`build_tick_view`
+= fetch → enrich → WS overlay), account/risk state (`fetch_account_state`,
+`apply_allocator_caps`), position truth (`positions_from_clearinghouse`,
+`reconcile_agents`, `classify_position_ownership`, `synthesize_paper_positions`),
+decision gathering (`gather_decisions`), and live order routing
+(`execute_decisions`). `run_tick` composes the paper path; the `femr_tick` CLI
+composes the live one from the same pieces and keeps only presentation.
 """
 
 from __future__ import annotations
@@ -12,6 +15,7 @@ from __future__ import annotations
 import contextlib
 import json
 import logging
+import os
 import sqlite3
 import time
 from collections.abc import Mapping
@@ -222,6 +226,190 @@ def fetch_market_view(base_url: str, coins: list[str]) -> MarketView:
         open_interest=open_interest,
         extra={"day_ntl_vlm": day_ntl_vlm},
     )
+
+
+def enrich_view(view: MarketView, api_url: str, vol: dict[str, float],
+                vwap_window: int = DEFAULT_VWAP_WINDOW,
+                closes_15m_bars: int = 0) -> None:
+    """Augment a MarketView with rolling VWAP/σ (top-vol coins), spot mids, liquidations.
+
+    ``vwap_window`` is the number of 1m candles in the rolling window (60 = the
+    historical 1h live config). VWAP/σ math is the backtester's
+    ``rolling_vwap_sigma`` so live and backtest agree bar-for-bar (B-WIN2);
+    the ``candles_1h`` key name is kept for agent compatibility.
+
+    ``closes_15m_bars`` > 0 additionally fetches that many 15m candles per top
+    coin into ``view.extra["closes_15m"]`` (current in-progress bar last, like
+    backtest frames) for channel agents whose horizon outruns the 1m window
+    (B-EDGE2a: breakout's 96h channel = 385×15m bars, one API call per coin,
+    well under the ~5000-row cap). 0 = skip, no extra API traffic.
+    """
+    from ..backtest.data import closes_vols, rolling_vwap_sigma
+
+    # ---- top-20-by-volume universe ----
+    top = sorted(vol.items(), key=lambda kv: kv[1], reverse=True)[:20]
+    top_coins = [c for c, _ in top]
+
+    candles_1h: dict[str, dict] = {}
+    closes_by_coin: dict[str, list[float]] = {}
+    closes_15m_by_coin: dict[str, list[float]] = {}
+    spot_mids: dict[str, float] = {}
+
+    with httpx.Client(timeout=15) as cli:
+        # vwap_window × 1m candles -> vwap & sigma per top coin
+        end_ms = int(time.time() * 1000)
+        start_ms = end_ms - vwap_window * 60_000
+        for coin in top_coins:
+            try:
+                cs = cli.post(api_url + "/info", json={
+                    "type": "candleSnapshot",
+                    "req": {"coin": coin, "interval": "1m",
+                            "startTime": start_ms, "endTime": end_ms},
+                }).json() or []
+                if not isinstance(cs, list) or not cs:
+                    continue
+                pxs, vols, _ts = closes_vols(cs)
+                vwap, sigma = rolling_vwap_sigma(pxs, vols, vwap_window)
+                if vwap is None or sigma is None:
+                    continue
+                candles_1h[coin] = {"vwap": vwap, "sigma": sigma, "n": len(pxs)}
+                closes_by_coin[coin] = pxs[-vwap_window:]
+            except Exception:  # noqa: BLE001
+                continue
+
+        # 15m closes feed for long-horizon channel agents (per-coin error
+        # isolation like the 1m loop; a short history is fine — channel_break
+        # just won't fire until enough bars exist).
+        if closes_15m_bars > 0:
+            start_15m = end_ms - closes_15m_bars * 900_000
+            for coin in top_coins:
+                try:
+                    cs = cli.post(api_url + "/info", json={
+                        "type": "candleSnapshot",
+                        "req": {"coin": coin, "interval": "15m",
+                                "startTime": start_15m, "endTime": end_ms},
+                    }).json() or []
+                    if not isinstance(cs, list) or not cs:
+                        continue
+                    pxs, _vols, _ts = closes_vols(cs)
+                    closes_15m_by_coin[coin] = pxs[-closes_15m_bars:]
+                except Exception:  # noqa: BLE001
+                    continue
+
+        # Spot mids for BTC/ETH/SOL. HL spot pairs use wrapped tokens
+        # (UBTC/USDC=@142, UETH/USDC=@151, USOL/USDC=@156) and the midPx is
+        # quoted in scaled native units. We use allMids @N indices and scale
+        # against the perp mid to detect basis: skip pair if it would produce
+        # a clearly nonsensical (>5%) basis (means we don't have a clean spot).
+        try:
+            spot = cli.post(api_url + "/info", json={"type": "spotMetaAndAssetCtxs"}).json()
+            if isinstance(spot, list) and len(spot) == 2:
+                meta = spot[0] or {}
+                ctxs = spot[1] or []
+                universe = meta.get("universe", []) or []
+                tokens = meta.get("tokens", []) or []
+                name_by_token = {t.get("index"): t.get("name") for t in tokens}
+                # token szDecimals required to normalize price
+                wei_by_token = {t.get("index"): int(t.get("weiDecimals", 0) or 0) for t in tokens}
+                for u, c in zip(universe, ctxs, strict=False):
+                    pair_tokens = u.get("tokens", [])
+                    if len(pair_tokens) < 2:
+                        continue
+                    base_idx = pair_tokens[0]
+                    base_name = name_by_token.get(base_idx)
+                    quote_name = name_by_token.get(pair_tokens[1])
+                    if quote_name != "USDC":
+                        continue
+                    norm = None
+                    if base_name in ("UBTC", "UETH", "USOL"):
+                        norm = base_name[1:]   # strip leading 'U'
+                    elif base_name in ("BTC", "ETH", "SOL"):
+                        norm = base_name
+                    if norm not in ("BTC", "ETH", "SOL"):
+                        continue
+                    try:
+                        raw_mid = float(c.get("midPx") or 0)
+                    except (TypeError, ValueError):
+                        raw_mid = 0
+                    if raw_mid <= 0:
+                        continue
+                    # USDC weiDecimals=8 (standard). base wei from token meta.
+                    base_wei = wei_by_token.get(base_idx, 8)
+                    quote_wei = 8  # USDC
+                    scaled_mid = raw_mid * (10 ** (base_wei - quote_wei))
+                    # only adopt if scaled_mid is within 5% of perp mid (sanity)
+                    perp_mid = view.mids.get(norm)
+                    if (
+                        perp_mid and scaled_mid > 0
+                        and 0.5 < scaled_mid / perp_mid < 1.5
+                        and ((base_name or "").startswith("U") or norm not in spot_mids)
+                    ):
+                        # Prefer wrapped (U-prefixed) over plain if both present.
+                        spot_mids[norm] = scaled_mid
+        except Exception:  # noqa: BLE001
+            pass
+
+    # No liquidation source over REST: HL exposes no `{"type":"liquidations"}`
+    # info endpoint (the old call was a phantom that always returned nothing).
+    # The real feed is the WS `trades` liquidation flag, overlaid by
+    # build_tick_view when a fresh snapshot exists. `liquidations_feed=False`
+    # tells liq_cascade it has no real feed yet, so it keeps entries disabled
+    # (REVIEW C6 / B11).
+    view.extra["candles_1h"] = candles_1h
+    view.extra["closes"] = closes_by_coin
+    view.extra["closes_15m"] = closes_15m_by_coin
+    view.extra["spot_mids"] = spot_mids
+    view.extra["liquidations"] = []
+    view.extra["liquidations_feed"] = False
+
+
+@dataclass
+class TickView:
+    """A fully built tick MarketView plus the resolved feed parameters.
+
+    ``vwap_window`` / ``bars_15m`` are returned so the CLI summary can print
+    what was actually fetched; ``ws`` is the overlay result (None when no
+    ``HLBOT_WS_SNAPSHOT`` is configured, ``applied=False`` when the snapshot
+    file is missing or stale — REST stays the source of truth either way).
+    """
+
+    view: MarketView
+    vwap_window: int
+    bars_15m: int
+    ws: WsOverlay | None
+
+
+def build_tick_view(
+    base_url: str,
+    agents: list[Agent],
+    *,
+    vwap_window: int = 0,
+    env: Mapping[str, str] | None = None,
+) -> TickView:
+    """Build the one tick MarketView both paper and live paths decide on.
+
+    The single view pipeline (REVIEW M3 / B12): REST universe fetch
+    (:func:`fetch_market_view`) → VWAP/σ + spot + 15m-feed enrichment
+    (:func:`enrich_view`, window resolved CLI > ``HLBOT_VWAP_WINDOW`` env >
+    default, 15m bars sized by what the roster consumes) → optional fresh-WS
+    overlay (:func:`overlay_ws_snapshot`, opt-in via ``HLBOT_WS_SNAPSHOT``),
+    which is also the only real liquidations feed. ``env`` defaults to
+    ``os.environ``; tests inject a plain dict.
+    """
+    if env is None:
+        env = os.environ
+    view = fetch_market_view(base_url, [])
+    w = resolve_vwap_window(vwap_window, env)
+    bars_15m = closes_15m_bars(agents)
+    enrich_view(view, base_url, view.extra.get("day_ntl_vlm", {}),
+                vwap_window=w, closes_15m_bars=bars_15m)
+    ws = None
+    ws_path = env.get("HLBOT_WS_SNAPSHOT")
+    if ws_path:
+        from ..ingest.ws import load_fresh_snapshot
+        snap = load_fresh_snapshot(ws_path, max_age_s=30.0)
+        ws = overlay_ws_snapshot(view, snap)
+    return TickView(view=view, vwap_window=w, bars_15m=bars_15m, ws=ws)
 
 
 @dataclass
@@ -638,13 +826,18 @@ def run_tick(
     *,
     force_paper: bool = True,
 ) -> list[Decision]:
-    """One scheduling tick: fetch view, ask each agent, log decisions.
+    """One scheduling tick: build the view, ask each agent, log decisions.
 
-    Places no orders — this is the paper ``tick`` path. Every decision is recorded
-    with ``is_paper=force_paper`` (default True), so the logged book stays paper.
+    Places no orders — this is the paper ``tick`` path. The view comes through
+    the same :func:`build_tick_view` pipeline the live loop uses (VWAP/σ
+    enrichment, 15m feed sized by the roster, WS overlay when configured), so
+    paper decisions are made on live-identical inputs. Every decision is
+    recorded with ``is_paper=force_paper`` (default True), so the logged book
+    stays paper. ``coins`` is kept for backward compatibility but ignored —
+    the view always carries the whole universe.
     """
-    view = fetch_market_view(base_url, coins)
-    return gather_decisions(conn, agents, view, is_paper=force_paper)
+    tick_view = build_tick_view(base_url, agents)
+    return gather_decisions(conn, agents, tick_view.view, is_paper=force_paper)
 
 
 @dataclass

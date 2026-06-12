@@ -186,7 +186,7 @@ Keep it ruthlessly prioritized: the top item should always be the highest-levera
   feed is present (WS trades liquidation flag / backtest), else it emits an
   explicit "feed unavailable" hold; exits still run so positions aren't stranded.
   (REVIEW C6. Iteration 12.)
-- [~] **B12 — Consolidate execution paths.** `runtime.run_tick` vs `femr_tick`
+- [x] **B12 — Consolidate execution paths.** `runtime.run_tick` vs `femr_tick`
   duplicate logic; unify so the safe wrapper is what live uses. (REVIEW M3.)
   **Done so far:** (a) the live order-placement loop is extracted from `femr_tick`
   into `runtime.execute_decisions` (pure of presentation, returns `ExecEvent`s)
@@ -223,8 +223,22 @@ Keep it ruthlessly prioritized: the top item should always be the highest-levera
   a non-object overrides top level used to crash the tick at roster build —
   every overrides failure mode now degrades to built-in defaults with a
   warning. (Iteration 45.)
-  **Remaining:** the `_enrich_view` pipeline, so `run_tick` and `femr_tick`
-  share one path end-to-end.
+  (i) `_enrich_view` moved verbatim to `runtime.enrich_view` and the whole
+  view pipeline (REST fetch → VWAP/σ + spot + 15m enrichment → opt-in WS
+  overlay, window resolved CLI > env > default, 15m feed sized by the roster)
+  composed into tested `runtime.build_tick_view` → `TickView`; BOTH
+  `run_tick` (paper) and `femr_tick` (live) consume it, so every tick decides
+  on a live-identical view. CLI keeps only printing. **Done** (Iteration 46) —
+  the `femr_tick` preamble contains no untested logic. Vestigial `tick`
+  command roster split out as B12j.
+- [ ] **B12j — Retire or unify the vestigial `tick` command.** It still runs
+  its own small roster (veto + funding_arb) while `femr_tick` (paper default,
+  what deploy runs) is the real unified paper path. Either point `tick` at
+  `build_roster` — which then ALSO needs `synthesize_paper_positions` for
+  femr's paper exits and a `log_holds` policy decision (veto's whole output is
+  hold-verdict rows; femr_tick suppresses holds) — or retire the command and
+  keep veto/funding_arb runnable some other way. Low priority: nothing in
+  deploy/ calls `hlbot tick`.
 - [x] **B13 — Move hardcoded trader address to config.** Done (Iter 6, M6):
   `exec/orders.py` and `scripts/daily_scorecard.py` both resolve the trader address
   from `HL_TRADER_ADDRESS`/`HL_ADDRESS` env, legacy default only as fallback.

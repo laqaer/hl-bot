@@ -16,10 +16,15 @@ These functions were extracted from the inlined, untested ``femr_tick`` preamble
 - ``load_agent_overrides`` / ``build_roster`` — auto-tuner override loading
   (every failure mode degrades to built-in defaults) and the canonical agent
   roster with defaults + overrides merged per agent.
+- ``enrich_view`` / ``build_tick_view`` — VWAP/σ + spot + 15m-feed enrichment
+  and the composed fetch→enrich→WS-overlay view pipeline both ``run_tick``
+  (paper) and ``femr_tick`` (live) decide on.
 """
 
 from __future__ import annotations
 
+import json
+import time
 from types import SimpleNamespace
 
 import pytest
@@ -29,8 +34,10 @@ from hl_bot.agents.decisions import Decision, log_decision
 from hl_bot.agents.runtime import (
     apply_allocator_caps,
     build_roster,
+    build_tick_view,
     classify_position_ownership,
     closes_15m_bars,
+    enrich_view,
     fetch_account_state,
     load_agent_overrides,
     overlay_ws_snapshot,
@@ -348,7 +355,7 @@ def test_resolve_vwap_window_rejects_garbage():
 
 
 # ---------------------------------------------------------------------------
-# _enrich_view honors vwap_window and matches the backtester's math (B-WIN2)
+# enrich_view honors vwap_window and matches the backtester's math (B-WIN2)
 # ---------------------------------------------------------------------------
 
 
@@ -385,13 +392,11 @@ class _FakeHlClient:
 def _enrich_with_window(monkeypatch, candles, window):
     import httpx
 
-    from hl_bot.cli.main import _enrich_view
-
     _FakeHlClient.candles = candles
     _FakeHlClient.requests = []
     monkeypatch.setattr(httpx, "Client", _FakeHlClient)
     view = MarketView(ts_ms=0, mids={"TST": 100.0})
-    _enrich_view(view, "http://fake", {"TST": 1e9}, vwap_window=window)
+    enrich_view(view, "http://fake", {"TST": 1e9}, vwap_window=window)
     return view
 
 
@@ -461,8 +466,6 @@ class _FakeHlClient15m(_FakeHlClient):
 def test_enrich_view_fetches_15m_closes_only_when_asked(monkeypatch):
     import httpx
 
-    from hl_bot.cli.main import _enrich_view
-
     _FakeHlClient.candles = [{"t": i * 60_000, "c": 100.0, "v": 1.0} for i in range(60)]
     _FakeHlClient15m.candles_15m = [{"t": i * 900_000, "c": 200.0 + i, "v": 1.0}
                                     for i in range(40)]
@@ -470,7 +473,7 @@ def test_enrich_view_fetches_15m_closes_only_when_asked(monkeypatch):
     monkeypatch.setattr(httpx, "Client", _FakeHlClient15m)
 
     view = MarketView(ts_ms=0, mids={"TST": 100.0})
-    _enrich_view(view, "http://fake", {"TST": 1e9}, vwap_window=60, closes_15m_bars=33)
+    enrich_view(view, "http://fake", {"TST": 1e9}, vwap_window=60, closes_15m_bars=33)
     reqs_15m = [r for r in _FakeHlClient.requests if r["interval"] == "15m"]
     assert len(reqs_15m) == 1
     assert reqs_15m[0]["endTime"] - reqs_15m[0]["startTime"] == 33 * 900_000
@@ -481,9 +484,98 @@ def test_enrich_view_fetches_15m_closes_only_when_asked(monkeypatch):
     # default bars=0: no 15m traffic at all (live ticks without breakout pay nothing)
     _FakeHlClient.requests = []
     view2 = MarketView(ts_ms=0, mids={"TST": 100.0})
-    _enrich_view(view2, "http://fake", {"TST": 1e9}, vwap_window=60)
+    enrich_view(view2, "http://fake", {"TST": 1e9}, vwap_window=60)
     assert all(r["interval"] == "1m" for r in _FakeHlClient.requests)
     assert view2.extra["closes_15m"] == {}
+
+
+# ---------------------------------------------------------------------------
+# build_tick_view — the one view pipeline shared by run_tick and femr_tick (B12i)
+# ---------------------------------------------------------------------------
+
+
+class _FakeUniverseClient(_FakeHlClient15m):
+    """Adds the REST universe endpoints so build_tick_view runs end-to-end."""
+
+    def post(self, url, json=None):
+        t = (json or {}).get("type")
+        if t == "allMids":
+            return _Resp({"TST": "100.0"})
+        if t == "metaAndAssetCtxs":
+            return _Resp([
+                {"universe": [{"name": "TST"}]},
+                [{"funding": "0.0001", "openInterest": "5",
+                  "dayNtlVlm": "1000000000"}],
+            ])
+        return super().post(url, json=json)
+
+
+def _breakout_15m_consumer():
+    # 1 + max(lookback, exit_lookback) = 33 bars of 15m feed
+    from hl_bot.agents.breakout import BreakoutAgent
+
+    return BreakoutAgent(config={"lookback_bars": 32, "exit_lookback_bars": 4,
+                                 "closes_key": "closes_15m"})
+
+
+def test_build_tick_view_composes_fetch_enrich_and_window(monkeypatch):
+    import httpx
+
+    _FakeHlClient.candles = [{"t": i * 60_000, "c": 100.0 + (i % 5), "v": 1.0}
+                             for i in range(240)]
+    _FakeHlClient15m.candles_15m = [{"t": i * 900_000, "c": 200.0 + i, "v": 1.0}
+                                    for i in range(40)]
+    _FakeHlClient.requests = []
+    monkeypatch.setattr(httpx, "Client", _FakeUniverseClient)
+
+    tv = build_tick_view("http://fake", [_breakout_15m_consumer()],
+                         env={"HLBOT_VWAP_WINDOW": "240"})
+
+    assert tv.vwap_window == 240, "env window resolved (CLI value 0)"
+    assert tv.bars_15m == 33, "15m feed sized by the roster's longest channel"
+    assert tv.ws is None, "no HLBOT_WS_SNAPSHOT -> no overlay attempted"
+    assert tv.view.mids == {"TST": 100.0}
+    assert tv.view.funding == {"TST": 0.0001}
+    reqs_1m = [r for r in _FakeHlClient.requests if r["interval"] == "1m"]
+    assert reqs_1m[0]["endTime"] - reqs_1m[0]["startTime"] == 240 * 60_000, \
+        "enrichment fetch span follows the resolved window"
+    assert tv.view.extra["candles_1h"]["TST"]["n"] == 240
+    assert len(tv.view.extra["closes_15m"]["TST"]) == 33
+    assert tv.view.extra["liquidations_feed"] is False, "REST-only: no real liq feed"
+
+
+def test_build_tick_view_overlays_fresh_ws_snapshot(monkeypatch, tmp_path):
+    import httpx
+
+    _FakeHlClient.candles = [{"t": i * 60_000, "c": 100.0, "v": 1.0} for i in range(60)]
+    _FakeHlClient.requests = []
+    monkeypatch.setattr(httpx, "Client", _FakeUniverseClient)
+
+    snap_path = tmp_path / "ws.json"
+    snap_path.write_text(json.dumps({
+        "updated_ms": int(time.time() * 1000),
+        "mids": {"TST": 101.5},
+        "funding": {},
+        "open_interest": {},
+        "day_ntl_vlm": {},
+        "book_top": {"TST": [101.4, 101.6]},
+        "recent_liquidations": [{"coin": "TST", "px": 99.0}],
+        "user_fills": [],
+    }))
+
+    tv = build_tick_view("http://fake", [], env={"HLBOT_WS_SNAPSHOT": str(snap_path)})
+    assert tv.ws is not None and tv.ws.applied
+    assert tv.view.mids["TST"] == 101.5, "fresh WS mid wins over REST"
+    assert tv.view.book_top["TST"] == (101.4, 101.6)
+    assert tv.view.extra["liquidations_feed"] is True, "WS snapshot IS a real liq feed"
+    assert tv.view.extra["liquidations"] == [{"coin": "TST", "px": 99.0}]
+
+    # Stale snapshot: overlay attempted but not applied; REST stays the truth.
+    snap_path.write_text(json.dumps({"updated_ms": 1, "mids": {"TST": 999.0}}))
+    tv2 = build_tick_view("http://fake", [], env={"HLBOT_WS_SNAPSHOT": str(snap_path)})
+    assert tv2.ws is not None and not tv2.ws.applied
+    assert tv2.view.mids["TST"] == 100.0
+    assert tv2.view.extra["liquidations_feed"] is False
 
 
 # ---------------------------------------------------------------------------

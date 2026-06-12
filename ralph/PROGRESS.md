@@ -2186,3 +2186,61 @@ funding_arb) — unifying it onto `build_roster` is part of the remaining
 store grows, B1c remaining hypotheses if idle. B-G014 still blocked: store
 1m span checked this iteration = 3.55d, newest bar ~2h old (top-ups healthy);
 needs ≥14d, ETA ~2026-06-23..26.
+
+## Iteration 46 — 2026-06-12 — B12(i, final): the view pipeline moves into the tested tick harness; B12 done
+
+**What.** The last untested logic in the `femr_tick` preamble — `_enrich_view`
+— moved from `cli/main.py` into `agents/runtime.py`, and the whole view
+construction is now one tested function both paths consume:
+
+- `runtime.enrich_view` is `_enrich_view` moved verbatim (diffed against HEAD:
+  only the name, a type hint, and the httpx alias changed — VWAP/σ math, spot
+  scaling, per-coin error isolation, 15m feed all byte-identical).
+- `runtime.build_tick_view(base_url, agents, vwap_window=0, env=None)` →
+  `TickView(view, vwap_window, bars_15m, ws)` composes the pipeline: REST
+  universe fetch (`fetch_market_view`) → enrichment (window resolved CLI >
+  `HLBOT_VWAP_WINDOW` env > 60; 15m bars sized by `closes_15m_bars(agents)`)
+  → opt-in fresh-WS overlay (`HLBOT_WS_SNAPSHOT` → `overlay_ws_snapshot`,
+  the only real liquidations feed).
+- `femr_tick` (live) calls `build_tick_view` and keeps only the console
+  summary; `run_tick` (paper `tick` command) switched from bare
+  `fetch_market_view` to the same `build_tick_view` — paper decisions are now
+  made on live-identical view inputs (VWAP/σ, spot mids, 15m feed, WS overlay).
+- Stale module docstring in `runtime.py` rewritten (it still claimed "live
+  order placement is intentionally NOT wired yet" — `execute_decisions` has
+  owned it since B12a).
+
+**Why.** B12/REVIEW M3 closes out: the `femr_tick` preamble now contains zero
+untested logic — roster, overrides, account/risk state, view, ownership,
+reconcile, decision gathering, and execution all live in `agents/runtime.py`
+with unit tests, and the paper and live paths share the view pipeline
+end-to-end. A divergence bug class (live sees a feed paper doesn't) is now
+structurally impossible for the view.
+
+**Evidence.** 276 tests pass (2 new: `build_tick_view` composition — env
+window drives the candle fetch span, roster sizes the 15m feed, REST-only ⇒
+`liquidations_feed=False`, no `HLBOT_WS_SNAPSHOT` ⇒ no overlay; WS overlay —
+fresh snapshot file overlays mids/book_top and enables the real liq feed,
+stale snapshot is ignored and REST stays truth). Existing enrich tests
+re-pointed at `runtime.enrich_view`. Ruff clean. Live-fire (real API, scratch
+DB, paper): `femr_tick` full 6-agent roster, summary derived from `TickView`
+(vwap w=60, closes15m 20 coins ≤385 bars), 8 decisions incl. femr XMR short +
+twap_mr BTC/NEAR shorts, PAPER MODE no orders; `hlbot tick` (run_tick path)
+ran through the same pipeline, 739 decisions logged (whole-universe veto holds
+— pre-existing behavior, `fetch_market_view` always returned all coins).
+
+**Honest caveats.** (1) `run_tick` now makes ~21 extra REST calls per tick
+(enrichment) — it's a manual paper command, nothing in deploy/ calls it.
+(2) The `tick` command still runs its own small roster (veto + funding_arb);
+unifying it onto `build_roster` needs paper-position synthesis + a log_holds
+policy call (veto's output IS hold rows) → split out as B12j, low priority.
+(3) Live-fire showed `spot: []` — today's HL spot payload doesn't pass the
+±5%-of-perp sanity check; the logic is byte-identical to HEAD so this is
+real-world API behavior, not a regression from the move (basis_v1 then holds,
+which is its safe default).
+
+**What's next (loop).** B-G014 still blocked: store 1m span this iteration =
+3.6d after top-up (needs ≥14d; store started 2026-06-12, ETA ~2026-06-23..26).
+Meanwhile: B-EDGE2b re-confirm as the 15m store grows, B1c remaining
+hypotheses (beta-neutral xfund cross-section, lower cadence), B14a deploy
+automation gaps, or B12j if idle.

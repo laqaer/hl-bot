@@ -16,7 +16,7 @@ Data  : view.extra[``closes_key``] — trailing closes per coin, current bar
         last (== mid in backtest frames). Default key 'closes' (backtest frames
         carry ``vwap_window`` closes, so a lookback of N needs --vwap-window ≥
         N+1); the live roster sets 'closes_15m' so the validated 15m-bar
-        channel rides ``_enrich_view``'s dedicated 15m feed instead of the 1m
+        channel rides ``runtime.enrich_view``'s dedicated 15m feed instead of the 1m
         VWAP window. Lookback is in BARS — at 1m bars 240 = a 4h channel, at
         15m bars 16 = the same 4h.
 """
