@@ -22,7 +22,14 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from .data import CANDLE_PAGE_LIMIT, INTERVAL_MS, fetch_candles
+from .data import (
+    CANDLE_PAGE_LIMIT,
+    INTERVAL_MS,
+    build_frames,
+    fetch_candles,
+    fetch_funding_history,
+)
+from .engine import Frame
 
 # 15m is included even though its ~52d retention isn't urgent yet: one extra
 # paginated call per coin per run buys the >52d 15m history B-CAD's longer
@@ -143,6 +150,111 @@ def harvest_one(
         res.first_ms = _t(merged[0])
         res.last_ms = _t(merged[-1])
     return res
+
+
+@dataclass
+class StoreCoverage:
+    """How complete one (coin, interval) store series is over its own span.
+
+    ``missing`` counts interval-aligned gaps between ``first_ms`` and
+    ``last_ms`` — a harvester outage longer than HL's retention window loses
+    bars forever, and a backtest silently spanning that hole would overstate
+    its sample. Surface it instead.
+    """
+
+    coin: str
+    interval: str
+    bars: int
+    first_ms: int | None = None
+    last_ms: int | None = None
+    missing: int = 0
+
+    @property
+    def span_days(self) -> float | None:
+        if self.first_ms is None or self.last_ms is None:
+            return None
+        return (self.last_ms - self.first_ms) / 86_400_000
+
+    @property
+    def missing_pct(self) -> float:
+        expected = self.bars + self.missing
+        return self.missing / expected * 100 if expected else 0.0
+
+
+def coverage_of(coin: str, interval: str, candles: list[dict[str, Any]]) -> StoreCoverage:
+    ts = sorted({t for row in candles if (t := _t(row)) is not None})
+    cov = StoreCoverage(coin=coin, interval=interval, bars=len(ts))
+    if ts:
+        cov.first_ms, cov.last_ms = ts[0], ts[-1]
+        step = INTERVAL_MS.get(interval, 60_000)
+        cov.missing = max(0, (ts[-1] - ts[0]) // step + 1 - len(ts))
+    return cov
+
+
+def frames_from_store(
+    coins: list[str],
+    *,
+    interval: str = "1m",
+    days: float = 0.0,
+    with_funding: bool = True,
+    base_url: str = "https://api.hyperliquid.xyz",
+    root: str | Path | None = None,
+    vwap_window: int = 60,
+    fetch_funding: Callable[..., list[dict[str, Any]]] = fetch_funding_history,
+) -> tuple[list[Frame], list[StoreCoverage]]:
+    """Build backtest frames from the harvested store instead of the API (B-HIST2).
+
+    The API retains only ~5000 bars per interval; the store accumulates beyond
+    that, so this is how live-cadence (1m) backtests outgrow the ~3.5d API
+    window. Candles come from ``data/candle_store/``; funding (not
+    retention-limited the same way) is still fetched over the candle span,
+    seeded 2h early so the carry-forward rate is in effect from the first bar.
+    ``days > 0`` trims to the most recent ``days`` before the last stored bar;
+    ``days = 0`` uses everything stored. A coin trimmed to nothing stays in the
+    returned coverage (bars=0) rather than vanishing silently; a coin with no
+    store file at all raises — run ``hlbot harvest-candles`` first.
+    """
+    candles_by_coin: dict[str, list[dict[str, Any]]] = {}
+    missing_pairs: list[str] = []
+    for coin in coins:
+        rows = load_store(store_path(coin, interval, root))
+        if rows:
+            candles_by_coin[coin] = rows
+        else:
+            missing_pairs.append(f"{coin}_{interval}")
+    if missing_pairs:
+        raise FileNotFoundError(
+            f"no stored candles for {', '.join(missing_pairs)} under "
+            f"{store_dir(root)}; run `hlbot harvest-candles` and let "
+            "hlbot-harvest.timer accumulate history"
+        )
+    end_ms = max(
+        t for rows in candles_by_coin.values() for row in rows
+        if (t := _t(row)) is not None
+    )
+    if days > 0:
+        start_ms = end_ms - int(days * 86_400_000)
+        candles_by_coin = {
+            coin: [row for row in rows if (t := _t(row)) is not None and t >= start_ms]
+            for coin, rows in candles_by_coin.items()
+        }
+    coverage = [coverage_of(c, interval, rows) for c, rows in candles_by_coin.items()]
+    funding_by_coin: dict[str, list[dict[str, Any]]] = {}
+    if with_funding:
+        span_start = min(
+            (c.first_ms for c in coverage if c.first_ms is not None), default=end_ms
+        )
+        for coin, rows in candles_by_coin.items():
+            if rows:
+                funding_by_coin[coin] = fetch_funding(
+                    coin, span_start - 2 * 3_600_000, end_ms, base_url=base_url
+                )
+    bar_hours = INTERVAL_MS.get(interval, 3_600_000) / 3_600_000
+    frames = build_frames(
+        candles_by_coin, funding_by_coin=funding_by_coin,
+        vwap_window=vwap_window, warmup=min(vwap_window, 30), bar_hours=bar_hours,
+    )
+    return frames, coverage
 
 
 def harvest(

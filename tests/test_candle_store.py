@@ -17,6 +17,8 @@ import pytest
 
 from hl_bot.backtest.data import CANDLE_PAGE_LIMIT
 from hl_bot.backtest.store import (
+    coverage_of,
+    frames_from_store,
     harvest,
     harvest_one,
     load_store,
@@ -26,6 +28,7 @@ from hl_bot.backtest.store import (
 )
 
 MIN = 60_000
+HOUR = 3_600_000
 
 
 def _bar(t: int, c: float = 100.0, v: float = 1.0) -> dict:
@@ -124,3 +127,83 @@ def test_noop_harvest_adds_nothing(tmp_path):
                       fetch=lambda *a, **k: [_bar(0)])
     assert (res.added, res.total) == (0, 1)
     assert load_store(path) == [_bar(0)]
+
+
+# ---------------------------------------------------------------------------
+# frames_from_store (B-HIST2) — store-sourced backtest frames, no network
+# ---------------------------------------------------------------------------
+
+
+T0 = 1_000 * HOUR  # away from epoch 0 so "2h funding seed" stays positive
+
+
+def _no_funding(*a, **k):
+    raise AssertionError("funding fetch must not be called")
+
+
+def test_frames_from_store_builds_frames_with_per_bar_funding(tmp_path):
+    save_store(store_path("BTC", "1m", tmp_path),
+               [_bar(T0 + i * MIN, c=100.0 + i) for i in range(10)])
+    funding_calls: list[tuple] = []
+
+    def fake_funding(coin, start, end, *, base_url):
+        funding_calls.append((coin, start, end, base_url))
+        return [{"time": T0 - HOUR, "fundingRate": "0.0006"}]
+
+    frames, coverage = frames_from_store(
+        ["BTC"], interval="1m", root=tmp_path, vwap_window=4,
+        base_url="http://x", fetch_funding=fake_funding)
+    assert len(frames) == 10
+    assert frames[0].ts_ms == T0 and frames[-1].mids["BTC"] == 109.0
+    # hourly rate scaled to the 1m bar, seeded from 2h before the first bar
+    assert frames[-1].funding["BTC"] == pytest.approx(0.0006 / 60)
+    assert funding_calls == [("BTC", T0 - 2 * HOUR, T0 + 9 * MIN, "http://x")]
+    # after warmup (= vwap_window 4) the rolling stats are present
+    assert "BTC" in frames[5].candles_1h and "vwap" in frames[5].candles_1h["BTC"]
+    (cov,) = coverage
+    assert (cov.bars, cov.missing) == (10, 0)
+
+
+def test_frames_from_store_days_trims_to_recent_window(tmp_path):
+    save_store(store_path("BTC", "1h", tmp_path),
+               [_bar(T0 + i * HOUR) for i in range(72)])
+    frames, coverage = frames_from_store(
+        ["BTC"], interval="1h", days=1, root=tmp_path, vwap_window=4,
+        with_funding=False, fetch_funding=_no_funding)
+    end = T0 + 71 * HOUR
+    assert len(frames) == 25  # bars at end-24h .. end inclusive
+    assert frames[0].ts_ms == end - 24 * HOUR and frames[-1].ts_ms == end
+    assert frames[-1].funding == {"BTC": 0.0}  # no funding fetched → zero rate
+    (cov,) = coverage
+    assert cov.bars == 25
+
+
+def test_frames_from_store_missing_pair_raises(tmp_path):
+    save_store(store_path("BTC", "1m", tmp_path), [_bar(T0)])
+    with pytest.raises(FileNotFoundError, match=r"ETH_1m.*harvest-candles"):
+        frames_from_store(["BTC", "ETH"], interval="1m", root=tmp_path,
+                          with_funding=False, fetch_funding=_no_funding)
+
+
+def test_frames_from_store_keeps_trimmed_out_coin_in_coverage(tmp_path):
+    # ETH's bars are all older than the trim window: it must show up as
+    # bars=0 coverage, not silently vanish from the sample.
+    save_store(store_path("BTC", "1h", tmp_path),
+               [_bar(T0 + i * HOUR) for i in range(48)])
+    save_store(store_path("ETH", "1h", tmp_path), [_bar(T0)])
+    frames, coverage = frames_from_store(
+        ["BTC", "ETH"], interval="1h", days=1, root=tmp_path,
+        with_funding=False, fetch_funding=_no_funding)
+    assert all("ETH" not in f.mids for f in frames)
+    by_coin = {c.coin: c for c in coverage}
+    assert by_coin["ETH"].bars == 0 and by_coin["ETH"].missing_pct == 0.0
+    assert by_coin["BTC"].bars == 25
+
+
+def test_coverage_of_counts_interior_gaps():
+    cov = coverage_of("BTC", "1m", [_bar(T0), _bar(T0 + MIN), _bar(T0 + 3 * MIN)])
+    assert (cov.bars, cov.missing) == (3, 1)  # the T0+2min bar is gone forever
+    assert cov.missing_pct == pytest.approx(25.0)
+    assert cov.span_days == pytest.approx(3 * MIN / 86_400_000)
+    empty = coverage_of("BTC", "1m", [])
+    assert (empty.bars, empty.missing, empty.span_days) == (0, 0, None)

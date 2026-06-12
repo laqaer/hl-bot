@@ -696,6 +696,65 @@ def harvest_candles(
         raise typer.Exit(2)
 
 
+def _load_backtest_frames(
+    coin_list: list[str],
+    *,
+    source: str,
+    interval: str,
+    days: int,
+    cache: bool,
+    vwap_window: int,
+    api_url: str,
+    with_funding: bool = True,
+):
+    """Load frames for backtest/confirm per --source; prints status, exits on failure.
+
+    ``api`` fetches/caches via the HL info endpoints (retention-capped at ~5000
+    bars per interval); ``store`` reads the harvested rolling store, which is
+    how live-cadence runs outgrow that cap (B-HIST2). Store coverage (incl.
+    gaps from harvester outages) is printed so a holey sample can't pass as a
+    full one.
+    """
+    if source == "store":
+        from ..backtest.store import frames_from_store
+
+        console.print(f"[dim]loading {interval} candles for {coin_list} from store…[/dim]")
+        try:
+            frames, coverage = frames_from_store(
+                coin_list, interval=interval, days=days, with_funding=with_funding,
+                base_url=api_url, vwap_window=vwap_window)
+        except Exception as e:  # noqa: BLE001
+            console.print(f"[red]failed to load from store: {e}[/red]")
+            raise typer.Exit(2) from e
+        for c in coverage:
+            style = "red" if c.missing_pct > 1.0 or not c.bars else "dim"
+            span = "—" if c.span_days is None else f"{c.span_days:.1f}d"
+            console.print(f"[{style}]store {c.coin}_{c.interval}: {c.bars} bars "
+                          f"{span}, {c.missing} missing ({c.missing_pct:.1f}%)[/{style}]")
+    elif source == "api":
+        from ..backtest.data import cached_or_fetch, load_frames
+
+        console.print(f"[dim]loading {days}d of {interval} candles for {coin_list} "
+                      f"({'cache' if cache else 'network'})…[/dim]")
+        try:
+            frames = (cached_or_fetch(coin_list, interval=interval, days=days,
+                                      base_url=api_url, vwap_window=vwap_window)
+                      if cache else
+                      load_frames(coin_list, interval=interval, days=days,
+                                  base_url=api_url, vwap_window=vwap_window))
+        except Exception as e:  # noqa: BLE001
+            console.print(f"[red]failed to load history: {e}[/red]")
+            raise typer.Exit(2) from e
+    else:
+        console.print(f"[red]unknown source {source!r}; choose api or store[/red]")
+        raise typer.Exit(1)
+    if not frames:
+        console.print("[red]no frames built (insufficient history)[/red]")
+        raise typer.Exit(2)
+    console.print(f"[dim]{len(frames)} frames[/dim]")
+    return frames
+
+
 @app.command()
 def backtest(
     agent: str = "twap_mr_v1",
@@ -708,6 +767,8 @@ def backtest(
     cache: bool = True,
     config: str = "",
     vwap_window: int = 60,
+    source: str = "api",
+    funding: bool = True,
 ):
     """Replay an agent over real Hyperliquid history with an explicit cost model.
 
@@ -716,8 +777,12 @@ def backtest(
     same code used live. With ``--compare`` (default) it runs taker AND maker so
     you can see how much of the edge the spread is eating — the central question
     for this book. Places no orders; purely offline analysis.
+
+    --source store replays the harvested rolling candle store instead of the
+    retention-capped API (B-HIST2): --days trims to the most recent N days,
+    --days 0 uses everything stored, and --no-funding skips the funding fetch
+    (price-only economics) when the network is down.
     """
-    from ..backtest.data import cached_or_fetch, load_frames
     from ..backtest.engine import Backtester, CostModel
 
     _, s = _conn()
@@ -733,27 +798,17 @@ def backtest(
         console.print(f"[red]unknown agent {agent}; choose from {list(factories)}[/red]")
         raise typer.Exit(1)
 
-    console.print(f"[dim]loading {days}d of {interval} candles for {coin_list} "
-                  f"({'cache' if cache else 'network'})…[/dim]")
-    try:
-        frames = (cached_or_fetch(coin_list, interval=interval, days=days,
-                                  base_url=s.hl_api_url, vwap_window=vwap_window)
-                  if cache else
-                  load_frames(coin_list, interval=interval, days=days,
-                              base_url=s.hl_api_url, vwap_window=vwap_window))
-    except Exception as e:  # noqa: BLE001
-        console.print(f"[red]failed to load history: {e}[/red]")
-        raise typer.Exit(2) from e
-    if not frames:
-        console.print("[red]no frames built (insufficient history)[/red]")
-        raise typer.Exit(2)
-    console.print(f"[dim]{len(frames)} frames[/dim]")
+    frames = _load_backtest_frames(
+        coin_list, source=source, interval=interval, days=days, cache=cache,
+        vwap_window=vwap_window, api_url=s.hl_api_url, with_funding=funding)
 
     per_year = {"1m": 525_600, "5m": 105_120, "15m": 35_040,
                 "1h": 8_760, "4h": 2_190, "1d": 365}.get(interval, 8_760)
 
     modes = [False, True] if compare else [maker]
-    title = f"Backtest {agent} ({days}d {interval}"
+    dur = (f"{(frames[-1].ts_ms - frames[0].ts_ms) / 86_400_000:.1f}d:store"
+           if source == "store" else f"{days}d")
+    title = f"Backtest {agent} ({dur} {interval}"
     title += f" w={vwap_window})" if vwap_window != 60 else ")"
     if cfg:
         title += f" cfg={json.dumps(cfg, separators=(',', ':'))}"
@@ -795,14 +850,17 @@ def confirm(
     cache: bool = True,
     config: str = "",
     vwap_window: int = 60,
+    source: str = "api",
 ):
     """Confirm a strategy through the G0 gate: walk-forward + cost stress.
 
     Prints an explicit PASS/FAIL. A strategy must clear this on real history
     before it is eligible for paper→live promotion (see docs/GO_LIVE.md).
+    --source store runs the gate on the harvested rolling candle store
+    (--days 0 = everything stored); funding is always fetched — a G0 verdict
+    with funding stripped out would be dishonest.
     """
     from ..backtest.confirm import confirm_strategy
-    from ..backtest.data import cached_or_fetch, load_frames
 
     _, s = _conn()
     coin_list = [c.strip() for c in coins.split(",") if c.strip()]
@@ -817,15 +875,9 @@ def confirm(
         raise typer.Exit(1)
     per_year = {"1m": 525_600, "5m": 105_120, "15m": 35_040,
                 "1h": 8_760, "4h": 2_190, "1d": 365}.get(interval, 8_760)
-    try:
-        frames = (cached_or_fetch(coin_list, interval=interval, days=days,
-                                  base_url=s.hl_api_url, vwap_window=vwap_window)
-                  if cache else
-                  load_frames(coin_list, interval=interval, days=days,
-                              base_url=s.hl_api_url, vwap_window=vwap_window))
-    except Exception as e:  # noqa: BLE001
-        console.print(f"[red]failed to load history: {e}[/red]")
-        raise typer.Exit(2) from e
+    frames = _load_backtest_frames(
+        coin_list, source=source, interval=interval, days=days, cache=cache,
+        vwap_window=vwap_window, api_url=s.hl_api_url)
     res = confirm_strategy(
         factories[agent], frames, prefer=prefer,
         min_edge_bps=min_edge_bps, min_sharpe=min_sharpe, periods_per_year=per_year,

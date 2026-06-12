@@ -187,13 +187,21 @@ each on ≥90d real history (`hlbot confirm` / `hlbot backtest --config`) before
   self-enabled by update.sh — auto-update previously copied new timers without
   enabling them). Validated on real API: 30/30 pairs, full retention captured
   (3.5d@1m / 17.4d@5m / 52.1d@15m, 3.6MB), incremental top-up proven.
-- [ ] **B-HIST2 — Backtest from the store. ← TOP PRIORITY once store ≥ ~14d of 1m.**
-  `hlbot backtest/confirm` still fetch from the API (capped at retention); add a
-  `--source store` path that builds frames from `data/candle_store/` (+ funding
-  fetch) so A/Bs can use accumulated history beyond the 5000-bar window. Why it's
-  now the lever: the exact-live-replica backtest (1m, window=60) **PASSED G0** on
-  the only 3.5d of 1m the API retains (Iter 29) — a real multi-week G0 at live
-  cadence needs the store. The `--vwap-window` plumbing it pairs with is done.
+- [x] **B-HIST2 — Backtest from the store.** Done (Iter 30): `--source store` on
+  `hlbot backtest`/`confirm` via `store.frames_from_store` (candles from
+  `data/candle_store/`, funding still API-fetched, seeded 2h before the first
+  bar; `--days 0` = everything stored; backtest-only `--no-funding` for offline
+  price-only runs) + per-coin `StoreCoverage` gap report so a harvester outage
+  can't silently pass a holey sample as a full one. Validated on the real store
+  (10 coins × 1m, 0 bars missing): maker +4.6bps, confirm **G0 PASS** —
+  matches the Iter-29 API-sourced run on the ~half-day-shifted window.
+- [ ] **B-G014 — Multi-week exact-replica G0 from the store. ← TOP PRIORITY once
+  store 1m span ≥ ~14d** (harvester started 2026-06-12 → ETA ~2026-06-26; check
+  spans via `hlbot harvest-candles`). Run `hlbot confirm --agent twap_mr_v1
+  --coins ADA,...,ZEC --interval 1m --vwap-window 60 --days 0 --source store
+  --prefer maker`. A PASS on ≥2 weeks is the durable-edge evidence B-MAKER-LIVE
+  and B-SCALE are waiting on; a FAIL means the Iter-29 PASS was the recent
+  pocket, not the strategy.
 - [x] **B-CAD — A/B levers at live-like cadence.** Done (Iter 29, numbers in
   PROGRESS): `--vwap-window` exposed in backtest/confirm/backtest-fetch (window
   keys the cache when ≠60). Cadence explains the backtest/live divergence: maker

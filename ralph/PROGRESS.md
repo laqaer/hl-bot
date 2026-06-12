@@ -1261,3 +1261,50 @@ on this box today; datasets cached under `data/backtest_cache/` (incl. new
 `data/candle_store/` spans; until then it's API-retention-equivalent), then a
 multi-week exact-replica G0. Meanwhile: B-EXIT/B-FUND/B-WIN sweeps can now run
 at the proxy cadences with the new flag; B-MAKER-LIVE awaits the operator.
+
+## Iteration 30 — 2026-06-12 — B-HIST2: backtest/confirm `--source store` (tooling ready before the data is)
+
+**Context.** B-HIST2 is the gate to a *durable* edge claim: Iter 29's first G0
+PASS at the exact live config (1m, w=60, maker +5.4bps) sits on the only 3.5d
+of 1m the API retains. The harvester (Iter 28) is accumulating more, but the
+backtester couldn't read it. Built the read path now — pure, offline-testable
+code — so the multi-week G0 can run the day the store has the data, and today's
+store≈API equivalence gives a free correctness check.
+
+**Changed (1 commit).**
+- **`backtest/store.py: frames_from_store`** — builds engine frames from
+  `data/candle_store/` instead of the retention-capped API. Candles from the
+  store; funding still API-fetched over the candle span (fundingHistory isn't
+  retention-limited the same way), seeded 2h before the first bar so the
+  carry-forward rate is in effect immediately. `days>0` trims to the most
+  recent window; `days=0` = everything stored. Missing store file → loud
+  FileNotFoundError naming the pair; a coin trimmed to nothing stays in the
+  coverage report (bars=0) instead of vanishing.
+- **`StoreCoverage` + `coverage_of`** — per-(coin,interval) bar count, span,
+  and interior-gap count. Why: a harvester outage longer than retention loses
+  bars forever, and a backtest silently spanning the hole would overstate its
+  sample. The CLI prints one line per coin (red if >1% missing or empty).
+- **CLI:** `--source api|store` on `hlbot backtest` and `hlbot confirm`;
+  `--no-funding` on backtest only (a G0 verdict with funding stripped would be
+  dishonest, so confirm always fetches). The duplicated frame-loading branch in
+  the two commands is consolidated into `_load_backtest_frames` (net: confirm
+  also gains the empty-frames guard it lacked). Store-sourced runs title as
+  e.g. `3.5d:store` so screenshots are self-describing.
+
+**Evidence.** **165 tests pass** (5 new: per-bar funding scaling + 2h seed +
+exact fetch-args, days-trim window math, missing-pair raise, trimmed-out coin
+stays in coverage, interior-gap counting); ruff clean. **Real-data validation
+on this box** (store = 10 coins × ~5001 1m bars, 3.5d, 0 missing):
+`backtest --source store` → maker **+4.6bps** / 969 trades / +22.7 sharpe,
+taker −0.8bps; `confirm --source store --prefer maker` → **✅ G0 PASS**
+(IS +4.4bps/+21.3sh, OOS +4.4bps/+21.3sh). Consistent with Iter 29's
+API-sourced +5.4bps on a window shifted ~half a day — the store path is
+measuring the same thing the API path did.
+
+**What's next (loop).** Filed **B-G014**: the multi-week exact-replica G0
+(`confirm --source store --interval 1m --days 0`) once the store's 1m span
+≥ ~14d — ETA ~2026-06-26 with the hourly harvester running. Until then the
+store adds nothing beyond API retention, so interim iterations should take
+B-EXIT/B-FUND/B-WIN sweeps at proxy cadences or the B12 remainder.
+B-MAKER-LIVE still awaits the operator (taker −0.8 vs maker +4.6 again
+confirms the spread tax IS the edge).
