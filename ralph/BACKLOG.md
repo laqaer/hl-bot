@@ -399,7 +399,10 @@ each on ≥90d real history (`hlbot confirm` / `hlbot backtest --config`) before
   B-EDGE2d): the edge does NOT generalize cross-sectionally — a 10-coin fresh
   universe FAILS G0 on the same window (OOS −31.5bps taker). The original-
   universe PASS is real but regime+universe specific; promotion bar now
-  includes a breadth arm.** Remaining:
+  includes a breadth arm. Iter 49 (B-EDGE2e): an efficiency-ratio entry gate
+  largely repairs the breadth failure and flips the combined 20-coin book to
+  G0 PASS — current best candidate, forward-testing in paper as
+  breakout_er_v1.** Remaining:
   - [x] **B-EDGE2a — paper wiring.** Done (Iter 38): `closes_key` config on
     breakout (default `"closes"`, backtests untouched), `closes_15m` feed in
     `_enrich_view` sized by `runtime.closes_15m_bars(agents)` (0 ⇒ zero extra
@@ -413,9 +416,11 @@ each on ≥90d real history (`hlbot confirm` / `hlbot backtest --config`) before
     rerun the confirms each few weeks; momentum is regime-fragile. First rerun
     done (Iter 48): original universe still PASSES on today's window under the
     new `min_trades` floor (IS +20.1/226 tr, OOS +70.4/96 tr, taker). **Future
-    reruns are two-armed:** original universe AND the breadth universe
-    (`store.BREADTH_COINS`, now harvested at 15m) — a durable edge claim needs
-    the breadth arm to stop failing as samples lengthen.
+    reruns are THREE-armed** (Iter 49): original universe, breadth universe,
+    and the combined 20-coin book with `min_efficiency_ratio=0.1` — the
+    B-EDGE2e configuration whose G0 PASS is the current promotion candidate.
+    A durable edge claim needs the ER-filtered combined arm to keep passing
+    (and the threshold to stay off-knife-edge) as samples lengthen.
   - [x] **B-EDGE2d — out-of-universe breadth test.** Done (Iter 48): same
     config (lb=384/ex=96) on 10 fresh liquid coins (CRV,ENA,LIT,NEAR,SUI,TON,
     WLD,XMR,XPL,XRP — top fresh by 24h volume, full 52d history) **FAILS G0**:
@@ -429,6 +434,23 @@ each on ≥90d real history (`hlbot confirm` / `hlbot backtest --config`) before
     stays paper-only; numbers in PROGRESS. Breadth universe now harvested at
     15m (`harvest extra_pairs`, `--breadth-coins`) so re-tests outgrow the
     rolling ~52d API retention.
+  - [x] **B-EDGE2e — trend-quality (efficiency-ratio) entry gate.** Done
+    (Iter 49): `min_efficiency_ratio`/`er_lookback_bars` on breakout (default
+    OFF), Kaufman ER over 24h of 15m bars at entry. ER ≥ 0.1 removes the
+    near-zero-ER false breaks the breadth FAIL was made of: breadth OOS
+    −31.5→−1.6bps (still FAIL), original universe PASS strengthens
+    (+36.4→+39.2 taker, OOS +70.4→+88.6), and the **combined 20-coin book
+    flips FAIL→G0 PASS** (taker +43.9bps, OOS +36.1/sharpe +3.96/156 tr,
+    robust to taker-3×; effective band 0.1–0.2, not a knife-edge; <0.05
+    inert). Threshold chosen on the breadth sweep → same-window selection;
+    forward test = `breakout_er_v1` paper A/B arm (roster + config, beside
+    unfiltered breakout_v1). NOT promotable until B-EDGE2b's three-armed
+    reruns confirm on longer samples. Numbers in PROGRESS.
+  - [ ] **B-EDGE2f — ER-arm correlation + paper A/B readout.** When the paper
+    books have ≥30d: `hlbot correlate` breakout_er_v1-config vs twap_mr_v1
+    (expect ≈ breakout's −0.1) and compare the two breakout paper cards —
+    the filtered arm should show fewer trades and better edge if the
+    backtest result is real out-of-window.
   - [x] **B-EDGE2c — quantify correlation to twap_mr_v1.** Done (Iter 36):
     `backtest/correlate.py` (UTC-day PnL bucketing + Pearson, tested) +
     `hlbot correlate` (two arms, per-arm config/vwap-window, same frames/cost

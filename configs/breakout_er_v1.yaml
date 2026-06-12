@@ -1,0 +1,38 @@
+agent: breakout_er_v1
+description: Donchian 96h/24h channel on 15m bars + efficiency-ratio trend-quality entry gate (B-EDGE2e).
+mode: paper
+
+# Paper A/B arm beside breakout_v1: identical channel, plus min_efficiency_ratio
+# 0.1 over 96 bars (24h) at entry. Backtest basis (15m × 52.3d store, combined
+# 20-coin universe, taker): +43.9bps / OOS +36.1bps sharpe +3.96 — the unfiltered
+# config FAILS the same G0 (OOS +3.1, sharpe +0.74). Threshold was selected on
+# the breadth-universe sweep, so treat the gates below as the forward test of
+# that selection. Same supervisor semantics as breakout_v1: paper-book scoring,
+# guardrails can fire on paper evidence, promotion is informational/human-gated.
+goals:
+  primary:
+    metric: edge_bps
+    window: 7d
+    op: ">="
+    threshold: 0
+  secondary:
+    - {metric: net_pnl, window: 30d, op: ">=", threshold: 0}
+    - {metric: win_rate, window: 30d, op: ">=", threshold: 0.45}
+
+guardrails:
+  - {metric: net_pnl,  window: 24h, op: ">=", threshold: -15,
+     action: pause,  reason: "24h realized loss > $15 on a $60 book"}
+  - {metric: edge_bps, window: 7d,  op: ">=", threshold: -20,
+     action: demote, reason: "7d realized edge < -20 bps — momentum regime broke"}
+  - {metric: edge_bps, window: 24h, op: ">=", threshold: -60,
+     action: alert,  reason: "24h edge < -60 bps"}
+
+# Promotion is paper -> live_small ONLY, behind sample + edge gates set at
+# roughly half the backtest edge. It can never auto-promote to full live.
+promotion:
+  from: paper
+  to: live_small
+  conditions:
+    - {metric: edge_bps, window: 30d, op: ">=", threshold: 15}
+    - {metric: net_pnl,  window: 30d, op: ">=", threshold: 5}
+    - {metric: n_trades, window: 30d, op: ">=", threshold: 60}

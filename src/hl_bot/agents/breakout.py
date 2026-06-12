@@ -8,7 +8,10 @@ stalls. Where twap_mr sells strength, this buys it — by construction the two
 make money in opposite regimes.
 
 Entry : mid breaks the prior ``lookback_bars`` close-channel by more than
-        ``min_break_pct``. Liquidity floor as twap_mr.
+        ``min_break_pct``. Liquidity floor as twap_mr. Optional trend-quality
+        gate (``min_efficiency_ratio`` > 0, default OFF): the Kaufman
+        efficiency ratio over ``er_lookback_bars`` must clear the threshold,
+        suppressing false breaks out of chop (the B-EDGE2d breadth failure mode).
 Exit  : mid crosses the opposite extreme of the prior ``exit_lookback_bars``
         closes (classic Donchian exit), OR ±stop_loss_pct, OR max hold.
 
@@ -60,6 +63,25 @@ def channel_break(
     return None, 0.0
 
 
+def efficiency_ratio(closes: list[float], lookback: int) -> float | None:
+    """Kaufman efficiency ratio over the last ``lookback`` bar-to-bar moves.
+
+    Net displacement / path length ∈ [0, 1]: ~1 is a clean one-way trend, ~0 is
+    chop that went nowhere. The B-EDGE2d breadth test showed Donchian breaks
+    bleed on choppy mid-caps (false breaks) while paying on clean trends — this
+    is the trend-quality measure used to tell them apart at entry time. Returns
+    None when there isn't enough history; a zero-length path (flat closes)
+    returns 0.0.
+    """
+    if lookback < 1 or len(closes) < lookback + 1:
+        return None
+    window = closes[-(lookback + 1):]
+    path = sum(abs(window[i] - window[i - 1]) for i in range(1, len(window)))
+    if path <= 0:
+        return 0.0
+    return abs(window[-1] - window[0]) / path
+
+
 def channel_exit(
     closes: list[float], mid: float, is_long: bool, exit_lookback: int
 ) -> bool:
@@ -88,6 +110,11 @@ class BreakoutConfig:
     max_total_notional: float = float("inf")
     max_concurrent_positions: int = 5
     closes_key: str = "closes"        # view.extra key carrying trailing closes
+    # Trend-quality entry filter (B-EDGE2e): require the Kaufman efficiency
+    # ratio over er_lookback_bars to clear min_efficiency_ratio before entering.
+    # 0.0 = OFF (default; entries behave exactly as before).
+    min_efficiency_ratio: float = 0.0
+    er_lookback_bars: int = 96
 
 
 class BreakoutAgent(Agent):
@@ -111,6 +138,8 @@ class BreakoutAgent(Agent):
             max_total_notional=float(c.get("max_total_notional", float("inf"))),
             max_concurrent_positions=int(c.get("max_concurrent_positions", 5)),
             closes_key=str(c.get("closes_key", "closes")),
+            min_efficiency_ratio=float(c.get("min_efficiency_ratio", 0.0)),
+            er_lookback_bars=int(c.get("er_lookback_bars", 96)),
         )
         self.conn = conn
 
@@ -201,25 +230,34 @@ class BreakoutAgent(Agent):
                 closes, mid, self.cfg.lookback_bars, self.cfg.min_break_pct)
             if side is None:
                 continue
-            candidates.append((coin, side, strength, mid))
+            er = None
+            if self.cfg.min_efficiency_ratio > 0:
+                er = efficiency_ratio(closes, self.cfg.er_lookback_bars)
+                # unjudgeable trend quality (too little history) blocks too:
+                # the filter exists to keep us out of names we can't vouch for.
+                if er is None or er < self.cfg.min_efficiency_ratio:
+                    continue
+            candidates.append((coin, side, strength, mid, er))
         candidates.sort(key=lambda r: r[2], reverse=True)
 
-        for placed, (coin, side, strength, mid) in enumerate(candidates):
+        for placed, (coin, side, strength, mid, er) in enumerate(candidates):
             if placed >= room or room_notional < 5.0:
                 break
             notional = min(self.cfg.max_notional_per_trade, room_notional)
             sz = round(notional / mid, 5)
             direction = "long" if side == "B" else "short"
+            er_note = "" if er is None else f" er={er:.2f}"
             out.append(Decision(
                 agent=self.name, action="place", coin=coin, side=side,
                 sz=sz, px=mid, cloid=make_cloid(self.name),
                 reasoning=(
                     f"BREAKOUT ENTER {direction} {coin} @ ${mid:.4f} "
-                    f"break={strength*100:+.2f}% beyond {self.cfg.lookback_bars}-bar channel "
-                    f"vol24=${vol.get(coin,0)/1e6:.0f}M"
+                    f"break={strength*100:+.2f}% beyond {self.cfg.lookback_bars}-bar channel"
+                    f"{er_note} vol24=${vol.get(coin,0)/1e6:.0f}M"
                 ),
                 market_snapshot={"mid": mid, "break_strength": strength,
                                  "lookback_bars": self.cfg.lookback_bars,
+                                 "efficiency_ratio": er,
                                  "vol24": vol.get(coin, 0), "notional": notional},
             ))
             room_notional -= notional

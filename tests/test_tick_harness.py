@@ -624,17 +624,24 @@ def test_build_roster_names_and_validated_defaults(conn):
     agents = build_roster(conn)
     assert [a.name for a in agents] == [
         "femr_v1", "twap_mr_v1", "twap_mr_regime_v1",
-        "liq_cascade_v1", "basis_v1", "breakout_v1",
+        "liq_cascade_v1", "basis_v1", "breakout_v1", "breakout_er_v1",
     ]
     femr = agents[0]
     assert femr.cfg.funding_enter_per_hr == 0.00015
     assert femr.cfg.max_notional_per_trade == 20.0
-    breakout = agents[-1]
+    breakout = agents[-2]
     assert breakout.cfg.lookback_bars == 384
     assert breakout.cfg.exit_lookback_bars == 96
     assert breakout.cfg.closes_key == "closes_15m"
     assert breakout.cfg.max_total_notional == 60.0
-    # the roster's breakout entry must keep driving the 15m feed sizing
+    assert breakout.cfg.min_efficiency_ratio == 0.0, "baseline arm stays unfiltered"
+    # B-EDGE2e paper A/B arm: same channel, trend-quality gate ON
+    er_arm = agents[-1]
+    assert er_arm.cfg.lookback_bars == 384
+    assert er_arm.cfg.min_efficiency_ratio == 0.1
+    assert er_arm.cfg.er_lookback_bars == 96
+    assert er_arm.cfg.closes_key == "closes_15m"
+    # the roster's breakout entries must keep driving the 15m feed sizing
     assert closes_15m_bars(agents) == 385
 
 

@@ -165,6 +165,18 @@ def build_roster(
             "max_notional_per_trade": 20.0,
             "max_total_notional": 60.0,
         }), conn=conn),
+        # B-EDGE2e: same channel with the trend-quality (efficiency-ratio)
+        # entry gate ON — the config that turned the combined 20-coin G0
+        # FAIL into a PASS. Paper A/B arm beside the unfiltered breakout_v1.
+        BreakoutAgent(name="breakout_er_v1", config=cfg("breakout_er_v1", {
+            "lookback_bars": 384,
+            "exit_lookback_bars": 96,
+            "min_efficiency_ratio": 0.1,
+            "er_lookback_bars": 96,
+            "closes_key": "closes_15m",
+            "max_notional_per_trade": 20.0,
+            "max_total_notional": 60.0,
+        }), conn=conn),
     ]
 
 

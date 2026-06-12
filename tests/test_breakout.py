@@ -9,7 +9,12 @@ structurally cannot have).
 from __future__ import annotations
 
 from hl_bot.agents.base import MarketView
-from hl_bot.agents.breakout import BreakoutAgent, channel_break, channel_exit
+from hl_bot.agents.breakout import (
+    BreakoutAgent,
+    channel_break,
+    channel_exit,
+    efficiency_ratio,
+)
 from hl_bot.agents.decisions import Decision, log_decision
 from hl_bot.backtest.engine import Backtester, CostModel, Frame
 from hl_bot.db.schema import init_db
@@ -65,6 +70,28 @@ def test_channel_exit_both_sides():
     assert not channel_exit([100.0, 101.0], 98.0, is_long=True, exit_lookback=6)  # short hist
 
 
+def test_efficiency_ratio_trend_vs_chop():
+    # clean one-way trend: every delta points the same way -> ER == 1
+    trend = [100.0 + i for i in range(11)]
+    assert abs(efficiency_ratio(trend, 10) - 1.0) < 1e-12
+    # pure chop ending where it started -> ER == 0
+    chop = [100.0, 101.0] * 5 + [100.0]
+    assert efficiency_ratio(chop, 10) == 0.0
+    # zig-zag with net drift sits strictly between
+    zig = [100.0, 102.0, 101.0, 103.0, 102.0, 104.0, 103.0, 105.0, 104.0, 106.0, 105.0]
+    er = efficiency_ratio(zig, 10)
+    assert 0.0 < er < 1.0
+    assert abs(er - 5.0 / 15.0) < 1e-12  # |105-100| / sum|deltas|
+
+
+def test_efficiency_ratio_history_and_degenerate():
+    assert efficiency_ratio([100.0] * 10, 10) is None      # need lookback+1
+    assert efficiency_ratio([], 10) is None
+    assert efficiency_ratio([100.0, 100.0], 10) is None
+    assert efficiency_ratio([100.0] * 11, 10) == 0.0       # flat path -> 0, not div0
+    assert efficiency_ratio([100.0, 101.0], 0) is None     # nonsense lookback
+
+
 # ---------------------------------------------------------------------------
 # decide(): entries, guards
 # ---------------------------------------------------------------------------
@@ -105,6 +132,38 @@ def test_decide_ranks_by_break_strength_when_room_limited():
         _view(20 * MIN, {"BIG": 105.0, "SMALL": 101.0}, closes))
     places = [d for d in out if d.action == "place"]
     assert [d.coin for d in places] == ["BIG"]
+
+
+CHOPPY_BREAK = [100.0, 101.0] * 6 + [103.0]   # break out of chop: ER ≈ 0.27
+TRENDY_BREAK = [100.0 + 0.5 * i for i in range(13)]  # monotone climb: ER = 1.0
+
+
+def test_decide_er_filter_blocks_chop_break_allows_trend_break():
+    cfg = {"min_efficiency_ratio": 0.5, "er_lookback_bars": 10}
+    out = _agent(cfg).decide(
+        _view(20 * MIN, {"UP": CHOPPY_BREAK[-1]}, {"UP": CHOPPY_BREAK}, VOL))
+    assert all(d.action == "hold" for d in out)
+    out = _agent(cfg).decide(
+        _view(20 * MIN, {"UP": TRENDY_BREAK[-1]}, {"UP": TRENDY_BREAK}, VOL))
+    places = [d for d in out if d.action == "place"]
+    assert len(places) == 1 and places[0].side == "B"
+    assert places[0].market_snapshot["efficiency_ratio"] == 1.0
+
+
+def test_decide_er_filter_default_off_admits_chop_break():
+    out = _agent().decide(
+        _view(20 * MIN, {"UP": CHOPPY_BREAK[-1]}, {"UP": CHOPPY_BREAK}, VOL))
+    places = [d for d in out if d.action == "place"]
+    assert len(places) == 1
+    assert places[0].market_snapshot["efficiency_ratio"] is None
+
+
+def test_decide_er_filter_blocks_when_history_too_short_to_judge():
+    # filter ON but er_lookback exceeds available closes -> unjudgeable -> no entry
+    cfg = {"min_efficiency_ratio": 0.5, "er_lookback_bars": 50}
+    out = _agent(cfg).decide(
+        _view(20 * MIN, {"UP": TRENDY_BREAK[-1]}, {"UP": TRENDY_BREAK}, VOL))
+    assert all(d.action == "hold" for d in out)
 
 
 def test_decide_cooldown_blocks_reentry_after_exit():

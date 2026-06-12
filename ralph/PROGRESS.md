@@ -2421,3 +2421,85 @@ breadth universes, both under the min_trades floor). P0 edge hunt continues:
 momentum family needs either a regime/universe selector (what *makes* a coin
 trend-clean?) or a different family; breakout_v1 accrues paper evidence
 meanwhile. B12j / B14a if idle.
+
+## Iteration 49 — 2026-06-12 — B-EDGE2e: efficiency-ratio trend gate repairs the breadth failure; combined 20-coin book flips FAIL→G0 PASS
+
+**What.** B-G014 still blocked (1m store ~3.7d). Picked up Iter 48's open
+question — *what makes a coin trend-clean?* — and answered it with the
+simplest standard measure: the Kaufman efficiency ratio (net displacement /
+path length over a lookback; ~1 = clean trend, ~0 = chop). Shipped it as a
+default-OFF entry gate on breakout (`min_efficiency_ratio`, `er_lookback_bars`,
+pure `efficiency_ratio()` + filter in the candidate scan; unjudgeable history
+blocks when the filter is ON), then A/B'd on real 15m/52.3d data across three
+universes. Hypothesis: the breadth bleed (Iter 48) was false breaks out of
+chop, which should score near-zero ER at entry.
+
+**Results (taker = honest arm; lb=384/ex=96, w=385, 15m; baseline reproduced
+exactly before sweeping: breadth IS +37.4 / OOS −31.5 FAIL).**
+- Breadth universe (CRV…XRP, cached frames), ER over 96 bars (24h):
+  er≥0.1 cuts only 48/434 trades but moves full-sample +9.8→+29.5bps and OOS
+  −31.5→**−1.6** (sharpe +0.24) — the bleed is gone, still FAIL (<+3bps).
+  er≥0.2 +13.5/OOS −30.5; er≥0.3 −29.7/OOS −71.3; er≥0.4 ~no trades. ER over
+  384 bars is worse at every threshold (0.1: OOS −51.7; ≥0.2 kills the
+  sample). So the filter's value is the *bottom tail*: only near-zero-ER
+  breaks are reliably fake; higher cuts remove real trends.
+- Original universe (ADA…ZEC, store, 5021 frames, 52.3d, 0 missing), er96≥0.1:
+  still **✅ PASS** and stronger — taker +36.4→+39.2bps, OOS +70.4→**+88.6**
+  (sharpe +6.34, 86 tr), trades 322→300. The threshold was selected on the
+  breadth sweep, so this improvement is out-of-selection evidence.
+- **Combined 20-coin book (both universes, store)** — the deploy-realistic
+  test: baseline **❌ FAIL** (full +26.9bps/502 tr; OOS +3.1, sharpe +0.74);
+  er96≥0.1 **✅ G0 PASS** — full taker **+43.9bps** (456 tr, sharpe +5.35,
+  net +$401 on $1k), walk-forward IS +47.0 (306 tr) / OOS **+36.1bps**
+  (sharpe +3.96, 156 tr), robust to taker-3× (+41.0). Dose-response: 0.05
+  inert (cuts 2 trades, FAIL), 0.1 PASS (best net$), 0.15 PASS (+31.8 OOS),
+  0.2 PASS (+40.7 OOS, fewer trades) — an effective band, not a knife-edge.
+
+**Interpretation.** The ER gate is the universe selector Iter 48 asked for:
+instead of hand-picking trend-clean coins (curve-fitting by universe choice),
+deploy wide and let per-entry trend quality decide. Mechanically it both
+skips false breaks AND frees the 5 concurrency slots + notional for
+clean-trend names — which is why the combined book improves more than either
+universe alone.
+
+**Changed (code).**
+- `agents/breakout.py` — `efficiency_ratio()` pure fn; `min_efficiency_ratio`
+  (default 0.0 = OFF, exact pre-change behavior) + `er_lookback_bars` (96)
+  config; entry-scan gate; ER in reasoning/market_snapshot when ON.
+- `agents/runtime.py` — `breakout_er_v1` roster entry: same channel config +
+  er gate ON (0.1/96), paper A/B arm beside the unfiltered breakout_v1
+  (shared closes_15m feed, zero extra API traffic; live filter still drops
+  both until human promotion).
+- `configs/breakout_er_v1.yaml` — paper mode, same guardrails/promotion gates
+  as breakout_v1 (promotion → live_small only, human-gated per B-PAPER3c).
+
+**Evidence.** 280 → **286 tests pass** (ER math: trend=1/chop=0/zig-zag exact,
+history + flat-path degenerates; decide(): filter blocks chop-break, admits
+trend-break, default-OFF admits chop-break, unjudgeable-history blocks;
+roster: er-arm config + feed sizing; config YAML loads paper-only). `ruff
+check src tests scripts` clean. Live-fire: one real paper tick on a scratch
+DB — breakout_er_v1 in roster, consumed the shared 15m feed, held correctly
+(no current breaks; identical view to breakout_v1). All numbers reproducible:
+breadth from `CRV-…-XRP_15m_52d_w385.json.gz` cache, original/combined via
+`--source store --days 0`, e.g. `hlbot confirm --agent breakout_v1 --coins
+<20 coins> --interval 15m --days 0 --vwap-window 385 --source store --prefer
+taker --config '{"lookback_bars":384,"exit_lookback_bars":96,
+"min_efficiency_ratio":0.1,"er_lookback_bars":96}'`.
+
+**Honest caveats.** (1) The 0.1 threshold was picked from the breadth sweep on
+this same 52d window — the combined-book PASS shares that data and is NOT
+independent confirmation; the original-universe improvement is the only
+out-of-selection signal, and it's same-calendar. (2) One 52d regime window,
+same as every breakout number so far; the three-armed B-EDGE2b reruns on
+longer store samples are the real test. (3) The book is chaotic at the
+margin: the 0.05 arm cut 2 trades yet moved OOS by $12 (slot/cooldown
+cascades) — treat per-arm deltas <$20 as noise; the 0.1 effect (+$100 OOS,
+sign flip) is well above that. (4) Breadth alone still FAILS at every
+threshold — the filter repairs, not creates, an edge; mid-caps have no
+harvestable momentum here on their own. (5) Maker fills remain optimistic
+for momentum; all promotion-relevant numbers quoted taker.
+
+**What's next (loop).** B-G014 when 1m span ≥14d (~Jun 23–26). B-EDGE2b
+reruns now three-armed (original / breadth / ER-filtered combined). B-EDGE2f
+(ER-arm correlation + paper A/B readout) once the paper books have ≥30d.
+B12j / B14a if idle.
