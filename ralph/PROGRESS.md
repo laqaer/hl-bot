@@ -1308,3 +1308,75 @@ store adds nothing beyond API retention, so interim iterations should take
 B-EXIT/B-FUND/B-WIN sweeps at proxy cadences or the B12 remainder.
 B-MAKER-LIVE still awaits the operator (taker −0.8 vs maker +4.6 again
 confirms the spread tax IS the edge).
+
+## Iteration 31 — 2026-06-12 — B-EXIT: exit-parameter sweep — one robust lever (stop 0.03), two pruned
+
+**Context.** B-G014 (multi-week exact-replica G0) is blocked until the candle
+store accumulates ~14d of 1m bars (ETA ~2026-06-26), so per Iter 30's plan this
+iteration took B-EXIT: sweep `sigma_exit` / `stop_loss_pct` / `max_hold_hours`
+on twap_mr_v1. All three were already config-plumbed (`--config` overrides,
+Iter 22) and all four datasets were already cached, so this is a pure
+experiment iteration — **no code change; the increment is evidence**. Engine
+clock-freezing verified first (`frozen_clock` patches `time.time()` per frame),
+so hold/stop replay is valid at fine cadence.
+
+**Method.** One-dimensional sweeps around the live baseline (sigma_exit 0.5,
+stop 0.015, hold 4h) on the exact live config (1m, w=60, 3.5d — the only 1m
+the API retains) and the 5m/17d w=12 proxy; direction checks on 15m/52d w=4
+and 1h/90d; walk-forward `confirm` on the surviving candidate. 10-coin
+universe (ADA…ZEC), maker+taker both reported, all runs from
+`data/backtest_cache/` (reproducible offline).
+
+**Results — `stop_loss_pct` 0.015→0.03 is the one robust improvement
+(maker edge bps, baseline → wide stop):**
+
+| sample        | baseline | stop 0.03 | net$ change      | maxDD          |
+|---------------|---------:|----------:|------------------|----------------|
+| 1m 3.5d w60 (live cfg) | +5.4 | **+6.1** | +90.77 → +101.24 | −2.0% → −1.8% |
+| 5m 3d w12     |     +5.5 |  **+6.4** | +56.62 → +65.80  | −1.9% → −2.0%  |
+| 5m 17d w12    |     −1.5 |  **−0.2** | −102.78 → −15.72 | −15.2% → −12.2%|
+| 15m 52d w4    |     −1.5 |  **−1.0** | −63.50 → −42.34  | −9.7% → −8.0%  |
+| 1h 90d (NOT live-like) | −5.0 | −5.8 | −140.99 → −156.85 | −21.7% → −23.0%|
+
+Taker at the live config flips −0.0 → **+0.5bps** (matters: live entries are
+still taker until B-MAKER-LIVE). Walk-forward at the live config: **G0 PASS,
+stronger than baseline** — IS +6.4/OOS +5.7bps maker (vs +5.1/+6.0), full
+sample +6.1bps/+28.9sh. 5m/17d confirm still FAILs G0 but improves at every
+rung (IS −1.9→−1.5, OOS +1.8→+2.5, all taker-stress rungs better). Only the
+1h sample disagrees — and Iter 29 established 1h verdicts are verdicts on a
+different strategy. Mechanism: at fine cadence a 1.5% price stop converts
+transient wicks into realized losses on trades whose reversion premise was
+about to pay; at 1h a 1.5% adverse move is more likely a real trend, so
+widening just rides losers. **Not flipped live**: it's a live strategy change
+(and per-trade risk loosening — the proposed-overrides channel is
+risk-reducing only), and the ≥90d-at-live-cadence bar is unmet (52d max).
+Filed as a second confirm arm on B-G014; if it passes and beats baseline on
+≥2 weeks of stored 1m, propose the flip to the operator.
+
+**Results — `sigma_exit` is a fair-weather lever (pruned).** Monotone
+dose-response on the recent pocket: at 1m, 0.5→0.25→0.1 gives +5.4→+7.0→+8.5
+maker (taker −0.0→+1.7→+3.2); same direction on 5m/3d (+5.5→+7.8). But on
+5m/17d it's monotone WORSE (−1.5→−1.9→−2.7): the gain is the recent reversion
+regime, not cadence — disambiguated by running the same 5m config on both
+windows. Boundary check: sigma_exit 0.0 (reversion exit disabled) collapses
+the strategy (1m maker +5.4→+2.7, win 70%→47%, trades 844→166) — the
+reversion exit IS the profit-taking engine, the stop/hold are just guardrails.
+Keep 0.5. (Combo 0.1+stop0.03 hit +10.1bps maker / +4.4 taker on 3.5d —
+tempting, but it's the pocket; revisit only if B-G014's multi-week sample
+confirms.)
+
+**Results — `max_hold_hours` is inert (pruned).** At 1m: 2/4/8h identical
+(no position survives ~2h; reversion or stop fires first), 1h cap +0.1bps
+noise. At 5m/17d: 2/4/8 identical, 1h cap worse (−1.7). Keep 4.
+
+**Evidence.** 165 tests pass; ruff clean (no code changed; gate run anyway).
+All numbers from cached real-history datasets on this box today; every run
+reproducible via the `--config`/`--vwap-window` flags shown.
+
+**What's next (loop).** B-G014 still blocked (~2026-06-26): when it unblocks,
+run BOTH arms (baseline + stop 0.03). Until then: B-FUND (funding-aware fade
+suppression) and B-WIN (VWAP window study) remain at proxy cadences; B12
+remainder (femr_tick preamble consolidation) is the standing refactor item.
+B-MAKER-LIVE unchanged, still awaits the operator — note stop 0.03 would make
+even taker entries marginally positive at live cadence, but the maker flip is
+worth ~10× more (+0.5 vs +6.1bps).

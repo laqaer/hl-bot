@@ -201,7 +201,10 @@ each on ≥90d real history (`hlbot confirm` / `hlbot backtest --config`) before
   --coins ADA,...,ZEC --interval 1m --vwap-window 60 --days 0 --source store
   --prefer maker`. A PASS on ≥2 weeks is the durable-edge evidence B-MAKER-LIVE
   and B-SCALE are waiting on; a FAIL means the Iter-29 PASS was the recent
-  pocket, not the strategy.
+  pocket, not the strategy. **Run a second arm with `--config
+  '{"stop_loss_pct":0.03}'`** (B-EXIT's robust lever, Iter 31): if it passes
+  AND beats baseline on the multi-week sample, propose the default flip to the
+  operator (live strategy change — not loop-flippable).
 - [x] **B-CAD — A/B levers at live-like cadence.** Done (Iter 29, numbers in
   PROGRESS): `--vwap-window` exposed in backtest/confirm/backtest-fetch (window
   keys the cache when ≠60). Cadence explains the backtest/live divergence: maker
@@ -223,8 +226,19 @@ each on ≥90d real history (`hlbot confirm` / `hlbot backtest --config`) before
   helps only when the strategy is losing; at the live config it cut profit 42%
   (winners get sized down too). Keep OFF. The vol-targeting variant is pruned
   unless drawdown control becomes the binding problem.
-- [ ] **B-EXIT — sweep `sigma_exit`/`stop_loss_pct`/`max_hold_hours`** for best
-  risk-adjusted exits.
+- [x] **B-EXIT — sweep `sigma_exit`/`stop_loss_pct`/`max_hold_hours`.** Done
+  (Iter 31, all from cached real data, numbers in PROGRESS). One robust lever
+  found: **`stop_loss_pct` 0.015→0.03 improves every live-like sample** —
+  1m/3.5d maker +5.4→+6.1bps (G0 PASS, taker flips −0.0→+0.5), 5m/17d
+  −1.5→−0.2 (maxDD −15.2→−12.2%), 15m/52d −1.5→−1.0; only 1h/90d disagrees
+  (not the live strategy). Mechanism: a 1.5% stop at fine cadence converts
+  transient wicks into realized losses before the reversion exit can pay.
+  **Not flipped (live strategy change; 90d-at-live-cadence bar unmet)** —
+  second confirm arm added to B-G014. `sigma_exit` tightening (0.25/0.1) is a
+  fair-weather lever: big gains on the recent 3.5d pocket at every cadence but
+  worse on 17d — regime, not cadence; keep 0.5 (0.0 collapses the strategy,
+  proving the reversion exit is the profit engine). `max_hold_hours` inert at
+  1m and 5m (reversion/stop always fires first); keep 4.
 - [ ] **B-FUND — funding-aware fade suppression** (skip/trim fades funding opposes).
 - [ ] **B-WIN — VWAP window study** (1h vs 2–4h vs volume-weighted σ).
 - [ ] **B-EDGE2 — hunt a second, low-correlation edge** (carry is pruned) so the
