@@ -45,14 +45,21 @@ scale strategies by evidence, revisit capital strategy.
 Nothing is "alpha" until `hlbot confirm` passes on real history **and** paper
 matches live within tolerance. Status at writing:
 
-| Strategy           | Class                      | Evidence state |
-|--------------------|----------------------------|----------------|
-| xfund_carry_v1     | x-coin funding carry, ~neutral | G0 never run on real data (network) — **the** blocking fact |
-| funding_carry_v1   | single-name carry          | same           |
-| femr_v1            | funding-extreme reversion  | unconfirmed    |
-| twap_mr_regime_v1  | 1h mean reversion + regime | unconfirmed    |
-| liq_cascade_v1     | post-cascade dislocation   | incubating; dataset accruing to data/liq_log.jsonl |
+| Strategy           | Class                      | 2026-06-12 audit verdict |
+|--------------------|----------------------------|--------------------------|
+| xfund_carry_v1     | x-coin funding carry       | **FIX → flagship.** Fixed: dead hysteresis (rotation churn), no stops, de facto short-only book. Quant estimate after fixes: +3–8 bps/day on deployed notional, Sharpe ~0.8–1.5. G0 on real data still pending (host). |
+| liq_cascade_v1     | post-cascade dislocation   | **REBUILD.** Feed was dead code (V1) — it has never seen an event; effect is real and capacity-advantaged at our size. Rebuilt as maker-resting reversion (V2/E5): +2–5 bps/day averaged, episodic. |
+| funding_carry_v1   | single-name carry          | **FIX, keep small.** −5 to +5 bps/day, negative skew (shorts the strongest momentum). Stops/re-entry bug fixed; satellite only. |
+| twap_mr_regime_v1  | 1h mean reversion + regime | **FROZEN (paper).** Backtest window (60h) ≠ live window (1h) — unified, needs re-confirmation (V8). ~0 expectancy expected. |
+| femr_v1            | funding-extreme reversion  | **RETIRED.** −51 bps/7d measured live; paper evidence was structurally broken; superseded by funding_carry. |
 | twap_mr_v1, basis_v1 | —                        | retired (confirmed post-cost bleeders) |
+
+The audit also found the evidence machine itself was optimistic exactly where
+the thesis lives (backtest maker fills at mid with 100% probability, exits
+priced maker when live exits are taker, G0 with no minimum trade count, sweep
+selection consuming the OOS window, promotion gates passable by zero-edge
+strategies via rolling-window repeated looks). All fixed on the PR branch —
+**every prior backtest/sweep number is invalidated; re-run after merge.**
 
 First host action remains `docs/GO_LIVE.md` step 2 (backtest-fetch + confirm
 --record). Until then every claim about alpha is a hypothesis.

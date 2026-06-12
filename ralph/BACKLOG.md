@@ -11,7 +11,52 @@ leverage *unblocked* thing. Add new findings as you discover them.
 > sweep harness. Superseded items moved to Done. New center of gravity:
 > **make a strategy pass its gates on real evidence.**
 
-## P0 — confirm an edge on real history (host-side first)
+## P0 — review remediation (2026-06-12 four-track audit)
+
+> A full product audit (execution, measurement, strategies, ops) found and
+> fixed critical defects on the PR branch. These follow-ups were deliberately
+> deferred — they are the highest-leverage items after the fixes merge.
+
+- [ ] **V1 — Verify the liquidation feed on the host.** The WS `trades`
+  handler reads a `liquidation` flag that HL's public schema may not carry,
+  and the REST fallback endpoint likely doesn't exist — liq_cascade may have
+  NEVER seen an event and `data/liq_log.jsonl` may be empty. Host: run
+  `hlbot ws` through one volatile session and check the log accrues; if not,
+  find the real source (HL docs: liquidations appear as trades with special
+  `users`; or `userEvents`/explorer feeds) and rewire `ingest/ws.py:80`.
+  Everything about liq_cascade and the moonshot sleeve is gated on this.
+- [ ] **V2 — Rebuild liq_cascade as maker-resting REVERSION** per the quant
+  review + `docs/research/E5_event_reactor.md`: fade the dislocation with
+  resting bids below mid (the cascade fills you at maximum spread), |A−B|
+  imbalance trigger (done), TP/SL swapped to positive skew. Spec first;
+  calibrate from liq_log once V1 confirms data.
+- [ ] **V3 — Evidence provenance (params_hash).** Stamp a config/params hash
+  into `confirmations`, sweep results, and (cheaply) decisions; promotion's
+  require_g0 should match the *currently deployed* hash. Today ralph can tune
+  params and inherit weeks of old-params evidence (audit finding G1). Until
+  then: any agent param change should bump the agent name (`_v2`) instead.
+- [ ] **V4 — Window-boundary edge fix.** `edge_bps` pairs close-fill PnL with
+  in-window notional only — trades straddling the window start inflate edge
+  ~2x at some rolling looks. Proper fix: round-trip series bucketed by close
+  time with matched entry notional (pairing logic exists in
+  `scoring/attribution.py`). The persistence gate mitigates; this removes it.
+- [ ] **V5 — Ralph privilege separation.** The loop runs as the trading user
+  inside the live working tree (configs hot-reload into the engine mid-
+  iteration) and can edit its own guardrail tests. Host: separate clone +
+  user for the loop; CI: diff-check `tests/test_gate_minima.py`, `ops/`,
+  `risk/`, `backtest/engine.py::CostModel` against main and fail on weakening.
+- [ ] **V6 — Equity-floor flow adjustment.** The 75%-of-HWM kill is not
+  deposit/withdrawal-adjusted (a >25% withdrawal trips it; deposits inflate
+  HWM). Track net transfers (ledger endpoint) and adjust the HWM basis.
+- [ ] **V7 — xfund long-leg reality.** The long leg (funding ≤ −threshold)
+  almost never exists, so xfund runs short-only at half cap. Sweep a relaxed
+  long-leg threshold (e.g. long the *least positive* funding names as the
+  hedge) vs. accepting short-only with the imbalance cap — decide on data.
+- [ ] **V8 — twap_mr_regime re-confirmation.** Signal windows are now unified
+  (live = backtest = 60×1h); the agent is frozen `roster: paper` until a
+  fresh G0 (with the honest maker-fill model) passes on the unified signal.
+
+## P0b — confirm an edge on real history (host-side first)
 
 - [ ] **R1 — First real sweep results.** Host: `hlbot-sweep.timer` (or manual
   `deploy/run-sweep.sh`) populates `research/results/`. Then: act on the
