@@ -38,6 +38,35 @@ INTERVAL_MS: dict[str, int] = {
 
 CANDLE_PAGE_LIMIT = 5000  # HL caps candleSnapshot at ~5000 rows/call
 
+RATE_LIMIT_RETRIES = 5      # 2+4+8+16+32s backoff ≈ 1min, enough for HL's window
+
+
+def retry_rate_limited(
+    fn: Any,
+    *,
+    retries: int = RATE_LIMIT_RETRIES,
+    base_delay_s: float = 2.0,
+    sleep: Any = time.sleep,
+) -> Any:
+    """Call ``fn()``, retrying HTTP 429 with exponential backoff.
+
+    HL rate-limits per-IP on a rolling window; a multi-coin history load
+    (20 coins × candles + paginated funding) can trip it mid-burst, and
+    without this one 429 aborts the WHOLE load with nothing cached — the
+    box's hourly harvester shares the same IP, so bursts collide in
+    practice. Only 429 is retried: other HTTP errors propagate immediately
+    (retrying a 4xx/5xx would just mask a real problem), and the last
+    attempt re-raises so callers keep their existing failure semantics.
+    """
+    for attempt in range(retries):
+        try:
+            return fn()
+        except httpx.HTTPStatusError as e:
+            if e.response.status_code != 429:
+                raise
+            sleep(base_delay_s * (2 ** attempt))
+    return fn()
+
 
 def fetch_candles(
     coin: str,
@@ -54,7 +83,7 @@ def fetch_candles(
     :func:`paginate_by_time`, keyed on the open time ``t``) or the recent candles
     are silently dropped — the same per-call cap that truncated ``fundingHistory``.
     """
-    def _page(s: int, e: int) -> list[dict[str, Any]]:
+    def _fetch(s: int, e: int) -> list[dict[str, Any]]:
         with httpx.Client(timeout=20) as client:
             r = client.post(base_url + "/info", json={
                 "type": "candleSnapshot",
@@ -64,6 +93,9 @@ def fetch_candles(
             r.raise_for_status()
             out = r.json()
         return out if isinstance(out, list) else []
+
+    def _page(s: int, e: int) -> list[dict[str, Any]]:
+        return retry_rate_limited(lambda: _fetch(s, e))
 
     return paginate_by_time(
         _page, start_ms, end_ms, page_limit=CANDLE_PAGE_LIMIT, time_key="t",
@@ -133,7 +165,7 @@ def fetch_funding_history(
     window must be walked forward (see :func:`paginate_by_time`) or the recent
     funding is lost.
     """
-    def _page(s: int, e: int) -> list[dict[str, Any]]:
+    def _fetch(s: int, e: int) -> list[dict[str, Any]]:
         with httpx.Client(timeout=20) as client:
             r = client.post(base_url + "/info", json={
                 "type": "fundingHistory", "coin": coin,
@@ -142,6 +174,9 @@ def fetch_funding_history(
             r.raise_for_status()
             out = r.json()
         return out if isinstance(out, list) else []
+
+    def _page(s: int, e: int) -> list[dict[str, Any]]:
+        return retry_rate_limited(lambda: _fetch(s, e))
 
     return paginate_by_time(_page, start_ms, end_ms)
 

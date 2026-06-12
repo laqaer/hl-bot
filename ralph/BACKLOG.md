@@ -696,6 +696,32 @@ each on ≥90d real history (`hlbot confirm` / `hlbot backtest --config`) before
     uncorrelated (n=54 → ±0.27 CI95; claim is "uncorrelated", not "hedge").
     Diversification thesis holds; rerun alongside B-EDGE2b as the store grows.
 
+- [~] **B-EDGE3 — third edge candidate: cross-sectional momentum (`xmom_v1`).**
+  Found (Iter 72): `agents/xmom.py` — rank coins by trailing return, long
+  top-K / short bottom-K dollar-neutral, rank-hysteresis exits (xfund's
+  rotation-churn lesson) + stop/max-hold. On 90d × 1h × 20-coin real history
+  the **14d lookback passes G0 at taker** (IS +19.5bps/122tr, OOS
+  +131.7bps/80tr, full-sample +67.0bps/sharpe +1.80, robust to taker-3×;
+  IS sharpe +0.70 — gate checks OOS sharpe only); original-10 sub-universe
+  also PASSES (IS +9.2/OOS +107.0), breadth-10 alone FAILS (IS −10.0) — the
+  edge lives in the liquid majors set, like breakout. Daily-PnL corr vs
+  breakout-ER on identical frames: **−0.01** (uncorrelated). Caveats (why
+  [~] not promotable): the 14d arm was picked after 7d/3d FAILED walk-forward
+  on the same window (same-window selection); one 90d sample whose OOS is a
+  momentum-friendly pocket; skip_bars=24 HURTS (−14.3) so the lever stays 0.
+  Numbers in PROGRESS Iter 72.
+  - [ ] **B-EDGE3a — paper wiring.** `closes_1h` feed in `runtime.enrich_view`
+    (sized by roster like `closes_15m_bars`), roster entry + YAML (paper,
+    promotion human-gated), mirroring B-EDGE2a. Only after this does G1 paper
+    evidence accumulate.
+  - [ ] **B-EDGE3b — pre-registered rerun spec.** Freeze `b_edge3.json`
+    (arms: 20-coin lb336, original-10 lb336, breadth-10 lb336, all taker)
+    so reruns are tamper-evident like b_edge2b. Blocker: the experiment
+    runner reads the candle store (1m/5m/15m only) — either add 1h to
+    `harvest-candles` intervals (lets reruns outgrow the rolling API
+    retention) or run xmom at 15m bars with lookback 1344 (= 14d) once the
+    15m store is long enough; decide when freezing.
+
 ## P3 — capital formation (see docs/CAPITAL.md)
 
 - [x] **B15 — Public-grade track-record export.** Done: `reports/track_record.py`

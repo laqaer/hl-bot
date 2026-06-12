@@ -24,6 +24,7 @@ from ..agents.twap_mr import TwapMrAgent
 from ..agents.twap_mr_regime import TwapMrRegimeAgent
 from ..agents.veto import VetoAgent
 from ..agents.xfund_carry import XFundCarryAgent
+from ..agents.xmom import XMomAgent
 from ..config import CONFIG_DIR, Settings
 from ..db.schema import init_db
 from ..ingest.hyperliquid import ingest_fills, ingest_funding, snapshot_equity
@@ -658,6 +659,7 @@ def _backtest_factories(cfg: dict[str, Any]):
         "liq_cascade_v1": lambda conn: LiqCascadeAgent(config=cfg, conn=conn),
         "basis_v1": lambda conn: BasisAgent(config=cfg, conn=conn),
         "breakout_v1": lambda conn: BreakoutAgent(config=cfg, conn=conn),
+        "xmom_v1": lambda conn: XMomAgent(config=cfg, conn=conn),
     }
 
 

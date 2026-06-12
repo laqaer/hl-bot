@@ -236,6 +236,65 @@ def test_fetch_candles_paginates_past_the_row_cap(monkeypatch):
     assert len(starts) >= 3, "needed multiple pages to clear the cap"
 
 
+def _http_status_error(code: int):
+    import httpx
+
+    return httpx.HTTPStatusError(
+        f"{code}", request=httpx.Request("POST", "https://x/info"),
+        response=httpx.Response(code),
+    )
+
+
+def test_retry_rate_limited_backs_off_then_succeeds():
+    from hl_bot.backtest.data import retry_rate_limited
+
+    delays: list[float] = []
+    calls = {"n": 0}
+
+    def flaky():
+        calls["n"] += 1
+        if calls["n"] <= 2:
+            raise _http_status_error(429)
+        return "ok"
+
+    assert retry_rate_limited(flaky, sleep=delays.append) == "ok"
+    assert calls["n"] == 3
+    assert delays == [2.0, 4.0], "exponential backoff between attempts"
+
+
+def test_retry_rate_limited_only_retries_429():
+    import pytest
+
+    from hl_bot.backtest.data import retry_rate_limited
+
+    delays: list[float] = []
+
+    def server_error():
+        raise _http_status_error(500)
+
+    with pytest.raises(Exception, match="500"):
+        retry_rate_limited(server_error, sleep=delays.append)
+    assert delays == [], "non-429 must propagate immediately, no retry"
+
+
+def test_retry_rate_limited_exhaustion_reraises():
+    import pytest
+
+    from hl_bot.backtest.data import retry_rate_limited
+
+    delays: list[float] = []
+    calls = {"n": 0}
+
+    def always_limited():
+        calls["n"] += 1
+        raise _http_status_error(429)
+
+    with pytest.raises(Exception, match="429"):
+        retry_rate_limited(always_limited, retries=3, sleep=delays.append)
+    assert calls["n"] == 4, "retries + the final uncaught attempt"
+    assert delays == [2.0, 4.0, 8.0]
+
+
 def test_frame_cache_roundtrip(tmp_path):
     from hl_bot.backtest.data import load_cached_frames, save_frames
     frames = _mean_reversion_path()

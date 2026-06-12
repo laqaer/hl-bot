@@ -3816,3 +3816,90 @@ results JSON and bump its min_span_days; b_g014 ~Jun 26). B-EDGE2f at
 ≥30d paper books (~Jul 8). Idle queue: B-SCALE doc once G2 evidence is
 real; per-agent funding clamp if a funding-collecting agent ever shares
 the live book with a funding-paying one.
+
+## Iteration 72 — 2026-06-12 — B-EDGE3: cross-sectional momentum passes G0 at 14d (with caveats)
+
+**Ripeness checks** (per-iteration readout): b_edge2b NOT RIPE (15m span
+52.3d < 60d, ETA ~Jun 20); b_g014 NOT RIPE (1m span 3.9d < 14d, ETA
+~Jun 26). Store healthy (0 missing bars) and fresh (topped up 11:43 UTC,
+minutes before session start) — though /tmp/ralph_harvest.log is again
+absent, so whatever refreshed the store wasn't loop.sh's logged top-up;
+freshness is what matters and it held, but the logging gap means we can't
+yet tell WHICH mechanism is keeping the store alive. Second observation;
+still no action beyond noting it (the B-RIPE gap gate is the backstop).
+
+**Why this.** Both headline experiments time-blocked; the open P0.6 umbrella
+is the edge hunt (the book has one proven engine + one paper candidate —
+single-strategy risk before any AUM). Carry pruned cross-sectional *funding*
+ranking; the untested sibling is cross-sectional *return* ranking (xmom),
+the standard market-neutral momentum factor, and a different machine from
+breakout (relative ranks, ~market-neutral book vs per-coin channels,
+net-directional book).
+
+**Changed.** `agents/xmom.py`: `trailing_return` (pure; optional
+`skip_bars` reversal guard) + `XMomAgent` — rank eligible coins (volume
+floor) by trailing return over `lookback_bars`, long top_k / short bottom_k
+(entries need ≥2×top_k ranked coins), exits by rank hysteresis (leave only
+when out of the top/bottom `exit_rank` — xfund Iter-23 lesson: exact-rank
+rotation churns a cross-sectional book to death) + stop/max-hold/no-signal,
+re-entry cooldown like breakout. Registered in `_backtest_factories` as
+`xmom_v1`. **Bundled hardening (found, needed to run at all):**
+`backtest/data.py` `retry_rate_limited` — fetch_candles/fetch_funding_history
+had NO 429 handling, so one rate-limited page aborted a whole 20-coin
+history load with nothing cached (the hourly harvester shares this IP;
+collisions are routine — two runs died before the fix). Now 429 retries
+with 2..32s exponential backoff (other HTTP errors propagate untouched;
+last attempt re-raises). This also protects the pre-registered experiment
+runs, which fetch funding through the same path.
+
+**Evidence.** 457 → **477 tests pass** (17 xmom: signal math incl. skip
+guards, rank/entry/caps, both-side hysteresis, stop/max-hold/no-signal/
+cooldown exits, engine integration long-winner-short-loser profits while
+no-dispersion stays flat, factory registration; 3 retry: backoff-then-
+succeed, non-429 propagates, exhaustion re-raises); ruff clean.
+
+**Backtest numbers** (90d × 1h × 20 coins = original 10 + breadth 10, real
+API history, walk-forward `hlbot confirm`, taker preferred — maker numbers
+are the optimistic fill model, not relied on):
+- lookback **336 (14d): G0 PASS** — IS +19.5bps/122tr/sharpe +0.70, OOS
+  +131.7bps/80tr/+3.37, full-sample taker +67.0bps/194tr/sharpe +1.80/
+  maxDD −2.1%, robust to taker-3× (+51.4). Gate note: sharpe≥1 is checked
+  on OOS only (standing rule, `confirm.py`); IS sharpe 0.70 disclosed.
+- lookback 168 (7d): FAIL — full-sample +4.0bps but IS −6.2 / OOS +20.4.
+- lookback 72 (3d): FAIL the other way — IS +29.8 / OOS −41.9 (full +3.7).
+  Opposite-sign flips across the same boundary = regime noise, not signal.
+- skip_bars 24 on lb168: HURTS (taker +4.0 → −14.3) — recent-day momentum
+  is part of the signal here; keep skip default 0.
+- Sub-universes at lb336: original-10 **PASSES** (IS +9.2/OOS +107.0, taker
+  +47.2 full, robust to 3×); breadth-10 alone **FAILS** (IS −10.0/OOS
+  +12.9, full +3.7) — edge concentrates in the liquid majors set, same
+  shape as breakout's B-EDGE2d breadth finding.
+- Correlation vs breakout-ER on identical 1h frames (96h channel + ER 0.1):
+  daily-PnL corr **−0.01** over 91 days — uncorrelated. (vs twap_mr not
+  run: no comparable same-frame twap config at 1h — live twap is a 60×1m
+  VWAP; the 15m-frames comparison goes with the B-EDGE3b rerun.)
+
+**Honest read.** The 14d arm was selected after watching 7d/3d fail the
+same window — same-window selection, exactly the bias that made breakout's
+first PASS look stronger than it was. One 90d sample; the OOS window is a
+momentum-friendly pocket (breakout earns its OOS in the same calendar
+weeks). What survives skepticism: IS alone is +19.5bps on 122 trades, the
+cost ladder barely dents it (3× taker −15.6bps off a +67 base, vs twap_mr
+where 2× kills), maxDD −2.1% is small, and dose-response in horizon is
+monotone (3d noise → 7d flat → 14d signal — consistent with the momentum
+literature's intermediate-horizon sweet spot). NOT promotable on this
+evidence; promotion path = B-EDGE3b pre-registered reruns as fresh data
+arrives + B-EDGE3a paper forward-test, mirroring breakout's discipline.
+
+**Found.** (a) The 429 fragility (fixed, above). (b) Harvest-log absence
+recurring — see ripeness paragraph. (c) breakout-ER at 1h cadence on the
+20-coin book prints +4.2bps/858tr on this window (side-output of the
+correlate run; its validated config is 15m — context only, no action).
+
+**What's next (loop).** Per-iteration: the two `--check-only` readouts
+(b_edge2b ~Jun 20 FIRST — after it runs, commit the auto-written record +
+bump min_span_days; b_g014 ~Jun 26). Then: B-EDGE3a (closes_1h feed +
+paper roster wiring) and B-EDGE3b (freeze b_edge3.json; decide 1h-harvest
+vs 15m-bar-scaling for store-sourced reruns). B-EDGE2f at ≥30d paper books
+(~Jul 8). Idle queue unchanged (B-SCALE doc on real G2 evidence; per-agent
+funding clamp if mixed funding-sign agents ever share the live book).
