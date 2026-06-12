@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass
+from typing import TypeGuard
 
 from .scaling import NotionalCap
 
@@ -32,7 +33,7 @@ class AgentCap:
     max_notional_per_trade: float
 
 
-def _is_finite_positive(value: float | None) -> bool:
+def _is_finite_positive(value: float | None) -> TypeGuard[float]:
     return value is not None and math.isfinite(value) and value > 0
 
 

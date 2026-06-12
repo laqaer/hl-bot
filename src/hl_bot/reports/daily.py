@@ -24,15 +24,15 @@ def render_markdown(cards: Iterable[Scorecard]) -> str:
     for agent, windows in sorted(by_agent.items()):
         lines.append(f"### {agent}")
         for w in ("24h", "7d", "30d", "all"):
-            c = windows.get(w)
-            if not c:
+            sc = windows.get(w)
+            if not sc:
                 continue
-            edge = _fmt(c.edge_bps, "{:+.1f} bps") if c.edge_bps is not None else "—"
-            sharpe = _fmt(c.sharpe, "{:+.2f}")
-            dd = _fmt(c.max_drawdown * 100 if c.max_drawdown is not None else None, "{:+.1f}%")
+            edge = _fmt(sc.edge_bps, "{:+.1f} bps") if sc.edge_bps is not None else "—"
+            sharpe = _fmt(sc.sharpe, "{:+.2f}")
+            dd = _fmt(sc.max_drawdown * 100 if sc.max_drawdown is not None else None, "{:+.1f}%")
             lines.append(
-                f"- **{w}**: net `{c.net_pnl:+.2f}` · trades `{c.n_trades}` · "
-                f"win `{c.win_rate*100:.0f}%` · edge `{edge}` · "
+                f"- **{w}**: net `{sc.net_pnl:+.2f}` · trades `{sc.n_trades}` · "
+                f"win `{sc.win_rate*100:.0f}%` · edge `{edge}` · "
                 f"sharpe `{sharpe}` · max DD `{dd}`"
             )
         lines.append("")

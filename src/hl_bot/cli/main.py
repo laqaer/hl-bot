@@ -360,13 +360,13 @@ def femr_tick(live: bool = False, execution: str = "auto"):
     from ..agents.decisions import log_decision
     from ..agents.runtime import fetch_market_view
     from ..exec.orders import (
-        HL_TRADER_ADDRESS,
         GuardrailConfig,
         bot_owned_coins,
         build_exchange,
         check_guardrails,
         dynamic_daily_loss_limit,
         reconcile_positions,
+        require_trader_address,
         telegram_alert,
     )
     from ..exec.router import execute_decisions
@@ -392,16 +392,22 @@ def femr_tick(live: bool = False, execution: str = "auto"):
         merged.update(overrides.get(agent_name) or {})
         return merged
 
+    try:
+        trader_address = require_trader_address()
+    except RuntimeError as e:
+        console.print(f"[red]{e}[/red]")
+        raise typer.Exit(2) from e
+
     import httpx as _httpx
     with _httpx.Client(timeout=10) as cli:
         st = cli.post(
             s.hl_api_url + "/info",
-            json={"type": "clearinghouseState", "user": HL_TRADER_ADDRESS},
+            json={"type": "clearinghouseState", "user": trader_address},
         ).json() or {}
         try:
             spot_st = cli.post(
                 s.hl_api_url + "/info",
-                json={"type": "spotClearinghouseState", "user": HL_TRADER_ADDRESS},
+                json={"type": "spotClearinghouseState", "user": trader_address},
             ).json() or {}
         except _httpx.HTTPError:
             spot_st = {}

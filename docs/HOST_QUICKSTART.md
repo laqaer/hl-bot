@@ -85,8 +85,9 @@ c=init_db(Settings.from_env().db_path)
 c.execute(\"INSERT INTO agent_state(agent,mode,enabled) VALUES(?,?,1) ON CONFLICT(agent) DO UPDATE SET mode=excluded.mode,enabled=1\",(\"twap_mr_regime_v1\",\"live_small\"))
 print(\"enabled twap_mr_regime_v1 live_small\")"'
 
-# c) flip the tick to live maker, restart, and WATCH the first ticks
-sudo sed -i 's|^HLBOT_TICK_ARGS=.*|HLBOT_TICK_ARGS=--live --execution maker|' /etc/hl-bot/env
+# c) flip the tick to live, restart, and WATCH the first ticks
+#    (entries route per-agent by default: carry posts maker, momentum crosses taker)
+sudo sed -i 's|^HLBOT_TICK_ARGS=.*|HLBOT_TICK_ARGS=--live|' /etc/hl-bot/env
 sudo systemctl restart hlbot-tick.timer
 journalctl -u hlbot-tick -f
 ```

@@ -125,11 +125,11 @@ class LiqCascadeAgent(Agent):
             ts = int(evt.get("ts_ms") or evt.get("time") or 0)
             if ts < cutoff_ms:
                 continue
-            coin = evt.get("coin")
+            evt_coin = evt.get("coin")
             side = evt.get("side")  # side of liquidated order
             ntl = float(evt.get("notional_usd") or 0)
-            if coin and side in ("A", "B") and ntl > 0:
-                agg[coin][side] += ntl
+            if evt_coin and side in ("A", "B") and ntl > 0:
+                agg[evt_coin][side] += ntl
 
         active = set(open_pos.keys())
         room = self.cfg.max_concurrent_positions - len(active)

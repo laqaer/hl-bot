@@ -147,16 +147,21 @@ def score_agent(conn: sqlite3.Connection, agent: str, window: Window) -> Scoreca
     if agent == "_account":
         eq = _equity_curve(conn, since)
         if len(eq) >= 3:
-            curve = [(int(r.ts_ms), float(r.account_value)) for r in eq.itertuples()]
+            curve = [
+                (int(t), float(v))
+                for t, v in zip(eq["ts_ms"].tolist(), eq["account_value"].tolist(), strict=True)
+            ]
             dd_usd = dollar_max_drawdown(curve)
-            eq["ts"] = pd.to_datetime(eq["ts_ms"], unit="ms")
-            eq = eq.set_index("ts")["account_value"].resample("1D").last().dropna()
-            rets = eq.pct_change().dropna()
+            daily_eq = (
+                eq.assign(ts=pd.to_datetime(eq["ts_ms"], unit="ms"))
+                .set_index("ts")["account_value"].resample("1D").last().dropna()
+            )
+            rets = daily_eq.pct_change().dropna()
             sharpe = _sharpe(rets, 365)
-            dd = _max_dd(eq)
+            dd = _max_dd(daily_eq)
             if dd is not None and dd < 0:
-                ann_ret = (1 + rets.mean()) ** 365 - 1 if not rets.empty else 0
-                calmar = float(ann_ret / abs(dd)) if dd != 0 else None
+                ann_ret = float((1 + rets.mean()) ** 365 - 1) if not rets.empty else 0.0
+                calmar = ann_ret / abs(dd) if dd != 0 else None
     else:
         events = agent_pnl_events(conn, agent, since, funding_events=funding_events)
         daily = daily_pnl_series(events)

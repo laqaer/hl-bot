@@ -65,9 +65,11 @@ def per_agent(conn, agent: str, days: int) -> dict:
 
 
 def acct_value() -> float:
-    """Read live spot+perp from HL."""
-    addr = (os.environ.get("HL_TRADER_ADDRESS") or os.environ.get("HL_ADDRESS")
-            or "0x5C3a67932Ca4026A6ABC18822Dc601BeD44f45a3")
+    """Read live spot+perp from HL. Returns 0.0 when no address is configured
+    (no hardcoded default — never report a stranger's account as ours)."""
+    addr = os.environ.get("HL_TRADER_ADDRESS") or os.environ.get("HL_ADDRESS")
+    if not addr:
+        return 0.0
     try:
         with urllib.request.urlopen(urllib.request.Request(
             "https://api.hyperliquid.xyz/info",

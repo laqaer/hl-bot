@@ -220,6 +220,7 @@ def propose_overrides(
             and edge_for_bleed is not None and edge_for_bleed < bleeding_edge_bps
         )
         if bleeding:
+            assert w7 is not None  # implied by `bleeding`, for the type-checker
             p.rationale.append(
                 f"7d core edge {edge_for_bleed:+.0f} bps over {w7.n_trades} trades "
                 f"(net ${w7.net_pnl:+.2f}) — bleeding, tightening."

@@ -73,11 +73,14 @@ Keep it ruthlessly prioritized: the top item should always be the highest-levera
   through `exec/router.py::execute_decisions` (per-agent maker/taker entries,
   taker exits, gates, fill-confirmed logging) — unit-tested with a fake
   exchange. (REVIEW M3; iteration 7.)
-- [ ] **B13 — Move hardcoded trader address to config.** (REVIEW M6.)
+- [x] **B13 — Trader address from env only.** Fully resolved: env vars win AND the
+  legacy hardcoded fallback is gone — `require_trader_address()` fails fast when
+  neither HL_TRADER_ADDRESS nor HL_ADDRESS is set. (REVIEW M6; iteration 7.)
 - [x] **B14 — Go-live runbook in-repo.** `docs/GO_LIVE.md`: gated checklist,
   secrets/env, promote/kill-switch/rollback, monitoring. (REVIEW D3.)
-- [ ] **B14a — Deploy automation.** Codify the EC2/systemd/Hermes cron + DB sync
-  (without secrets) so the live loop is reproducible from the repo.
+- [x] **B14a — Deploy automation.** Done in iteration 5 (`deploy/`: install.sh,
+  systemd units, Litestream, loop service, run-tick); the legacy Hermes scp sync
+  stays out-of-repo by design (secrets).
 
 ## P3 — capital formation (Path C)
 

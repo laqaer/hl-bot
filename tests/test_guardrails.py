@@ -21,6 +21,13 @@ from hl_bot.exec.orders import (
 )
 
 
+@pytest.fixture(autouse=True)
+def _trader_address(monkeypatch):
+    # check_guardrails resolves the trader address at call time and refuses to
+    # run without one (no hardcoded default) — set the live precondition.
+    monkeypatch.setenv("HL_ADDRESS", "0x" + "ab" * 20)
+
+
 class FakeInfo:
     """Minimal stand-in for hyperliquid.info.Info used by check_guardrails."""
 

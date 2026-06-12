@@ -135,7 +135,7 @@ def evaluate(conn: sqlite3.Connection, g: AgentGoals) -> list[Evaluation]:
     cards: dict[Window, Scorecard] = {w: score_agent(conn, g.agent, w) for w in windows}
 
     # Primary / secondary goals -> informational pass/fail (no action).
-    def _status(ok: bool | None) -> str:
+    def _status(ok: bool | None) -> Literal["pass", "fail", "na"]:
         return "na" if ok is None else ("pass" if ok else "fail")
 
     if isinstance(primary, dict):

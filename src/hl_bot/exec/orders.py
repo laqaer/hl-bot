@@ -36,18 +36,29 @@ log = logging.getLogger(__name__)
 def _resolve_trader_address() -> str:
     """The funded account the bot trades on.
 
-    Prefer ``HL_TRADER_ADDRESS``, then ``HL_ADDRESS``, then the legacy default so
-    existing deployments keep working. Set HL_TRADER_ADDRESS in /etc/hl-bot/env to
-    point the bot at your own account.
+    ``HL_TRADER_ADDRESS`` wins, then ``HL_ADDRESS``. Returns "" when neither is
+    set — deliberately NO hardcoded default: silently reading (or reconciling
+    against) an account that isn't yours is worse than failing fast. Callers
+    that need a live account must check ``require_trader_address()``.
     """
-    return (
-        os.environ.get("HL_TRADER_ADDRESS")
-        or os.environ.get("HL_ADDRESS")
-        or "0x5C3a67932Ca4026A6ABC18822Dc601BeD44f45a3"
-    )
+    return os.environ.get("HL_TRADER_ADDRESS") or os.environ.get("HL_ADDRESS") or ""
 
 
-HL_TRADER_ADDRESS = _resolve_trader_address()
+def require_trader_address() -> str:
+    """Return the trader address or raise with a setup hint."""
+    addr = _resolve_trader_address()
+    if not addr:
+        raise RuntimeError(
+            "HL_TRADER_ADDRESS / HL_ADDRESS not set — refusing to touch the "
+            "exchange without knowing whose account this is. Set it in .env "
+            "or /etc/hl-bot/env (see .env.example)."
+        )
+    return addr
+
+
+# NOTE: no module-level address constant — resolve at call time via
+# require_trader_address() so env changes (and missing config) are caught
+# where the exchange is actually touched, never papered over by a default.
 DEFAULT_API_WALLET_ENV = Path.home() / ".config" / "hermes" / "hl-bot-api-wallet.env"
 COOLDOWN_S = 3600  # 1h cooldown per coin between attempts
 
@@ -104,7 +115,7 @@ def build_exchange(env_path: Path | None = None) -> tuple[Exchange, Info, LocalA
     info = Info(constants.MAINNET_API_URL, skip_ws=True)
     exchange = Exchange(
         wallet=wallet, base_url=constants.MAINNET_API_URL,
-        account_address=HL_TRADER_ADDRESS,
+        account_address=require_trader_address(),
     )
     log.info("HL exchange ready: signer=%s trader=%s", wallet.address, exchange.account_address)
     return exchange, info, wallet
@@ -239,12 +250,13 @@ def check_guardrails(
     cfg: GuardrailConfig,
     agents: list[str] | None = None,
 ) -> tuple[bool, str]:
-    state = _retry(lambda: info.user_state(HL_TRADER_ADDRESS))
+    trader = require_trader_address()
+    state = _retry(lambda: info.user_state(trader))
     try:
         perp_val = float((state or {}).get("marginSummary", {}).get("accountValue", 0) or 0)
     except (TypeError, ValueError):
         perp_val = 0.0
-    spot_usdc = _retry(lambda: _spot_usdc(info, HL_TRADER_ADDRESS))
+    spot_usdc = _retry(lambda: _spot_usdc(info, trader))
     capital = perp_val + spot_usdc
 
     if capital < cfg.min_bot_capital:
@@ -518,11 +530,12 @@ def place_limit_order(
     return _parse_response(res or {})
 
 
-def has_resting_order(info: Info, coin: str, address: str = HL_TRADER_ADDRESS) -> bool:
+def has_resting_order(info: Info, coin: str, address: str | None = None) -> bool:
     """True if the account already has an open (resting) order on ``coin``.
 
     Used to avoid stacking duplicate maker orders while one is still working.
     """
+    address = address or require_trader_address()
     try:
         orders = _retry(lambda: info.open_orders(address)) or []
     except Exception:  # noqa: BLE001

@@ -90,18 +90,15 @@ class VetoAgent(Agent):
             net_pnl = float(e.get("net_pnl", 0.0))
 
             if n < self.min_trades:
-                action = "hold"
                 reason = f"{coin}: insufficient history ({n} trades < {self.min_trades})"
                 verdict = "no-opinion"
             elif edge_bps < self.veto_threshold_bps:
-                action = "hold"
                 reason = (
                     f"{coin}: VETO — {self.lookback_days}d edge {edge_bps:+.1f} bps "
                     f"on {n} trades, net {net_pnl:+.2f}"
                 )
                 verdict = "veto"
             else:
-                action = "hold"
                 reason = (
                     f"{coin}: ALLOW — {self.lookback_days}d edge {edge_bps:+.1f} bps "
                     f"on {n} trades, net {net_pnl:+.2f}"
@@ -110,7 +107,7 @@ class VetoAgent(Agent):
 
             out.append(Decision(
                 agent=self.name,
-                action=action,  # advisory: always 'hold' since this agent never places
+                action="hold",  # advisory: this agent never places
                 coin=coin,
                 reasoning=reason,
                 market_snapshot={

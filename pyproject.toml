@@ -25,6 +25,8 @@ dev = [
     "pytest-asyncio>=0.24",
     "ruff>=0.8",
     "mypy>=1.13",
+    "pandas-stubs>=3.0.3.260530",
+    "types-pyyaml>=6.0.12.20260518",
 ]
 
 [build-system]
@@ -45,3 +47,11 @@ target-version = "py311"
 [tool.ruff.lint]
 select = ["E", "F", "I", "B", "UP", "SIM"]
 ignore = ["E501"]
+
+[tool.mypy]
+python_version = "3.11"
+
+[[tool.mypy.overrides]]
+# The Hyperliquid SDK ships no type stubs / py.typed marker.
+module = "hyperliquid.*"
+ignore_missing_imports = true

@@ -88,6 +88,12 @@ def execute_decisions(
             is_buy = (d.side == "B")
 
             if mode == "maker":
+                if not d.cloid:
+                    # place_limit_order would refuse anyway; surface it as a
+                    # routing error rather than a cryptic order rejection.
+                    outcomes.append(ExecOutcome(d.agent, d.coin, "place", "error",
+                                                mode, detail="maker entry requires a cloid"))
+                    continue
                 if d.agent not in working_by_agent:
                     working_by_agent[d.agent] = working_orders(conn, d.agent)
                 if d.coin in working_by_agent[d.agent]:

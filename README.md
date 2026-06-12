@@ -3,9 +3,10 @@
 Multi-agent trading harness for [Hyperliquid](https://hyperliquid.xyz) with a built-in
 **goal-tracking and promotion system** for evaluating whether agents are actually making money.
 
-> 🛡️ **Default mode is paper trading.** Live order placement is intentionally not wired —
-> see [`agents/runtime.py`](src/hl_bot/agents/runtime.py). Flip the switch only after a
-> conscious review.
+> 🛡️ **Default mode is paper trading.** Live order placement is wired through a single
+> audited router ([`exec/router.py`](src/hl_bot/exec/router.py)) but **double-gated**:
+> `femr_tick --live` plus a per-agent `live_small`/`live` promotion in `agent_state`.
+> The runbook is [`docs/GO_LIVE.md`](docs/GO_LIVE.md) — go live only via its checklist.
 
 ## Architecture
 

@@ -18,7 +18,7 @@ the order below, and stop when the next tier doesn't change PnL.
 - A box (EC2) runs `hlbot tick/ingest/supervisor` on a 5-min cron + a daily
   Telegram scorecard via systemd; `auto_tuner.py` syncs the SQLite DB off-box via
   `scp` and proposes param tweaks. Hermes provides cron/Telegram.
-- One funded trader account (`0x5C3a…`), signed by a separate **API wallet** in
+- One funded trader account (`HL_TRADER_ADDRESS`), signed by a separate **API wallet** in
   `~/.config/hermes/hl-bot-api-wallet.env` (0600). Good separation already.
 - Gaps: single box (no failover), SQLite synced by scp (fragile), polling REST
   (no WebSocket), no real metrics/alerting beyond Telegram, secrets + address
@@ -138,7 +138,8 @@ feeds — premature until a confirmed edge demonstrably wants them.
 - API wallet only (no withdrawal rights if HL supports scoping); funded key never
   on the box. Env 0600 or a secrets manager (SOPS/age, Vault, cloud KMS).
 - Least-privilege host, firewall outbound to HL + Telegram only, SSH keys only.
-- Move the hardcoded trader address to config (REVIEW M6 / backlog B13).
+- Trader address comes from env only (`HL_TRADER_ADDRESS`/`HL_ADDRESS`); the bot
+  refuses to touch the exchange when unset (M6/B13 resolved — no silent default).
 
 ## Bottom line / recommended spend now
 

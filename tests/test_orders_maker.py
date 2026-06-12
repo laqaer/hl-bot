@@ -91,11 +91,14 @@ def test_place_limit_order_requires_cloid():
 
 
 def test_resolve_trader_address(monkeypatch):
-    from hl_bot.exec.orders import _resolve_trader_address
+    from hl_bot.exec.orders import _resolve_trader_address, require_trader_address
     monkeypatch.delenv("HL_TRADER_ADDRESS", raising=False)
     monkeypatch.delenv("HL_ADDRESS", raising=False)
-    assert _resolve_trader_address().startswith("0x5C3a")   # legacy default
+    assert _resolve_trader_address() == ""                    # NO hardcoded default
+    with pytest.raises(RuntimeError, match="HL_TRADER_ADDRESS"):
+        require_trader_address()                              # live paths fail fast
     monkeypatch.setenv("HL_ADDRESS", "0x" + "a" * 40)
-    assert _resolve_trader_address() == "0x" + "a" * 40      # falls back to HL_ADDRESS
+    assert _resolve_trader_address() == "0x" + "a" * 40       # falls back to HL_ADDRESS
     monkeypatch.setenv("HL_TRADER_ADDRESS", "0x" + "b" * 40)
-    assert _resolve_trader_address() == "0x" + "b" * 40      # HL_TRADER_ADDRESS wins
+    assert _resolve_trader_address() == "0x" + "b" * 40       # HL_TRADER_ADDRESS wins
+    assert require_trader_address() == "0x" + "b" * 40
