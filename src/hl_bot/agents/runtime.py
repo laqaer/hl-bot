@@ -6,8 +6,9 @@ One function owns each slice of a tick (REVIEW M3 / B12): roster construction
 `apply_allocator_caps`), position truth (`positions_from_clearinghouse`,
 `reconcile_agents`, `classify_position_ownership`, `synthesize_paper_positions`),
 decision gathering (`gather_decisions`), and live order routing
-(`execute_decisions`). `run_tick` composes the paper path; the `femr_tick` CLI
-composes the live one from the same pieces and keeps only presentation.
+(`execute_decisions`). The `femr_tick` CLI composes both the paper (default)
+and live tick from these pieces and keeps only presentation; the old separate
+paper `tick` command is retired (B12j).
 """
 
 from __future__ import annotations
@@ -780,10 +781,11 @@ def gather_decisions(
 ) -> list[Decision]:
     """Ask each agent to ``decide()``, isolating failures, and log per policy.
 
-    The single decision-gathering path shared by the paper ``tick`` command
-    (:func:`run_tick`) and the live ``femr_tick`` loop, so one tested function
-    owns what gets logged and when (REVIEW M3 — the two paths had diverged and
-    only the paper one isolated agent crashes).
+    The single decision-gathering path for every tick — ``femr_tick`` runs it
+    for both paper (default) and live modes — so one tested function owns what
+    gets logged and when (REVIEW M3 — the previously separate paper/live paths
+    had diverged and only the paper one isolated agent crashes; the vestigial
+    paper ``tick`` command is retired, B12j).
 
     Every returned decision has ``is_paper`` set to ``is_paper``. A ``decide()``
     that raises is caught, recorded as an ``error`` row, and skipped — one broken
@@ -828,28 +830,6 @@ def gather_decisions(
                 log_decision(conn, d)
             out.append(d)
     return out
-
-
-def run_tick(
-    conn: sqlite3.Connection,
-    agents: list[Agent],
-    base_url: str,
-    coins: list[str],
-    *,
-    force_paper: bool = True,
-) -> list[Decision]:
-    """One scheduling tick: build the view, ask each agent, log decisions.
-
-    Places no orders — this is the paper ``tick`` path. The view comes through
-    the same :func:`build_tick_view` pipeline the live loop uses (VWAP/σ
-    enrichment, 15m feed sized by the roster, WS overlay when configured), so
-    paper decisions are made on live-identical inputs. Every decision is
-    recorded with ``is_paper=force_paper`` (default True), so the logged book
-    stays paper. ``coins`` is kept for backward compatibility but ignored —
-    the view always carries the whole universe.
-    """
-    tick_view = build_tick_view(base_url, agents)
-    return gather_decisions(conn, agents, tick_view.view, is_paper=force_paper)
 
 
 @dataclass

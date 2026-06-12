@@ -1,8 +1,8 @@
 """Tests for the shared decision-gathering path (``runtime.gather_decisions``).
 
-This is the single function both the paper ``tick`` loop (``run_tick``) and the
-live ``femr_tick`` loop use to ask agents to ``decide()`` and log results (REVIEW
-M3 — the two paths had diverged). The safety-critical behavior to pin down:
+This is the single function every tick — ``femr_tick`` in both paper (default)
+and live modes — uses to ask agents to ``decide()`` and log results (REVIEW
+M3 — the previously separate paper/live paths had diverged). The safety-critical behavior to pin down:
 
 - a ``decide()`` that raises is isolated as an ``error`` row, so one broken agent
   cannot abort the whole tick (previously ``femr_tick`` had no isolation);

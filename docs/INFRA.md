@@ -15,7 +15,7 @@ the order below, and stop when the next tier doesn't change PnL.
 
 ## Current state (from the repo)
 
-- A box (EC2) runs `hlbot tick/ingest/supervisor` on a 5-min cron + a daily
+- A box (EC2) runs `hlbot femr_tick/ingest/supervisor` on a 5-min cron + a daily
   Telegram scorecard via systemd; `auto_tuner.py` syncs the SQLite DB off-box via
   `scp` and proposes param tweaks. Hermes provides cron/Telegram.
 - One funded trader account (`0x5C3a…`), signed by a separate **API wallet** in

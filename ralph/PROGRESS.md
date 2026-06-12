@@ -2665,3 +2665,50 @@ that, the next dead measurement gap would be live maker-rest entry pricing at
 the touch vs mid (only if a maker arm passes). B-EDGE2b three-armed reruns as
 the 15m store grows. B-EDGE2f at ≥30d paper books (~Jul 8). B12j / B14a if
 idle.
+
+## Iteration 52 — 2026-06-12 — B12j: retire `hlbot tick`; veto becomes a read-only report
+
+**What.** B-G014 still time-blocked (1m store needs ~14d, ETA ~Jun 23–26);
+B-EDGE2b's three-armed rerun just happened (Iter 48–49) and B-EDGE2f needs
+~Jul 8 paper books — so took the queued idle task. `hlbot tick` (the original
+pre-B12 paper wrapper) still ran its own two-agent roster (VetoAgent +
+FundingArbAgent — neither in `build_roster`) through `run_tick`. Scoping the
+"unify" option found a reason to kill it instead: **since B-PAPER (Iter 37)
+the paper book is real machinery**, and `hlbot tick` logged funding_arb_v1
+paper `place` rows (BTC/ETH/SOL skeleton trades, no exit logic, never
+maintained) straight into `agent_decisions` — those rows would replay into
+`hlbot score --paper`, the track-record "Paper agents" section (B-PAPER3b),
+and paper-evidence guardrails (B-PAPER3c) as if a real strategy were forward
+testing. One stray manual `hlbot tick` = contaminated paper track record.
+Unifying onto `build_roster` would just duplicate what `femr_tick` (paper
+default — what deploy/run-tick.sh runs) already is.
+
+**Changed.** (a) `cli/main.py`: `tick` command deleted; new read-only
+`hlbot veto [--lookback-days/--min-trades/--threshold-bps]` replays the same
+VetoAgent against `fills` and prints per-coin verdict/edge-bps/trades/net$
+(worst first) while logging NOTHING — the advisory's actual value (which
+coins the account bleeds on) with zero book pollution. (b) `runtime.run_tick`
+deleted (its only caller was `tick`; `gather_decisions`/`build_tick_view`
+remain the shared tested path under `femr_tick`); module/docstring
+references updated. (c) Stale operator docs fixed: README quickstart + cron
+example and INFRA.md now say `femr_tick`, so nobody reinstalls a cron on a
+deleted command. (d) FundingArbAgent stays as the documented reference
+skeleton (importable, config example), just no longer wired to any CLI.
+Found & noted: `veto.current_vetoes` has zero callers anywhere — the
+"other agents consult the latest veto rows" mechanism never grew a consumer;
+kept as documented API, but it's dead weight if a future iteration wants it.
+
+**Evidence.** 308 → **314 tests pass** (new `tests/test_veto_agent.py`, 6:
+veto/allow/no-opinion verdict logic, lookback actually filters old fills +
+widening it flips the verdict, both knobs configurable, advisory-only —
+every action is `hold`; VetoAgent previously had zero direct tests). `ruff
+check src tests scripts` clean. Live-fired on a scratch DB: seeded 25 losing
+ZEC / 25 winning BTC / 3 losing HYPE fills → table shows ZEC veto (−1050bps),
+BTC allow (+950), HYPE no-opinion (n=3 < 20), and `agent_decisions` count
+stays **0** after the run. `hlbot --help` shows `veto`, no `tick`.
+
+**What's next (loop).** B-G014 when 1m span ≥14d (~Jun 23–26): taker-judged,
+maker-rest arms wick-aware, w=240 maker-rest the arm to watch. B-EDGE2b
+three-armed reruns as the 15m store grows. B-EDGE2f at ≥30d paper books
+(~Jul 8). Idle queue: B14a (deploy automation — check what's actually left
+vs the Iter-5/6 deliverables), B16b/B-PROP/B17 capital-formation specs.

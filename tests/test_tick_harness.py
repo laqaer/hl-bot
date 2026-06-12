@@ -17,8 +17,8 @@ These functions were extracted from the inlined, untested ``femr_tick`` preamble
   (every failure mode degrades to built-in defaults) and the canonical agent
   roster with defaults + overrides merged per agent.
 - ``enrich_view`` / ``build_tick_view`` — VWAP/σ + spot + 15m-feed enrichment
-  and the composed fetch→enrich→WS-overlay view pipeline both ``run_tick``
-  (paper) and ``femr_tick`` (live) decide on.
+  and the composed fetch→enrich→WS-overlay view pipeline every tick (paper
+  and live ``femr_tick``) decides on.
 """
 
 from __future__ import annotations
@@ -490,7 +490,7 @@ def test_enrich_view_fetches_15m_closes_only_when_asked(monkeypatch):
 
 
 # ---------------------------------------------------------------------------
-# build_tick_view — the one view pipeline shared by run_tick and femr_tick (B12i)
+# build_tick_view — the one view pipeline every tick decides on (B12i)
 # ---------------------------------------------------------------------------
 
 

@@ -39,7 +39,7 @@ Multi-agent trading harness for [Hyperliquid](https://hyperliquid.xyz) with a bu
 uv sync
 cp .env.example .env  # fill in HL_ADDRESS
 uv run hlbot init
-uv run hlbot tick                  # paper run, 1 tick, all agents
+uv run hlbot femr_tick             # paper run, 1 tick, full roster (no orders)
 uv run hlbot ingest                # pull fills + equity from HL
 uv run hlbot score                 # show scorecards
 uv run hlbot supervisor            # evaluate goals/guardrails
@@ -81,7 +81,7 @@ Supported metrics: anything on `Scorecard` (`net_pnl`, `sharpe`,
 
 ```bash
 # Every 5 min: tick, ingest, supervise
-*/5 * * * * cd ~/projects/hl-bot && uv run hlbot tick && uv run hlbot ingest && uv run hlbot supervisor
+*/5 * * * * cd ~/projects/hl-bot && uv run hlbot femr_tick && uv run hlbot ingest && uv run hlbot supervisor
 
 # Daily 09:00: Telegram report
 0  9 * * * cd ~/projects/hl-bot && uv run hlbot report --send

@@ -16,10 +16,8 @@ from rich.table import Table
 from ..agents.basis import BasisAgent
 from ..agents.breakout import BreakoutAgent
 from ..agents.femr import FemrAgent
-from ..agents.funding_arb import FundingArbAgent
 from ..agents.funding_carry import FundingCarryAgent
 from ..agents.liq_cascade import LiqCascadeAgent
-from ..agents.runtime import run_tick
 from ..agents.twap_mr import TwapMrAgent
 from ..agents.twap_mr_regime import TwapMrRegimeAgent
 from ..agents.veto import VetoAgent
@@ -277,20 +275,51 @@ def research_strategies(write: bool = True):
 
 
 @app.command()
-def tick(coins: str = "BTC,ETH,SOL,HYPE,ZEC"):
-    """Run one tick of all wired agents (paper mode)."""
-    conn, s = _conn()
-    coin_list = [c.strip() for c in coins.split(",") if c.strip()]
-    agents = [
-        VetoAgent(config={"lookback_days": 30, "min_trades": 20, "veto_threshold_bps": -5.0}, conn=conn),
-        FundingArbAgent(config={"coins": coin_list}),
-    ]
-    decisions = run_tick(conn, agents, s.hl_api_url, coin_list, force_paper=True)
-    console.print(f"[green]✓[/green] {len(decisions)} decisions logged")
-    for d in decisions:
-        verdict = (d.market_snapshot or {}).get("verdict", "")
-        tag = f"[{verdict}]" if verdict else ""
-        console.print(f"  {d.agent} {d.action} {d.coin or ''} {tag} :: {d.reasoning}")
+def veto(
+    lookback_days: int = 30,
+    min_trades: int = 20,
+    threshold_bps: float = -5.0,
+):
+    """Per-coin account-edge report: which coins the veto advisory would block.
+
+    Read-only replacement for the retired `hlbot tick` (B12j): replays the
+    advisory VetoAgent against the fills table and prints its verdicts WITHOUT
+    logging decisions. The old `tick` wrapper logged funding_arb_v1 paper
+    `place` rows, which since B-PAPER would contaminate the real paper book
+    (`hlbot score --paper`, track-record paper section). Paper ticks of the
+    full roster are `hlbot femr_tick` (the default, no orders placed).
+    """
+    from ..agents.base import MarketView
+
+    conn, _s = _conn()
+    agent = VetoAgent(config={
+        "lookback_days": lookback_days,
+        "min_trades": min_trades,
+        "veto_threshold_bps": threshold_bps,
+    }, conn=conn)
+    decisions = agent.decide(MarketView(ts_ms=int(time.time() * 1000), mids={}))
+    if not decisions:
+        console.print(f"no fills in the last {lookback_days}d — nothing to judge")
+        return
+    table = Table(title=f"veto advisory — {lookback_days}d account edge per coin")
+    table.add_column("coin")
+    table.add_column("verdict")
+    table.add_column("edge bps", justify="right")
+    table.add_column("trades", justify="right")
+    table.add_column("net $", justify="right")
+    rows = sorted(decisions, key=lambda d: (d.market_snapshot or {}).get("edge_bps", 0.0))
+    for d in rows:
+        m = d.market_snapshot or {}
+        verdict = str(m.get("verdict", ""))
+        style = {"veto": "red", "allow": "green"}.get(verdict, "dim")
+        table.add_row(
+            d.coin or "",
+            f"[{style}]{verdict}[/{style}]",
+            f"{float(m.get('edge_bps', 0.0)):+.1f}",
+            str(m.get("n_trades", 0)),
+            f"{float(m.get('net_pnl', 0.0)):+.2f}",
+        )
+    console.print(table)
 
 
 @app.command("femr_tick")
@@ -378,7 +407,7 @@ def femr_tick(live: bool = False, execution: str = "taker", vwap_window: int = 0
                       for n, v in allocs.items()
                   ))
 
-    # One tested view pipeline shared with the paper run_tick path: REST fetch,
+    # One tested view pipeline (paper and live ticks decide on it): REST fetch,
     # VWAP/σ + spot + 15m-feed enrichment, and the (opt-in, HLBOT_WS_SNAPSHOT)
     # fresh-WS overlay that carries the real liquidations feed.
     tick_view = build_tick_view(s.hl_api_url, agents, vwap_window=vwap_window)

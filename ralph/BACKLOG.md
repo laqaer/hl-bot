@@ -265,14 +265,17 @@ Keep it ruthlessly prioritized: the top item should always be the highest-levera
   on a live-identical view. CLI keeps only printing. **Done** (Iteration 46) —
   the `femr_tick` preamble contains no untested logic. Vestigial `tick`
   command roster split out as B12j.
-- [ ] **B12j — Retire or unify the vestigial `tick` command.** It still runs
-  its own small roster (veto + funding_arb) while `femr_tick` (paper default,
-  what deploy runs) is the real unified paper path. Either point `tick` at
-  `build_roster` — which then ALSO needs `synthesize_paper_positions` for
-  femr's paper exits and a `log_holds` policy decision (veto's whole output is
-  hold-verdict rows; femr_tick suppresses holds) — or retire the command and
-  keep veto/funding_arb runnable some other way. Low priority: nothing in
-  deploy/ calls `hlbot tick`.
+- [x] **B12j — Retire or unify the vestigial `tick` command.** Done (Iter 52):
+  RETIRED, not unified — since B-PAPER made the paper book real, `hlbot tick`
+  was a live footgun: it logged funding_arb_v1 (reference skeleton) paper
+  `place` rows straight into the book that `score --paper`, the track-record
+  paper section, and supervisor paper guardrails all replay. `run_tick`
+  deleted (last caller); paper ticks of the full roster are `femr_tick`
+  (deploy's path, unchanged). Veto stays runnable as read-only `hlbot veto`
+  (same VetoAgent logic, prints verdicts, logs NOTHING; agent now
+  direct-tested). funding_arb_v1 remains an importable documented skeleton.
+  Found: `veto.current_vetoes` has zero callers — the verdict-row consumption
+  hook never grew consumers; left in place as documented API.
 - [x] **B13 — Move hardcoded trader address to config.** Done (Iter 6, M6):
   `exec/orders.py` and `scripts/daily_scorecard.py` both resolve the trader address
   from `HL_TRADER_ADDRESS`/`HL_ADDRESS` env, legacy default only as fallback.
