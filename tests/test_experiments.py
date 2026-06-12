@@ -4,7 +4,9 @@ What must hold for a frozen spec to be trustworthy evidence machinery:
   1. A typo anywhere in a spec is a hard error, never a silent default —
      a mislabeled arm would poison the recorded evidence.
   2. Ripeness is judged on the WORST coin across the full arm universe; a
-     missing or short store series means NOT ripe.
+     missing or short store series means NOT ripe — and so does a gappy one
+     (span alone would "ripen" a sample a harvester outage already corrupted;
+     ``days > 0`` judges only the window the run would actually use).
   3. The runner builds frames once per (universe, window) pair and passes
      each arm's frozen prefer/maker_fill/config plus the spec's thresholds
      to the confirm harness untouched.
@@ -155,6 +157,55 @@ def test_ripeness_worst_coin_governs(tmp_path):
     assert rep2.ripe and "RIPE" in rep2.summary()
 
 
+def _write_gappy_store(
+    root: Path, coin: str, interval: str, n_bars: int,
+    gap_start: int, gap_len: int, step: int = MIN,
+) -> None:
+    bars = [_bar(i * step) for i in range(n_bars)
+            if not (gap_start <= i < gap_start + gap_len)]
+    save_store(store_path(coin, interval, root), bars)
+
+
+def test_ripeness_gaps_block_even_when_span_is_long_enough(tmp_path):
+    # 3d span >= 2d min, but a 100-bar hole = 2.3% missing > the 1% default:
+    # a harvester outage must not "ripen" by waiting out the span.
+    spec = load_spec(_write_spec(tmp_path, coins=["BTC"], min_span_days=2))
+    assert spec.max_missing_pct == 1.0  # default
+    _write_gappy_store(tmp_path, "BTC", "1m", 3 * DAY_BARS + 1, gap_start=2000, gap_len=100)
+    rep = check_ripeness(spec, root=tmp_path)
+    assert rep.min_span == pytest.approx(3.0)  # span alone would have passed
+    assert not rep.gaps_ok and not rep.ripe
+    assert rep.worst_gap.missing == 100
+    s = rep.summary()
+    assert "NOT RIPE" in s and "BTC_1m" in s and "missing" in s and "allowed" in s
+    # the hole is permanent, but the store growing dilutes it under the cap
+    _write_gappy_store(tmp_path, "BTC", "1m", 15 * DAY_BARS + 1, gap_start=2000, gap_len=100)
+    rep2 = check_ripeness(spec, root=tmp_path)
+    assert rep2.ripe
+    assert "100 missing" in rep2.summary()  # ripe, but the gap stays disclosed
+
+
+def test_ripeness_days_window_trims_old_gaps(tmp_path):
+    # 4d stored with a hole in day 1; the spec only uses the last 2d (days=2),
+    # which are clean — an out-of-window gap must not block the spec forever.
+    spec = load_spec(_write_spec(tmp_path, coins=["BTC"], min_span_days=1, days=2))
+    _write_gappy_store(tmp_path, "BTC", "1m", 4 * DAY_BARS + 1, gap_start=100, gap_len=300)
+    rep = check_ripeness(spec, root=tmp_path)
+    assert rep.ripe and rep.worst_gap.missing == 0
+    assert rep.min_span == pytest.approx(2.0)
+    # the same store judged whole (days=0) is blocked by that gap
+    spec0 = load_spec(_write_spec(tmp_path, coins=["BTC"], min_span_days=1, days=0))
+    rep0 = check_ripeness(spec0, root=tmp_path)
+    assert not rep0.ripe and rep0.worst_gap.missing == 300
+
+
+def test_ripeness_spec_can_widen_the_gap_allowance(tmp_path):
+    spec = load_spec(_write_spec(
+        tmp_path, coins=["BTC"], min_span_days=2, max_missing_pct=5.0))
+    _write_gappy_store(tmp_path, "BTC", "1m", 3 * DAY_BARS + 1, gap_start=2000, gap_len=100)
+    assert check_ripeness(spec, root=tmp_path).ripe  # 2.3% <= 5% allowed
+
+
 def test_ripeness_missing_coin_and_arm_universe(tmp_path):
     # arm-level coins join the spec universe; a coin with no store file
     # makes the whole spec unripe (min_span unknowable, not 0)
@@ -244,6 +295,7 @@ def test_b_g014_spec_pins():
     spec = load_spec(SPECS_DIR / "b_g014.json")
     assert (spec.agent, spec.interval, spec.source, spec.days) == ("twap_mr_v1", "1m", "store", 0.0)
     assert spec.min_span_days == 14
+    assert spec.max_missing_pct == 1.0  # a harvester-outage hole can't ripen away
     assert (spec.min_edge_bps, spec.min_sharpe, spec.min_trades) == (3.0, 1.0, 20)
     assert len(spec.arms) == 6
     # every maker arm is judged on honest resting fills — optimistic maker
@@ -264,6 +316,7 @@ def test_b_edge2b_spec_pins():
     spec = load_spec(SPECS_DIR / "b_edge2b.json")
     assert (spec.agent, spec.interval, spec.source) == ("breakout_v1", "15m", "store")
     assert spec.min_span_days == 60  # first rerun waits for data beyond the frozen 52d window
+    assert spec.max_missing_pct == 1.0
     assert spec.vwap_window == 385  # breakout needs window >= lookback+1 to carry closes
     assert all(a.prefer == "taker" for a in spec.arms)  # maker fills aren't momentum evidence
     by_name = {a.name: a for a in spec.arms}

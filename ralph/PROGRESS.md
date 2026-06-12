@@ -3686,3 +3686,71 @@ run; b_g014 ~Jun 26). B-EDGE2f at ≥30d paper books (~Jul 8). Idle queue:
 B-SCALE doc once G2 evidence is real; per-agent funding clamp if a
 funding-collecting agent ever shares the live book with a funding-paying
 one.
+
+## Iteration 70 — 2026-06-12 — B-RIPE: gap-aware experiment ripeness
+
+**Ripeness checks** (per-iteration readout): b_edge2b NOT RIPE (15m span
+52.1d < 60d, breadth coins binding, ETA ~Jun 20); b_g014 NOT RIPE (1m span
+3.7d < 14d, ETA ~Jun 26). Store healthy — 0 missing bars on every pair
+(the new readout would now say so if it weren't).
+
+**Why this.** Headline experiments time-blocked; REVIEW swept. First
+candidate investigated: does HL funding-history retention threaten the
+upcoming 60–90d store-sourced backtests the way candle retention did
+(funding is API-fetched at backtest time, no store)? **Pruned by probe**:
+`fetch_funding_history` returns the full 200d requested for BTC, XPL, ZEC,
+HYPE (4800 hourly rows each) — funding retention ≥200d, no funding store
+needed. Second candidate was real: the pre-registered experiment gate has
+a contiguity hole.
+
+**Root cause.** `check_ripeness` judged store SPANS only. `coverage_of`
+computes interval-aligned missing bars precisely so "a harvester outage
+can't silently pass a holey sample as a full one" (B-HIST2) — but the
+ripeness gate threw that field away (`CoinSpan` didn't even carry it).
+The loop box harvests per-iteration, best-effort; 1m API retention is
+~3.5d. If the loop stalls >3.5d during the next two weeks, the 1m store
+gaps PERMANENTLY — yet b_g014 would still hit "span ≥14d", ripen, and the
+frozen verdict would be recorded off a sample with a hole bar-count
+windows silently straddle (VWAP/σ across the gap, funding accrual skipping
+the hole). The run-time coverage print is a dim per-coin line under a
+20-coin readout — disclosure, not a gate; exactly the in-the-moment
+judgment call pre-registration exists to remove.
+
+**Changed.** `backtest/experiments.py`: `CoinSpan` grows
+`missing`/`missing_pct`; `ExperimentSpec` grows `max_missing_pct`
+(default 1.0%, spec-overridable, typo-validated like every spec key);
+`RipenessReport.ripe` now requires span ≥ min AND worst-coin missing_pct
+≤ allowance; `summary()` names the binding gap ("span ok at Xd; COIN_1m
+Y% bars missing > 1.0% allowed") and keeps disclosing sub-threshold gaps
+("N missing = Z%") even when ripe. `check_ripeness` trims to the spec's
+`days` window first (global last-bar anchor, matching `frames_from_store`)
+so an out-of-window gap can't block a `days>0` spec forever; both frozen
+specs are days=0 so their full store IS the judged sample. CLI help text
+updated. Frozen spec JSONs untouched (byte-identical — the default
+applies; no post-hoc spec edits).
+
+**Evidence.** 450 → **453 tests pass**; ruff clean. New: gappy-store
+block (3d span passes the 2d min but 2.3% missing > 1% → NOT RIPE, summary
+names coin+gap; same hole diluted under 1% by a 15d store → RIPE with the
+gap still disclosed); days-window trim (hole in day 1 of 4d store: days=2
+spec RIPE on the clean window, days=0 spec blocked by the same hole);
+spec-level allowance widening (5% passes what 1% blocks); both registered
+specs pin `max_missing_pct == 1.0`. Live-fired both `--check-only`
+readouts against the real store: verdicts unchanged (still span-blocked),
+0 missing bars across all 30 pairs.
+
+**Found.** (a) Funding retention ≥200d (probe above) — recorded so the
+"harvest funding too" idea isn't re-explored. (b) DOGE/LINK/TRX show 5333
+bars vs 5334 elsewhere with 0 missing — last-bar capture timing, not
+holes; the coverage math distinguishes these correctly. (c) The backtest
+CLI's own store path (`hlbot backtest --source store`) still only PRINTS
+coverage (red >1%) without gating — acceptable for exploratory runs
+(operator sees it interactively); the gate matters where the verdict is
+pre-registered.
+
+**What's next (loop).** Per-iteration: the two `--check-only` ripeness
+readouts (b_edge2b ~Jun 20 FIRST, then bump its min_span_days after the
+run; b_g014 ~Jun 26) — both now also gap-gated. B-EDGE2f at ≥30d paper
+books (~Jul 8). Idle queue: B-SCALE doc once G2 evidence is real;
+per-agent funding clamp if a funding-collecting agent ever shares the
+live book with a funding-paying one.

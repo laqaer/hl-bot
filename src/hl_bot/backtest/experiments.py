@@ -26,7 +26,7 @@ from typing import Any
 
 from .confirm import AgentFactory, ConfirmationResult, confirm_strategy
 from .engine import Frame
-from .store import coverage_of, load_store, store_path
+from .store import _t, coverage_of, load_store, store_path
 
 PERIODS_PER_YEAR = {"1m": 525_600, "5m": 105_120, "15m": 35_040,
                     "1h": 8_760, "4h": 2_190, "1d": 365}
@@ -35,8 +35,8 @@ _PREFERS = ("taker", "maker")
 _MAKER_FILLS = ("optimistic", "resting", "resting-close")
 _ARM_KEYS = {"name", "coins", "config", "prefer", "maker_fill", "vwap_window"}
 _SPEC_KEYS = {"name", "description", "agent", "coins", "interval", "days", "source",
-              "vwap_window", "min_span_days", "min_edge_bps", "min_sharpe",
-              "min_trades", "decision", "arms"}
+              "vwap_window", "min_span_days", "max_missing_pct", "min_edge_bps",
+              "min_sharpe", "min_trades", "decision", "arms"}
 
 
 @dataclass
@@ -63,6 +63,7 @@ class ExperimentSpec:
     source: str = "store"
     vwap_window: int = 60
     min_span_days: float = 0.0
+    max_missing_pct: float = 1.0
     min_edge_bps: float = 3.0
     min_sharpe: float = 1.0
     min_trades: int = 20
@@ -159,6 +160,7 @@ def load_spec(path: str | Path) -> ExperimentSpec:
         source=source,
         vwap_window=int(obj.get("vwap_window", 60)),
         min_span_days=float(obj.get("min_span_days", 0.0)),
+        max_missing_pct=float(obj.get("max_missing_pct", 1.0)),
         min_edge_bps=float(obj.get("min_edge_bps", 3.0)),
         min_sharpe=float(obj.get("min_sharpe", 1.0)),
         min_trades=int(obj.get("min_trades", 20)),
@@ -172,6 +174,12 @@ class CoinSpan:
     interval: str
     span_days: float | None  # None = no store file / empty
     bars: int = 0
+    missing: int = 0  # interval-aligned holes between first and last stored bar
+
+    @property
+    def missing_pct(self) -> float:
+        expected = self.bars + self.missing
+        return self.missing / expected * 100 if expected else 0.0
 
 
 @dataclass
@@ -181,6 +189,7 @@ class RipenessReport:
     spec_name: str
     min_span_days: float
     spans: list[CoinSpan]
+    max_missing_pct: float = 1.0
 
     @property
     def min_span(self) -> float | None:
@@ -190,39 +199,85 @@ class RipenessReport:
         return min((s.span_days for s in self.spans), default=None)
 
     @property
+    def worst_gap(self) -> CoinSpan | None:
+        """The coin with the highest missing-bar share (None if nothing stored)."""
+        spans = [s for s in self.spans if s.bars]
+        return max(spans, key=lambda s: s.missing_pct) if spans else None
+
+    @property
+    def gaps_ok(self) -> bool:
+        return all(s.missing_pct <= self.max_missing_pct for s in self.spans)
+
+    @property
     def ripe(self) -> bool:
         m = self.min_span
-        return m is not None and m >= self.min_span_days
+        return m is not None and m >= self.min_span_days and self.gaps_ok
 
     def summary(self) -> str:
         worst = self.min_span
-        verdict = (
-            f"RIPE (min span {worst:.1f}d >= {self.min_span_days:.0f}d)" if self.ripe
-            else f"NOT RIPE (min span {'—' if worst is None else f'{worst:.1f}d'}"
-                 f" < {self.min_span_days:.0f}d needed)"
-        )
+        gap = self.worst_gap
+        if self.ripe:
+            gaps = (
+                "no gaps" if gap is None or gap.missing == 0
+                else f"worst gaps {gap.missing_pct:.1f}% <= {self.max_missing_pct:.1f}% allowed"
+            )
+            verdict = f"RIPE (min span {worst:.1f}d >= {self.min_span_days:.0f}d, {gaps})"
+        elif worst is None or worst < self.min_span_days:
+            verdict = (
+                f"NOT RIPE (min span {'—' if worst is None else f'{worst:.1f}d'}"
+                f" < {self.min_span_days:.0f}d needed)"
+            )
+        else:
+            verdict = (
+                f"NOT RIPE (span ok at {worst:.1f}d; {gap.coin}_{gap.interval} "
+                f"{gap.missing_pct:.1f}% bars missing > "
+                f"{self.max_missing_pct:.1f}% allowed)"
+            )
         lines = [f"{self.spec_name}: {verdict}"]
-        lines += [
-            f"  {s.coin}_{s.interval}: "
-            + ("no stored bars" if s.span_days is None else f"{s.span_days:.1f}d ({s.bars} bars)")
-            for s in self.spans
-        ]
+        for s in self.spans:
+            if s.span_days is None:
+                detail = "no stored bars"
+            elif s.missing:
+                detail = (f"{s.span_days:.1f}d ({s.bars} bars, "
+                          f"{s.missing} missing = {s.missing_pct:.1f}%)")
+            else:
+                detail = f"{s.span_days:.1f}d ({s.bars} bars)"
+            lines.append(f"  {s.coin}_{s.interval}: {detail}")
         return "\n".join(lines)
 
 
 def check_ripeness(spec: ExperimentSpec, *, root: str | Path | None = None) -> RipenessReport:
-    """Per-coin store spans for the spec's full universe at its interval.
+    """Per-coin store coverage (span + interval-aligned gaps) for the spec's
+    full universe at its interval.
 
-    Spans only (gap detail is re-reported by the store loader at run time);
-    an api-sourced spec is judged the same way — if the store can't cover the
-    sample, the retention-capped API certainly can't.
+    Span AND contiguity both gate ripeness: a harvester outage longer than
+    the API retention window leaves a permanent hole in the store, and a
+    span-only check would let the spec "ripen" on a sample that no longer
+    exists — the run would then replay a series whose bar-count windows
+    silently straddle the hole. ``days > 0`` trims to the window the run
+    would use (most recent ``days`` before the universe's last stored bar,
+    matching ``frames_from_store``) so an out-of-window gap can't block a
+    spec forever. An api-sourced spec is judged the same way — if the store
+    can't cover the sample, the retention-capped API certainly can't.
     """
+    series = {
+        coin: load_store(store_path(coin, spec.interval, root)) for coin in spec.universe()
+    }
+    if spec.days > 0:
+        last = [t for rows in series.values() for row in rows if (t := _t(row)) is not None]
+        if last:
+            start_ms = max(last) - int(spec.days * 86_400_000)
+            series = {
+                coin: [row for row in rows if (t := _t(row)) is not None and t >= start_ms]
+                for coin, rows in series.items()
+            }
     spans: list[CoinSpan] = []
     for coin in spec.universe():
-        cov = coverage_of(coin, spec.interval, load_store(store_path(coin, spec.interval, root)))
+        cov = coverage_of(coin, spec.interval, series[coin])
         spans.append(CoinSpan(coin=coin, interval=spec.interval,
-                              span_days=cov.span_days, bars=cov.bars))
-    return RipenessReport(spec_name=spec.name, min_span_days=spec.min_span_days, spans=spans)
+                              span_days=cov.span_days, bars=cov.bars, missing=cov.missing))
+    return RipenessReport(spec_name=spec.name, min_span_days=spec.min_span_days,
+                          spans=spans, max_missing_pct=spec.max_missing_pct)
 
 
 @dataclass

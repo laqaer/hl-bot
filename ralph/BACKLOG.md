@@ -253,6 +253,18 @@ Keep it ruthlessly prioritized: the top item should always be the highest-levera
   `maker_fill=resting`, no stop+w240 combo arm, b_edge2b taker-only.
   Informational output; decisions stay operator-gated.
 
+- [x] **B-RIPE — Gap-aware experiment ripeness.** Done (Iter 70): `check_ripeness`
+  judged spans only — `coverage_of` computes interval-aligned holes but the
+  ripeness gate discarded them, so a harvester outage >3.5d (permanent 1m data
+  loss) would still let b_g014 "ripen" on span and run the pre-registered
+  verdict on a corrupted sample, with the gap relegated to a dim coverage line.
+  Now `CoinSpan.missing/missing_pct` + spec-level `max_missing_pct` (default
+  1.0%, pinned on both frozen specs) gate ripeness alongside span; `days > 0`
+  trims to the window the run would use (an out-of-window gap can't block a
+  spec forever); summaries disclose gaps even when under the cap. Also probed
+  + pruned: HL funding retention is ≥200d on every coin checked (BTC/XPL/ZEC/
+  HYPE) — no funding store needed for 60–90d backtests.
+
 - [x] **B-M4 — Auto-tuner auto-apply is risk-tightening only.** Done (Iter 63,
   REVIEW M4): `scripts/auto_tuner.py` was the last ungated live-params writer —
   Hermes cron auto-applied LLM tweaks to `agent_overrides.json`, including

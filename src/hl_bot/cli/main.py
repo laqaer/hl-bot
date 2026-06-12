@@ -1021,7 +1021,9 @@ def experiment(
     rerun (agent, universes, every arm's config/execution/fill model, pass
     thresholds, decision rule) BEFORE the deciding sample exists, so the arms
     can't be picked after peeking at early numbers. The command refuses to run
-    until every coin's store span reaches the spec's min_span_days
+    until every coin's store span reaches the spec's min_span_days AND its
+    missing-bar share stays within max_missing_pct — a harvester outage gap
+    is a corrupted sample, not a ripe one
     (exit 3 = not ripe; --check-only prints the span readout and stops;
     --force runs anyway — an early run is a peek, record it as one, it is
     NOT the pre-registered verdict). Results are informational: the printed
