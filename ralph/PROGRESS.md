@@ -1889,3 +1889,69 @@ breaches the stop intra-tick and retraces is invisible, same as live.
 readout), B-PAPER3a (modeled funding accrual over paper holds), B12 remainder
 (fold the femr_tick preamble into a shared harness), B-EDGE2b re-confirm as
 the store grows. B-G014 unblocks ~2026-06-26 (store 1m span ≥14d).
+
+## Iteration 41 — 2026-06-12 — B-PAPER3a: paper scorecards model funding accrual
+
+**What.** The last structural gap in judging femr's paper book: paper
+scorecards hard-coded `funding_pnl=0`, so a funding strategy's entire revenue
+line was invisible (price-only femr paper cards could only ever show fee
+bleed). Now `scoring/paper.py` models accrual from funding-rate history:
+
+- `PaperHold` + `replay_paper_holds` — replays the is_paper=1 book into hold
+  spans under the SAME rules as `replay_paper_fills` (re-place overwrite
+  DROPS the old hold — its exit never fills, so it accrues nothing either;
+  flatten always ends the hold even with a missing px; unfillable places open
+  nothing; open holds run to now).
+- `modeled_funding_events(holds, funding_by_coin, now_ms)` — each HL
+  `fundingHistory` row inside a hold (strictly-after entry, at-or-before
+  exit/now) is one cash event: `usdc = -signed_sz × entry_px × rate`, the
+  backtest engine's accrual marked at the entry mid (offline proxy for the
+  hourly mark; fine at femr's hours-scale holds, drifts on multi-day trends).
+- `score_paper_agent(..., funding_by_coin=)` — events are window-filtered by
+  their OWN timestamp and bucketed into daily PnL on their own day, exactly
+  mirroring how `score_agent` treats live `funding_payments` (funding is cash
+  when paid, not a close-time realization — an open femr hold's carry is
+  visible without waiting for the exit). Win stats stay price-based, also
+  like live.
+- `paper_funding_spans(conn)` — per-coin (min entry, max exit/now) span the
+  CLI must fetch. `hlbot score --paper` now fetches rates per coin
+  (`--no-funding` to skip; per-coin fetch failure warns and degrades that
+  coin to 0, never crashes the readout) and the score table grew a `funding`
+  column (live cards show attributed funding there too).
+
+**Why.** B-PAPER2 (Iter 40) gave femr paper round trips, but a femr card
+without funding is structurally meaningless — the strategy exists to collect
+carry. This was filed as the "genuinely the last gap" for femr paper
+judgeability. Accrual semantics deliberately mirror live attribution so paper
+cards and live cards mean the same thing column-for-column.
+
+**Evidence.** 251 tests pass (12 new in tests/test_paper_funding.py: hold
+replay pins overwrite-drop/orphan-flatten/missing-px-flatten semantics
+against the fills replay; long-pays/short-collects arithmetic exact
+(−signed×100×1e-4 = ∓0.02); entry-exclusive/exit-inclusive boundaries; open
+hold accrues to now; zero-rate/unknown-coin emit nothing; scorecard
+integration: funding in net/edge, 24h window keeps only the recent event of a
+3d hold, funding-only daily series feeds Sharpe (carry agent scores without a
+close), spans cover multi-agent books + open-to-now, live rows ignored;
+funding_by_coin=None keeps offline behavior). Ruff clean. Live-fire (real
+API, scratch DB): seeded 10h BTC paper short closed 2h ago → 10 hourly events
+fetched, funding +$0.08 on $1k notional folded into net (−1.22 = −0.40
+slip-cross −0.90 fees +0.08, hand-checked exactly); open 6h ETH long accrues
+−$0.01 (longs pay) up to now; `--no-funding` prints the old funding=0 title
+with zero network calls. deploy/README §Paper book updated.
+
+**Honest caveats.** (1) Accrual marks at the ENTRY mid, not an hourly mark —
+on a multi-day breakout hold with a big trend move the modeled funding
+notional drifts from truth (the rate×direction is exact, the notional is
+stale). Hourly marks would need candle history per hold (the store only
+covers the 10-coin universe; paper coins roam top-20+) — revisit only if
+breakout funding ever becomes decision-relevant. (2) Modeled, not paid: no
+queue/latency/socialized-funding reality; paper stays backtest-grade
+evidence. (3) `hlbot score --paper` now makes one paginated API call per
+paper coin by default — fine at today's book size (a handful of coins).
+
+**What's next (loop).** B-PAPER3b (surface paper cards in track-record +
+goal readout — femr's paper card is now fully judgeable so the wiring has
+real payload), B12 remainder (femr_tick preamble harness), B-EDGE2b
+re-confirm as the store grows. B-G014 unblocks ~2026-06-26 (store 1m span
+≥14d).

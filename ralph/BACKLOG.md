@@ -112,13 +112,14 @@ Keep it ruthlessly prioritized: the top item should always be the highest-levera
   prints the cards + still-open paper positions. NOT auto-promotion. Limits
   (by design, follow-ups below): funding_pnl=0, realized-only (no
   mark-to-market on open positions).
-- [ ] **B-PAPER3a — paper funding accrual.** Paper scorecards report
-  funding_pnl=0; a funding strategy (femr) can't be judged on its paper book
-  until accrual over each hold is modeled from funding-rate history (the
-  store/API already has the rates; accrue rate×held-notional per hour like
-  the backtest engine does). Unblocked by B-PAPER2 (Iter 40): femr paper
-  holds now open AND close, so modeled accrual is the remaining gap before
-  femr's paper book is judgeable.
+- [x] **B-PAPER3a — paper funding accrual.** Done (Iter 41): `hlbot score
+  --paper` fetches HL funding-rate history over each paper hold
+  (`paper_funding_spans` → `fetch_funding_history`, per-coin error isolation,
+  `--no-funding` opt-out) and models accrual per hourly event with the
+  engine's `-signed×notional×rate` (marked at entry mid — offline proxy for
+  the hourly mark), window-filtered by event time like live
+  funding_payments. femr's paper revenue line is now visible; `funding`
+  column added to `hlbot score` output. Live-fire verified on real rates.
 - [ ] **B-PAPER3b — surface paper scorecards in track-record/goals.** The
   readout exists (`hlbot score --paper`); wire it into `hlbot track-record`
   as a clearly-labeled paper section, and consider letting goal evaluation

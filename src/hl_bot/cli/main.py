@@ -100,25 +100,47 @@ def ingest(funding_days: int = 7):
 def score(
     paper: bool = typer.Option(
         False, "--paper",
-        help="Score the paper decision book (modeled taker costs, funding=0) "
-             "instead of exchange fills.",
+        help="Score the paper decision book (modeled taker costs + modeled "
+             "funding accrual) instead of exchange fills.",
+    ),
+    funding: bool = typer.Option(
+        True, "--funding/--no-funding",
+        help="--paper only: model funding accrual over paper holds from HL "
+             "funding-rate history (network; a per-coin fetch failure degrades "
+             "that coin to funding=0 with a warning).",
     ),
 ):
     """Print per-agent scorecards (--paper: replayed paper book, B-PAPER3)."""
-    conn, _ = _conn()
+    conn, s = _conn()
     if paper:
-        cards = score_paper_all(conn)
-        title = "Paper scorecards (decision-book replay · modeled taker costs · funding=0)"
+        funding_by_coin: dict[str, list[dict[str, Any]]] = {}
+        if funding:
+            from ..backtest.data import fetch_funding_history
+            from ..scoring.paper import paper_funding_spans
+
+            for coin, (t0, t1) in sorted(paper_funding_spans(conn).items()):
+                try:
+                    funding_by_coin[coin] = fetch_funding_history(
+                        coin, t0, t1, base_url=s.hl_api_url)
+                except Exception as e:  # noqa: BLE001
+                    console.print(
+                        f"[yellow]warn:[/yellow] funding history fetch failed for "
+                        f"{coin} ({e}); its paper funding_pnl counts as 0"
+                    )
+        cards = score_paper_all(conn, funding_by_coin=funding_by_coin or None)
+        fund_note = "modeled funding" if funding_by_coin else "funding=0"
+        title = f"Paper scorecards (decision-book replay · modeled taker costs · {fund_note})"
     else:
         cards = score_all(conn)
         title = "Scorecards"
     table = Table(title=title)
-    for col in ("agent", "window", "n_trades", "net_pnl", "win_rate", "sharpe", "max_dd", "edge_bps"):
+    for col in ("agent", "window", "n_trades", "net_pnl", "funding", "win_rate", "sharpe", "max_dd", "edge_bps"):
         table.add_column(col)
     for c in cards:
         table.add_row(
             c.agent, c.window, str(c.n_trades),
             f"{c.net_pnl:+.2f}",
+            f"{c.funding_pnl:+.2f}",
             f"{c.win_rate*100:.0f}%",
             "—" if c.sharpe is None else f"{c.sharpe:+.2f}",
             "—" if c.max_drawdown is None else f"{c.max_drawdown*100:+.1f}%",

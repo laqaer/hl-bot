@@ -113,10 +113,14 @@ paper tick; live ticks skip the feed entirely unless breakout is promoted in
 Read the paper book with `hlbot score --paper` (B-PAPER3): it replays the
 paper place/flatten rows into scorecards under the backtester's taker cost
 model (fees + slippage), so the numbers are comparable to G0 backtests, and
-lists still-open paper positions. Caveats: `funding_pnl` is always 0 (don't
-judge a funding strategy like femr on it) and realized-only — an open
-position shows entry fees but no mark-to-market. Promotion stays human-gated;
-this is the evidence readout, not an auto-promoter.
+lists still-open paper positions. `funding_pnl` is *modeled* (B-PAPER3a): the
+command fetches HL funding-rate history over each paper hold and accrues the
+engine's `-signed × notional × rate` per hourly event, marked at the entry
+mid — so femr's revenue line is visible; pass `--no-funding` to skip the
+network calls (funding reads 0 then; a per-coin fetch failure also degrades
+to 0 with a warning). Still realized-only on price: an open position shows
+entry fees and accrued funding but no mark-to-market. Promotion stays
+human-gated; this is the evidence readout, not an auto-promoter.
 
 ```bash
 sudo -u hlbot bash -c 'cd /opt/hl-bot && HLBOT_DB=data/hlbot_paper.sqlite uv run hlbot score --paper'
