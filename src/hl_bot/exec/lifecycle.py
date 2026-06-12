@@ -164,8 +164,15 @@ def plan_actions(
     view: MarketView,
     now_ms: int,
     cfg: MakerConfig,
+    *,
+    entries_allowed: bool = True,
 ) -> list[MakerAction]:
-    """Decide what to do with every open maker order. Pure."""
+    """Decide what to do with every open maker order. Pure.
+
+    ``entries_allowed=False`` (kill switch / guardrail halt / empty live
+    roster): non-reduce-only quotes are EXPIRED (cancelled, never repriced) —
+    a halted book must not keep working entry quotes into fills. Reduce-only
+    exits keep their full lifecycle."""
     actions: list[MakerAction] = []
     for o in orders:
         filled, avg_px = fills.get(o["cloid"], (0.0, 0.0))
@@ -181,12 +188,15 @@ def plan_actions(
             # partial remainder keeps resting on the exchange; fall through to
             # the staleness checks below for the remainder.
 
-        is_exit = o["urgency"] in ("exit", "stop")
+        is_exit = o["urgency"] in ("exit", "stop") or bool(o["reduce_only"])
+        if not is_exit and not entries_allowed:
+            actions.append(MakerAction("expire", o, filled_sz=filled, fill_px=avg_px))
+            continue
         if is_exit and age_s > cfg.exit_timeout_s:
-            actions.append(MakerAction("taker_fallback", o, filled_sz=filled))
+            actions.append(MakerAction("taker_fallback", o, filled_sz=filled, fill_px=avg_px))
             continue
         if not is_exit and age_s > cfg.max_rest_s:
-            actions.append(MakerAction("expire", o))
+            actions.append(MakerAction("expire", o, filled_sz=filled, fill_px=avg_px))
             continue
 
         quote = price_quote(view, o["coin"], o["side"], cfg)
@@ -199,7 +209,8 @@ def plan_actions(
             and since_update_s > cfg.min_requote_s
             and int(o["reprice_count"]) < cfg.max_reprices
         ):
-            actions.append(MakerAction("reprice", o, filled_sz=filled, new_px=quote))
+            actions.append(MakerAction("reprice", o, filled_sz=filled,
+                                       fill_px=avg_px, new_px=quote))
     return actions
 
 
@@ -236,11 +247,24 @@ def apply_actions(
             _set_state(conn, o["cloid"], "partial", filled_sz=a.filled_sz, now_ms=ts)
             events.append(f"PARTIAL {o['agent']} {o['coin']} {a.filled_sz}/{o['sz']}")
         elif a.kind == "expire":
-            _cancel(conn, exchange, o, "expired", ts)
+            if not _cancel(conn, exchange, o, "expired", ts):
+                events.append(f"EXPIRE-DEFERRED {o['agent']} {o['coin']}: cancel failed")
+                continue
+            _own_partial(conn, o, a, events)
             events.append(f"EXPIRED {o['agent']} {o['coin']}")
         elif a.kind == "reprice":
-            _cancel(conn, exchange, o, "cancelled", ts)
+            # Cancel must SUCCEED before the replacement exists: a failed
+            # cancel usually means the order already filled (our fills table
+            # lags the exchange) — placing the replacement anyway would
+            # duplicate the position with no ownership row. Leave the row
+            # open; the next cycle re-evaluates it against fresher fills.
+            if not _cancel(conn, exchange, o, "cancelled", ts):
+                events.append(f"REPRICE-DEFERRED {o['agent']} {o['coin']}: cancel failed")
+                continue
+            _own_partial(conn, o, a, events)
             remaining = float(o["sz"]) - a.filled_sz
+            if remaining <= 0:
+                continue
             new_cloid = make_cloid(o["agent"])
             res: OrderResult = place_limit_order(
                 exchange, o["coin"], o["side"] == "B", remaining, a.new_px or 0,
@@ -257,9 +281,18 @@ def apply_actions(
                 )
                 events.append(f"REPRICED {o['agent']} {o['coin']} -> {a.new_px}")
             else:
+                log_decision(conn, Decision(
+                    agent=o["agent"], action="rejected", coin=o["coin"],
+                    side=o["side"], sz=remaining, px=a.new_px, cloid=new_cloid,
+                    reasoning=f"reprice rejected: {res.status}", error=res.error,
+                    is_paper=False,
+                ))
                 events.append(f"REPRICE-FAILED {o['agent']} {o['coin']}: {res.error}")
         elif a.kind == "taker_fallback":
-            _cancel(conn, exchange, o, "taker_fallback", ts)
+            if not _cancel(conn, exchange, o, "taker_fallback", ts):
+                events.append(f"TAKER-DEFERRED {o['agent']} {o['coin']}: cancel failed")
+                continue
+            _own_partial(conn, o, a, events)
             res = close_position(exchange, o["coin"], cloid=make_cloid(o["agent"]))
             if res.ok:
                 log_decision(conn, Decision(
@@ -275,11 +308,41 @@ def apply_actions(
     return events
 
 
-def _cancel(conn: sqlite3.Connection, exchange: Any, o: dict[str, Any], state: str, ts: int) -> None:
+def _cancel(conn: sqlite3.Connection, exchange: Any, o: dict[str, Any], state: str, ts: int) -> bool:
+    """Cancel on the exchange, then transition the DB row — in that order.
+
+    Returns False WITHOUT touching the DB when the exchange cancel fails:
+    that almost always means the order already filled and our fills table
+    hasn't caught up, so the row must stay open for re-evaluation against
+    fresher fills (acting on the stale view duplicates positions)."""
     if o.get("oid") is not None:
-        cancel_order(exchange, o["coin"], int(o["oid"]))
+        res = cancel_order(exchange, o["coin"], int(o["oid"]))
+        if not res.ok:
+            log.warning("cancel failed for %s %s (oid=%s): %s — leaving order open",
+                        o["agent"], o["coin"], o["oid"], res.error)
+            return False
     _set_state(conn, o["cloid"], state, now_ms=ts)
     log_cancel(conn, o["agent"], {**o, "px": o["limit_px"]})
+    return True
+
+
+def _own_partial(
+    conn: sqlite3.Connection, o: dict[str, Any], a: MakerAction, events: list[str],
+) -> None:
+    """Write the ownership row for a partially-filled order leaving the open
+    states. The 'fill' branch only logs ownership on FULL fills, so without
+    this a partial fill that then expires/reprices/escalates would be a live
+    position no agent ever manages."""
+    if a.filled_sz <= 0:
+        return
+    log_decision(conn, Decision(
+        agent=o["agent"], action="flatten" if o["reduce_only"] else "place",
+        coin=o["coin"], side=o["side"], sz=a.filled_sz,
+        px=a.fill_px or float(o["limit_px"]), cloid=o["cloid"],
+        reasoning=f"MAKER PARTIAL {a.filled_sz}/{o['sz']} owned on {o['cloid'][:12]} close-out",
+        is_paper=False,
+    ))
+    events.append(f"PARTIAL-OWNED {o['agent']} {o['coin']} {a.filled_sz}")
 
 
 def submit_entry(

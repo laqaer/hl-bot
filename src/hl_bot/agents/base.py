@@ -35,6 +35,13 @@ class Agent(abc.ABC):
     # "execution" key in agent config / agent_overrides.json; see femr_tick.
     default_execution: str = "taker"
 
+    # Set by the engine's roster split each cycle: True only when the agent is
+    # in the LIVE execution roster. Position replays filter agent_decisions by
+    # is_paper accordingly — the paper simulator writes place/flatten audit
+    # rows for the SAME agent names, and replaying the wrong universe makes a
+    # promoted agent "own" paper positions (and try to close them live).
+    is_live: bool = False
+
     def __init__(self, name: str, config: dict[str, Any] | None = None) -> None:
         self.name = name
         self.config = config or {}

@@ -40,11 +40,9 @@ def _resolve_trader_address() -> str:
     existing deployments keep working. Set HL_TRADER_ADDRESS in /etc/hl-bot/env to
     point the bot at your own account.
     """
-    return (
-        os.environ.get("HL_TRADER_ADDRESS")
-        or os.environ.get("HL_ADDRESS")
-        or "0x5C3a67932Ca4026A6ABC18822Dc601BeD44f45a3"
-    )
+    # No hardcoded fallback: trading or measuring guardrails against a
+    # default (someone else's) account is strictly worse than failing loudly.
+    return os.environ.get("HL_TRADER_ADDRESS") or os.environ.get("HL_ADDRESS") or ""
 
 
 HL_TRADER_ADDRESS = _resolve_trader_address()
@@ -97,6 +95,9 @@ def _load_api_key(env_path: Path | None = None) -> tuple[str, str]:
 
 
 def build_exchange(env_path: Path | None = None) -> tuple[Exchange, Info, LocalAccount]:
+    if not HL_TRADER_ADDRESS:
+        raise ValueError("HL_TRADER_ADDRESS / HL_ADDRESS not set — refusing to "
+                         "build an exchange client against an unknown account")
     priv, expected_addr = _load_api_key(env_path)
     wallet: LocalAccount = Account.from_key(priv)
     if wallet.address.lower() != expected_addr.lower():
@@ -309,13 +310,30 @@ def check_guardrails(
     owned: set[str] = set()
     for agent in bot_agents:
         owned |= bot_owned_coins(conn, agent=agent)
+    open_coins = {
+        ap.get("position", {}).get("coin")
+        for ap in asset_pos
+        if ap.get("position", {}).get("coin") in owned
+        and abs(float(ap.get("position", {}).get("szi", 0) or 0)) > 0
+    }
+    if len(open_coins) >= cfg.max_concurrent_positions:
+        return False, (f"open positions {len(open_coins)} >= cap "
+                       f"{cfg.max_concurrent_positions}")
     bot_ntl = sum(
         abs(float(ap.get("position", {}).get("positionValue", 0) or 0))
         for ap in asset_pos
         if ap.get("position", {}).get("coin") in owned
     )
+    # Resting quotes are commitments: count them against the cap so N agents
+    # can't each rest entries that breach it only once they fill.
+    resting = conn.execute(
+        "SELECT COALESCE(SUM((sz - filled_sz) * limit_px), 0) FROM maker_orders "
+        "WHERE state IN ('quoted','partial') AND reduce_only = 0"
+    ).fetchone()[0]
+    bot_ntl += float(resting or 0)
     if bot_ntl >= cfg.max_total_notional:
-        return False, f"bot open notional ${bot_ntl:.2f} >= cap ${cfg.max_total_notional:.2f}"
+        return False, (f"bot open+resting notional ${bot_ntl:.2f} >= cap "
+                       f"${cfg.max_total_notional:.2f}")
 
     return True, f"OK capital ${capital:.2f} 24h-pnl ${daily_pnl:+.2f} bot-open ${bot_ntl:.2f}"
 
@@ -441,11 +459,13 @@ def place_market_order(
     if rounded_sz <= 0:
         return OrderResult(ok=False, status="error", error=f"rounded size is zero: requested {sz}")
     try:
-        res = _retry(lambda: exchange.market_open(
+        # Deliberately NOT retried: a transport error after the server
+        # accepted the first attempt would resend and double-fill.
+        res = exchange.market_open(
             name=coin, is_buy=is_buy, sz=rounded_sz,
             slippage=slippage_pct, cloid=_as_cloid(cloid),
             builder=_builder_info(),
-        ))
+        )
     except Exception as e:  # noqa: BLE001
         log.exception("place_market_order failed")
         return OrderResult(ok=False, status="error", error=str(e))
@@ -546,12 +566,14 @@ def place_limit_order(
         return OrderResult(ok=False, status="error", error=f"bad limit px: {limit_px}")
     tif = "Alo" if post_only else "Gtc"
     try:
-        res = _retry(lambda: exchange.order(
+        # Deliberately NOT retried (see place_market_order): resends can
+        # double-place; HL rejects duplicate cloids only while the first rests.
+        res = exchange.order(
             name=coin, is_buy=is_buy, sz=rounded_sz, limit_px=rounded_px,
             order_type={"limit": {"tif": tif}},
             reduce_only=reduce_only, cloid=_as_cloid(cloid),
             builder=_builder_info(),
-        ))
+        )
     except Exception as e:  # noqa: BLE001
         log.exception("place_limit_order failed")
         return OrderResult(ok=False, status="error", error=str(e))
@@ -592,9 +614,9 @@ def telegram_alert(message: str) -> None:
     Uses bot token from env. Silently fails if not configured.
     """
     token = os.environ.get("TG_BOT_TOKEN") or _load_tg_token()
-    chat_id = os.environ.get("TG_CHAT_ID") or "8588356687"  # Guda home
-    if not token:
-        log.warning("no TG_BOT_TOKEN; skipping alert: %s", message[:80])
+    chat_id = os.environ.get("TG_CHAT_ID")
+    if not token or not chat_id:
+        log.warning("TG_BOT_TOKEN/TG_CHAT_ID not configured; skipping alert: %s", message[:80])
         return
     try:
         httpx.post(

@@ -109,8 +109,9 @@ class TwapMrAgent(Agent):
             """SELECT ts_ms, coin, action, side, sz, px, cloid
                FROM agent_decisions
                WHERE agent=? AND coin IS NOT NULL AND action IN ('place','flatten')
+                 AND is_paper = ?
                ORDER BY ts_ms ASC""",
-            (self.name,),
+            (self.name, 0 if self.is_live else 1),
         ).fetchall()
         open_by_coin: dict[str, dict] = {}
         for r in rows:
