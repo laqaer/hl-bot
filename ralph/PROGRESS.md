@@ -2879,3 +2879,49 @@ maker-rest the arm to watch). B-EDGE2b three-armed reruns as the 15m store
 grows. B-EDGE2f at ≥30d paper books (~Jul 8). Idle queue: B10c (ws
 userFills), B-PROP / B17 capital-formation specs, B-SCALE doc once G2
 evidence is real.
+
+## Iteration 56 — 2026-06-12 — B10c: the deployed WS service now watches its own fills
+
+**Why this.** Research tasks remain time-blocked (B-G014 needs 1m store span
+≥14d, ~Jun 23–26; B-EDGE2f needs ≥30d paper books, ~Jul 8). Top idle item was
+B10c, filed by Iter 55: `run_ws(user_address=)` has existed since B10b
+(Iter 19), but the CLI `ws` command never passed it — so every deployed WS
+service ran without the userFills subscription and B10b's instant maker-fill
+detection (`MarketState.user_fills` → `ingest_ws_user_fills` →
+`reconcile_maker_fills` same-tick) has been dormant the whole time, silently
+degrading maker fill detection to next-REST-poll latency. That latency gap
+is exactly what B10b was built to close, and it matters the day B-MAKER-LIVE
+ever flips.
+
+**Changed.** (a) `exec/orders.py`: `_resolve_trader_address` promoted to
+public `resolve_trader_address` — it now has a second caller, and the
+vault-aware chain (HL_VAULT_ADDRESS > HL_TRADER_ADDRESS > HL_ADDRESS >
+legacy default) must stay single-sourced; resolved at call time, not import
+time. (b) `cli/main.py ws`: resolves the trader address and passes
+`user_address=` to `run_ws`; the startup line now prints
+`+ userFills[0x…]` so journald shows which account the service watches.
+Vault semantics follow B16b for free: when a vault is live, fills land on
+the vault, and the subscription follows it.
+
+**Evidence.** 352 → **354 tests pass** (2 new in `tests/test_ws.py`: CLI
+wiring via typer CliRunner with `run_ws` faked — personal-address arm
+asserts HL_TRADER_ADDRESS reaches `user_address`, vault arm asserts
+HL_VAULT_ADDRESS wins), `ruff check src tests scripts` clean. Live-fired
+against the real socket (scratch DB + snapshot): startup prints
+`subscribing ['BTC'] + userFills[0x5C3a…]` (legacy default — no env on this
+box, the expected chain), websocket connects, no subscription error, written
+snapshot carries the `user_fills` key. No deploy change needed: the systemd
+unit's EnvironmentFile already supplies the address env.
+
+**Found.** `hlbot ws --seconds N` never exits: the duration loop returns but
+the SDK `Info(skip_ws=False)` websocket thread is non-daemon and never
+disconnected (verified: exit 124 under `timeout 30` with `--seconds 5`).
+Irrelevant to the forever-running systemd service; annoying for scripted
+smoke tests. Filed as B10d (one-liner: `info.disconnect_websocket()` after
+the loop).
+
+**What's next (loop).** B-G014 when 1m store span ≥14d (~Jun 23–26; w=240
+maker-rest the arm to watch). B-EDGE2b three-armed reruns as the 15m store
+grows. B-EDGE2f at ≥30d paper books (~Jul 8). Idle queue: B10d (ws clean
+exit), B-PROP / B17 capital-formation specs, B-SCALE doc once G2 evidence
+is real.

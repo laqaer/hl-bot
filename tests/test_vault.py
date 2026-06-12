@@ -67,12 +67,12 @@ def test_malformed_raises_never_falls_back(monkeypatch, bad):
 def test_trader_address_prefers_vault(monkeypatch):
     monkeypatch.setenv("HL_TRADER_ADDRESS", PERSONAL)
     monkeypatch.setenv("HL_VAULT_ADDRESS", VAULT)
-    assert orders._resolve_trader_address() == VAULT
+    assert orders.resolve_trader_address() == VAULT
 
 
 def test_trader_address_without_vault_unchanged(monkeypatch):
     monkeypatch.setenv("HL_TRADER_ADDRESS", PERSONAL)
-    assert orders._resolve_trader_address() == PERSONAL
+    assert orders.resolve_trader_address() == PERSONAL
 
 
 def test_trader_address_malformed_vault_raises(monkeypatch):
@@ -80,7 +80,7 @@ def test_trader_address_malformed_vault_raises(monkeypatch):
     monkeypatch.setenv("HL_TRADER_ADDRESS", PERSONAL)
     monkeypatch.setenv("HL_VAULT_ADDRESS", "0xnope")
     with pytest.raises(ValueError):
-        orders._resolve_trader_address()
+        orders.resolve_trader_address()
 
 
 def test_settings_read_address_prefers_vault(monkeypatch):

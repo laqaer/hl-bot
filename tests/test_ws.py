@@ -86,6 +86,44 @@ def test_to_market_view_and_unknown_channel_ignored():
     assert v.mids["SOL"] == 150.0
 
 
+def _invoke_ws_command(monkeypatch, tmp_path):
+    """Run `hlbot ws` with run_ws faked out; return the kwargs it was wired with."""
+    from typer.testing import CliRunner
+
+    import hl_bot.ingest.ws as ws_mod
+    from hl_bot.cli.main import app
+
+    calls: dict = {}
+
+    def fake_run_ws(coins, snapshot_path, **kwargs):
+        calls["coins"] = coins
+        calls.update(kwargs)
+
+    monkeypatch.setattr(ws_mod, "run_ws", fake_run_ws)
+    monkeypatch.setenv("HLBOT_DB", str(tmp_path / "t.sqlite"))
+    res = CliRunner().invoke(app, ["ws"])
+    assert res.exit_code == 0, res.output
+    return calls
+
+
+def test_ws_command_subscribes_user_fills(monkeypatch, tmp_path):
+    # B10c: the deployed ws service must watch the account the tick trades,
+    # else maker-fill detection silently degrades to next-REST-poll latency.
+    monkeypatch.delenv("HL_VAULT_ADDRESS", raising=False)
+    monkeypatch.setenv("HL_TRADER_ADDRESS", "0x" + "c" * 40)
+    calls = _invoke_ws_command(monkeypatch, tmp_path)
+    assert calls["user_address"] == "0x" + "c" * 40
+    assert calls["coins"] == ["BTC", "ETH", "SOL", "HYPE"]
+
+
+def test_ws_command_user_fills_follow_vault(monkeypatch, tmp_path):
+    # With a vault live, fills land on the vault — userFills must follow it.
+    monkeypatch.setenv("HL_TRADER_ADDRESS", "0x" + "c" * 40)
+    monkeypatch.setenv("HL_VAULT_ADDRESS", "0x" + "d" * 40)
+    calls = _invoke_ws_command(monkeypatch, tmp_path)
+    assert calls["user_address"] == "0x" + "d" * 40
+
+
 def test_snapshot_roundtrip_and_staleness(tmp_path):
     st = MarketState()
     st.apply_message({"channel": "allMids", "data": {"mids": {"BTC": "64000"}}})

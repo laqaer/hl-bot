@@ -302,11 +302,21 @@ Keep it ruthlessly prioritized: the top item should always be the highest-levera
   from `HL_TRADER_ADDRESS`/`HL_ADDRESS` env, legacy default only as fallback.
 - [x] **B14 — Go-live runbook in-repo.** `docs/GO_LIVE.md`: gated checklist,
   secrets/env, promote/kill-switch/rollback, monitoring. (REVIEW D3.)
-- [ ] **B10c — `hlbot ws` never subscribes userFills.** Found in Iter 55:
-  `run_ws(user_address=)` exists since B10b, but the CLI `ws` command never
-  passes it, so the deployed WS service captures no own-fills and maker fill
-  detection falls back to next REST poll. Pass the resolved trader address
-  (vault-aware) from the `ws` command; one-line change + test.
+- [x] **B10c — `hlbot ws` never subscribes userFills.** Done (Iter 56):
+  `ws` command resolves the trader address (vault-aware chain via
+  `exec.orders.resolve_trader_address`, promoted public) and passes
+  `user_address=` to `run_ws`, so the deployed WS service finally captures
+  own-fills and B10b's instant maker-fill detection is no longer dormant.
+  Wiring pinned by two CLI tests (personal + vault-precedence arms);
+  live-fired against the real socket — subscription accepted, snapshot
+  carries `user_fills`. No deploy change needed (unit's EnvironmentFile
+  already provides the env).
+- [ ] **B10d — `hlbot ws --seconds N` never exits.** Found in Iter 56's
+  live-fire: `run_ws` finishes its duration loop but the SDK
+  `Info(skip_ws=False)` websocket thread is non-daemon and never
+  disconnected, so the process hangs until killed (exit 124 under timeout).
+  Irrelevant to the forever-running systemd service; matters for scripted
+  smoke tests. Fix: call `info.disconnect_websocket()` after the loop.
 - [x] **B14a — Deploy automation.** Done — this entry was a stale duplicate of
   the Iter-5/6 Done item; audited (Iter 53): `deploy/` covers the whole
   description (install.sh idempotent EC2 bootstrap, test-gated auto-update.sh,

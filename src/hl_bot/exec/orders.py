@@ -35,7 +35,7 @@ from ..config import resolve_vault_address
 
 log = logging.getLogger(__name__)
 
-def _resolve_trader_address() -> str:
+def resolve_trader_address() -> str:
     """The funded account the bot trades on.
 
     ``HL_VAULT_ADDRESS`` takes precedence (trading on behalf of a vault: every
@@ -43,7 +43,8 @@ def _resolve_trader_address() -> str:
     vaultAddress so orders land there too — setting only HL_TRADER_ADDRESS to
     a vault would read the vault but trade the personal account). Then
     ``HL_TRADER_ADDRESS``, then ``HL_ADDRESS``, then the legacy default so
-    existing deployments keep working.
+    existing deployments keep working. Call at use time (not import time) when
+    env may not be settled yet — e.g. the `hlbot ws` userFills subscription.
     """
     return (
         resolve_vault_address()
@@ -54,7 +55,7 @@ def _resolve_trader_address() -> str:
 
 
 HL_VAULT_ADDRESS = resolve_vault_address()
-HL_TRADER_ADDRESS = _resolve_trader_address()
+HL_TRADER_ADDRESS = resolve_trader_address()
 DEFAULT_API_WALLET_ENV = Path.home() / ".config" / "hermes" / "hl-bot-api-wallet.env"
 COOLDOWN_S = 3600  # 1h cooldown per coin between attempts
 

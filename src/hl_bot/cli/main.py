@@ -986,15 +986,23 @@ def ws(
     """Run the WebSocket market-data service: maintain live state, write a snapshot.
 
     Long-running (supervise via systemd). The tick reads the snapshot when fresh
-    (set HLBOT_WS_SNAPSHOT) for sub-second mids, L2 depth, and live liquidations.
+    (set HLBOT_WS_SNAPSHOT) for sub-second mids, L2 depth, live liquidations, and
+    our own userFills (instant maker-fill detection — the address follows
+    HL_VAULT_ADDRESS > HL_TRADER_ADDRESS > HL_ADDRESS, same as the tick).
     seconds=0 runs forever.
     """
+    from ..exec.orders import resolve_trader_address
     from ..ingest.ws import run_ws
 
     _, s = _conn()
     coin_list = [c.strip() for c in coins.split(",") if c.strip()]
-    console.print(f"[green]ws[/green] subscribing {coin_list} → {snapshot} (every 1s)")
-    run_ws(coin_list, snapshot, base_url=s.hl_api_url, duration_s=(seconds or None))
+    user_address = resolve_trader_address()
+    console.print(
+        f"[green]ws[/green] subscribing {coin_list} + userFills[{user_address}] "
+        f"→ {snapshot} (every 1s)"
+    )
+    run_ws(coin_list, snapshot, base_url=s.hl_api_url, duration_s=(seconds or None),
+           user_address=user_address)
 
 
 @app.command()
