@@ -34,6 +34,11 @@ WINDOW_MS: dict[Window, int | None] = {
     "all":  None,
 }
 
+# Calmar needs an annualized return; (1+mean_daily)^365 on a days-old hot
+# curve compounds into absurdity (a live record printed +7.9e45). Below this
+# many daily observations we report None rather than a meaningless number.
+MIN_CALMAR_DAYS = 30
+
 
 @dataclass
 class Scorecard:
@@ -260,7 +265,9 @@ def _daily_pnl_drawdown(
     curve uses, which is what drawdown guardrails (e.g. ``>= -0.10``) compare
     against. Without this, per-agent ``max_drawdown`` is always None and any
     drawdown guardrail is permanently N/A (can never fire). Needs a positive
-    base and ≥3 days of PnL.
+    base and ≥3 days of PnL. Calmar additionally needs ≥``MIN_CALMAR_DAYS``
+    observations (annualizing a shorter series is meaningless); drawdown is
+    reported regardless.
     """
     if len(daily) < 3 or capital_base <= 0:
         return None, None
@@ -282,7 +289,7 @@ def _daily_pnl_drawdown(
         if equity[i - 1] != 0
     ]
     calmar = None
-    if dd < 0 and rets:
+    if dd < 0 and len(rets) >= MIN_CALMAR_DAYS:
         ann_ret = (1 + sum(rets) / len(rets)) ** periods_per_year - 1
         calmar = ann_ret / abs(dd)
     return dd, calmar
@@ -360,7 +367,7 @@ def score_agent(
             rets = eq.pct_change().dropna()
             sharpe = _sharpe(rets, 365)
             dd = _max_dd(eq)
-            if dd is not None and dd < 0:
+            if dd is not None and dd < 0 and len(rets) >= MIN_CALMAR_DAYS:
                 ann_ret = (1 + rets.mean()) ** 365 - 1 if not rets.empty else 0
                 calmar = float(ann_ret / abs(dd)) if dd != 0 else None
     else:

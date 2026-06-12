@@ -199,6 +199,51 @@ def test_per_agent_drawdown_needs_capital_base(conn):
     # With a base, equity = [1000, 1100, 1200, 900] -> -25% drawdown.
     sc = score_agent(conn, "twap_mr_v1", "all", capital_base=1000.0)
     assert sc.max_drawdown == pytest.approx(-0.25)
+    # B-CALMAR: 3 days is far too short to annualize -> suppressed, not absurd.
+    assert sc.calmar is None
+
+
+def test_calmar_needs_30_daily_observations():
+    # B-CALMAR: (1+mean)^365 on a days-old series compounds into absurdity
+    # (a live record printed +7.9e45). Below MIN_CALMAR_DAYS observations the
+    # calmar is None; the drawdown is reported regardless.
+    from hl_bot.scoring.metrics import MIN_CALMAR_DAYS, _daily_pnl_drawdown
+
+    short = [50.0] * (MIN_CALMAR_DAYS - 2) + [-100.0]  # 29 days, hot mean + dip
+    dd, calmar = _daily_pnl_drawdown(short, 1000.0)
+    assert dd is not None and dd < 0
+    assert calmar is None
+
+    long = [5.0] * (MIN_CALMAR_DAYS - 1) + [-100.0]  # 30 days
+    dd, calmar = _daily_pnl_drawdown(long, 1000.0)
+    assert dd is not None and dd < 0
+    assert calmar is not None
+
+
+def test_account_calmar_suppressed_on_short_window(conn):
+    # B-CALMAR, account arm: a hot week of equity snapshots must not print an
+    # annualized calmar; a 30+-day curve still does.
+    def _snap(t_ms, value):
+        conn.execute(
+            """INSERT INTO equity_snapshots(ts_ms, account_value, total_margin,
+               total_ntl_pos, total_raw_usd, withdrawable, cross_leverage, raw_json)
+               VALUES(?,?,?,?,?,?,?,?)""",
+            (t_ms, value, 0.0, 0.0, value, value, None, "{}"),
+        )
+
+    now = int(time.time() * 1000)
+    # 6 days: +30%/day with one dip -> hot mean, real drawdown, tiny sample.
+    values = [100.0, 130.0, 169.0, 150.0, 195.0, 253.0]
+    for i, v in enumerate(values):
+        _snap(now - (len(values) - 1 - i) * DAY, v)
+    sc = score_agent(conn, "_account", "all")
+    assert sc.max_drawdown is not None and sc.max_drawdown < 0
+    assert sc.calmar is None
+
+    # Extend the curve past 30 daily returns -> calmar evaluates again.
+    for i in range(1, 32):
+        _snap(now - len(values) * DAY - i * DAY, 100.0 - i * 0.1)
+    sc = score_agent(conn, "_account", "all")
     assert sc.calmar is not None
 
 

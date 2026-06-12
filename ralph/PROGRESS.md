@@ -5164,3 +5164,45 @@ b_g014 ~Jun 26, b_edge3 + b_edge2_1h reruns ~Jul 10, B-EDGE2f paper readout
 once the operator arms HLBOT_STORE_BACKUP_S3; operator nudges — wire
 HEALTHCHECK_URL, consider arming HLBOT_DAILY_LOSS_FLOOR + the S3 store
 backup.
+
+## Iteration 93 — 2026-06-12 — B-CALMAR: suppress meaningless annualized calmar on short windows
+
+**Ripeness checks** (per-iteration readout): b_edge2b NOT RIPE (15m span
+52.7d < 60d, ~Jun 20); b_g014 NOT RIPE (1m span 4.3d < 14d, ~Jun 26). Store
+fresh (worst lag 18.4m, harvest skipped; peer sync +0/+0).
+
+**The work.** The live track record printed `calmar +7.9e45` — `score_agent`'s
+account arm annualizes `(1+mean_daily_ret)^365` over a days-old curve with a
+hot mean, and the same shape lives in `_daily_pnl_drawdown` (per-agent + paper
+cards). A public-grade artifact printing 10^45 is worse than printing nothing.
+
+**Changed** (`scoring/metrics.py`): `MIN_CALMAR_DAYS = 30` gates both calmar
+sites — below 30 daily return observations calmar is None; max_drawdown and
+sharpe report regardless (the DD guardrails B7 built stay live). Renderers
+already degrade None to "—" (`_num`). Scope checks: no calmar-keyed guardrail
+or promotion gate exists anywhere (configs/ + supervisor/ grepped clean), so
+this changes reports only; backtest engine `_curve_stats` deliberately
+untouched (research readout, sample length always printed beside it — and
+changing backtest metrics mid-stream would skew comparisons against recorded
+experiment verdicts).
+
+**Evidence.** 589 → **591 tests** pass (+2: `_daily_pnl_drawdown` 29-day hot
+series → (dd, None) while 30-day → finite calmar; account arm with 6 hot
+snapshot days → calmar None then 37-day curve → evaluates again; the Iter-9
+3-day calmar assertion updated to pin suppression); ruff clean. Live-fired
+read-only on the deploy DB: account all-window **calmar +7.9e45 → None**
+(4 distinct snapshot days), maxDD −63.4% / sharpe +8.3 intact. (That −63%
+account maxDD is the shared-address caveat rendered honestly — deposits and
+the operator's manual book dominate the account curve; the bot composite
+B-BOTREC headlines is the underwritable number.)
+
+**Live watch.** Health: WARN only on the standing pager nag (tick 1.1m,
+ingest 1.3m, paper tick 4.4m, none paused). pnl_24h: bot $-0.32 (account
+−$235.60, manual −$235.28). Equity $653.35 (account-level, includes the
+operator's manual book).
+
+**What's next (loop).** Per-iteration readouts unchanged (b_edge2b ~Jun 20,
+b_g014 ~Jun 26, b_edge3 + b_edge2_1h reruns ~Jul 10, B-EDGE2f paper readout
+~Jul 12). Idle queue: B-STOREBKP2 once the operator arms
+HLBOT_STORE_BACKUP_S3; operator nudges — wire HEALTHCHECK_URL, consider
+arming HLBOT_DAILY_LOSS_FLOOR + the S3 store backup.

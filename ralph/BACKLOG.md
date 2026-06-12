@@ -125,12 +125,17 @@ Keep it ruthlessly prioritized: the top item should always be the highest-levera
   judge its risk; `_agent_daily_pnl` now folds attributed funding onto its
   day. 4 new tests (manual/NULL excluded + unknown:* included, manual's
   funding share stays out, funding-day drawdown shows, empty-book render).
-- [ ] **B-CALMAR — Account calmar prints absurd compounding on short
-  windows.** Live track record shows `calmar +7.9e45`: `score_agent`'s
-  account arm annualizes `(1+mean_daily_ret)^365` on a days-old curve with a
-  hot mean — meaningless and embarrassing on a public-grade artifact. Cap or
-  suppress (None) when the window is shorter than ~30d, or report
-  non-annualized return/DD. Small, cosmetic-honesty.
+- [x] **B-CALMAR — Account calmar prints absurd compounding on short
+  windows.** Done (Iter 93): `MIN_CALMAR_DAYS = 30` in `scoring/metrics.py`
+  gates BOTH calmar sites — the account arm (`score_agent` `_account`:
+  `len(rets) >= 30` daily returns) and `_daily_pnl_drawdown` (per-agent +
+  paper cards share it) — calmar is None below 30 daily observations;
+  drawdown/sharpe report regardless. Renderers already degrade None to "—".
+  No calmar-keyed gate exists anywhere (configs/supervisor grepped) so this
+  is pure report honesty. Backtest engine `_curve_stats` deliberately left
+  alone (research output, sample length always printed beside it).
+  Live-fired read-only on the deploy DB: account all-window calmar
+  +7.9e45 → None (4 snapshot days), maxDD/sharpe intact.
 - [x] **B-PAPER — Make the paper book exist + paper/live book separation.** Done
   (Iter 37). Found while scoping B-EDGE2a: paper `femr_tick` NEVER logged
   place/flatten (gap dates to the original femr_tick — `defer_exec_logging`
