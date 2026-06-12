@@ -12,6 +12,7 @@
   * is the auto-deployer alive/shipping? (``DeploySignals``; warn-only)
   * can a bad verdict reach a human?     (``PagerSignals``; warn-only)
   * is the paper forward-test loop alive? (``PaperSignals``; warn-only)
+  * is the armed store backup landing?   (``BackupSignals``; warn-only)
 
 The verdict drives a dead-man switch: ``hlbot health`` pings ``HEALTHCHECK_URL``
 only when status is ok, so a missed ping (crashed/hung bot) pages you. Anything
@@ -27,6 +28,7 @@ import sqlite3
 import time
 from collections.abc import Mapping
 from dataclasses import dataclass, field
+from datetime import datetime
 from pathlib import Path
 
 Level = str  # "ok" | "warn" | "crit"
@@ -141,6 +143,47 @@ class PaperSignals:
     present: bool                   # a separate paper DB exists beside this one
     beat_age_s: float | None        # age of its newest paper tick_heartbeat
     empty_feeds: dict[str, float] = field(default_factory=dict)  # feed → hours empty
+
+
+@dataclass
+class BackupSignals:
+    """Is the armed off-host store backup (B-STOREBKP) actually succeeding?"""
+
+    armed: bool                       # HLBOT_STORE_BACKUP_S3 set in this env
+    last_success_age_s: float | None  # age of the last upload marker; None = never
+    target: str | None = None         # bucket[/prefix], for the detail line
+
+
+def read_backup_signals(
+    *,
+    now_ms: int | None = None,
+    env: Mapping[str, str] | None = None,
+    store_root: Path | str | None = None,
+) -> BackupSignals:
+    """Read the off-host store backup's last-success marker, if armed.
+
+    ``backup_store`` warns in the journal only, so an armed box whose uploads
+    started failing (perms drift, deleted bucket) loses its one off-host copy
+    of the irreplaceable 1m sample with zero signal (B-STOREBKP2). This reads
+    the ``.candle_backup_state.json`` marker the uploader writes beside the
+    store — same env gate, same path resolution, so reader and writer cannot
+    diverge. Unarmed (env unset) ⇒ ``armed=False`` and no check is emitted;
+    a missing/unreadable marker on an armed box reads as "never succeeded".
+    """
+    from ..backtest.store import store_dir
+    from ..backtest.store_backup import ENV_BUCKET, state_path
+
+    env = os.environ if env is None else env
+    target = (env.get(ENV_BUCKET) or "").strip().strip("/")
+    if not target:
+        return BackupSignals(armed=False, last_success_age_s=None)
+    now_ms = now_ms or int(time.time() * 1000)
+    age: float | None = None
+    with contextlib.suppress(Exception):
+        state = json.loads(state_path(store_dir(store_root)).read_text())
+        last = datetime.fromisoformat(state["last_success_utc"])
+        age = now_ms / 1000 - last.timestamp()
+    return BackupSignals(armed=True, last_success_age_s=age, target=target)
 
 
 def empty_feeds(
@@ -338,6 +381,8 @@ def assess_health(
     pager: PagerSignals | None = None,
     paper: PaperSignals | None = None,
     max_paper_age_s: int = 3600,      # 1 h ≈ 12 missed 5-min paper fires
+    backup: BackupSignals | None = None,
+    max_backup_age_s: int = 10_800,   # 3 h ≈ 3 missed ~hourly uploads
 ) -> HealthReport:
     now_ms = now_ms or int(time.time() * 1000)
     checks: list[tuple[str, Level, str]] = []
@@ -513,6 +558,29 @@ def assess_health(
                 for k, h in sorted(paper.empty_feeds.items()))
             checks.append(("paper_feeds", "warn",
                            f"{detail} — paper agents on it see no bars"))
+
+    # --- off-host store backup (is armed protection actually happening?) ---
+    # backup_store's failures warn in the journal only: with
+    # HLBOT_STORE_BACKUP_S3 armed, broken uploads silently lapse the one
+    # off-host copy of the irreplaceable 1m sample (B-STOREBKP2). Gated on
+    # the env being set so unarmed boxes stay quiet; warn-only — a missed
+    # backup costs nothing until the host dies, and must never block ticks.
+    if backup is not None and backup.armed:
+        metrics["backup_age_s"] = backup.last_success_age_s
+        where = f"s3://{backup.target}"
+        if backup.last_success_age_s is None:
+            checks.append(("backup", "warn",
+                           f"armed ({where}) but no upload has ever "
+                           "succeeded — the store has no off-host copy"))
+        elif backup.last_success_age_s > max_backup_age_s:
+            checks.append(("backup", "warn",
+                           f"last store upload "
+                           f"{backup.last_success_age_s/3600:.1f} h ago "
+                           f"({where}) — off-host copy is going stale"))
+        else:
+            checks.append(("backup", "ok",
+                           f"store → {where}, "
+                           f"{backup.last_success_age_s/60:.0f} min ago"))
 
     # --- 24h realized PnL (bot vs whole account — B-PNL-SPLIT) ---
     # The trading address is shared with the operator's manual trading, so the

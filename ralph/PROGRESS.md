@@ -5421,3 +5421,60 @@ b_g014 ~Jun 26, b_edge3 + b_edge2_1h reruns ~Jul 10, B-EDGE2f paper readout
 Idle queue: B-STOREBKP2 once the operator arms HLBOT_STORE_BACKUP_S3;
 operator nudges — fill the EMPTY HEALTHCHECK_URL/TG_BOT_TOKEN values,
 consider arming HLBOT_DAILY_LOSS_FLOOR + the S3 store backup.
+
+## Iteration 97 — 2026-06-12 — B-STOREBKP2: armed store backups are now watched, not trusted
+
+**Ripeness checks** (per-iteration readout): b_edge2b NOT RIPE (15m span
+52.7d < 60d, ~Jun 20); b_g014 NOT RIPE (1m span 4.3d < 14d, ~Jun 26). Store
+fresh (worst lag 24.2m ≤ 30m → harvest skipped; peer sync +0/+0). Operator
+env unchanged: HLBOT_STORE_BACKUP_S3 absent, HEALTHCHECK_URL/TG_BOT_TOKEN
+present but EMPTY (pager nag stands), no HLBOT_DAILY_LOSS_FLOOR.
+
+**The work.** Closed the idle-queue item B-STOREBKP2, pulled FORWARD from
+its own "do once the operator arms it" deferral — the deferral guaranteed a
+window where an armed backup could fail silently from day one (the exact
+hole the task exists to close). Shipping the watch first means arming and
+monitoring land together; the only thing that couldn't be live-fired (a
+real marker on a real armed box) is covered by a round-trip test in which
+the REAL uploader writes the marker the reader reads.
+
+**Changed:**
+- `ops/health.py`: `BackupSignals` + `read_backup_signals()` — gated on
+  `HLBOT_STORE_BACKUP_S3` via `store_backup.ENV_BUCKET` and resolved via
+  `state_path(store_dir(...))`, the same constants/paths `backup_store`
+  writes with, so reader and writer structurally cannot diverge. Unreadable/
+  corrupt/missing marker on an armed box degrades to "never succeeded",
+  never a crash. `assess_health(backup=, max_backup_age_s=10_800)`: unarmed
+  ⇒ no check (dev/loop boxes stay quiet); armed + no marker ⇒ warn "no
+  upload has ever succeeded — the store has no off-host copy"; armed +
+  last success >3 h (≈3 missed ~hourly fires; throttle is 55m) ⇒ warn
+  "going stale"; fresh ⇒ ok line naming the bucket. Warn-only by design —
+  a missed backup costs nothing until the host dies, and must never page
+  or block ticks. `metrics["backup_age_s"]` exported.
+- `cli/main.py`: `hlbot health` wires `backup=read_backup_signals()`.
+- deploy/README §backup: arming now comes with the health watch (one line).
+
+**Evidence.** 617 → **623 tests** pass (+6: unarmed-quiet / never-succeeded
+warn / stale warn / fresh ok; reader round-trip where `backup_store` with a
+stubbed HTTP PUT writes the marker and `read_backup_signals` reads ~2400s
+age off it, plus corrupt-marker degradation; CLI wiring pin with DATA_DIR
+repointed so a real marker on an armed host can't leak into the test).
+Ruff clean. Live-fired both shapes on this box: unarmed `hlbot health`
+prints NO backup line (byte-identical behavior); with the env injected,
+the warn prints `armed (s3://bkt/hl-bot) but no upload has ever succeeded`
+(no marker exists here — correct). Read-only throughout; the reader never
+uploads, and tests/conftest.py's existing guard keeps armed boxes from
+uploading during suites.
+
+**Live watch.** Health: WARN only on the standing pager nag (tick 0.3m,
+ingest 0.4m, paper tick 3.4m, none paused). pnl_24h: bot $-4.49 (account
+−$215.64, manual −$211.15). Equity $611.13 (account-level, includes the
+operator's manual book).
+
+**What's next (loop).** Per-iteration readouts unchanged (b_edge2b ~Jun 20,
+b_g014 ~Jun 26, b_edge3 + b_edge2_1h reruns ~Jul 10, B-EDGE2f paper readout
+~Jul 12). Idle queue is now EMPTY of buildable items — remaining blockers
+are all operator-side: arm HLBOT_STORE_BACKUP_S3 (the watch is ready and
+waiting), fill the EMPTY HEALTHCHECK_URL/TG_BOT_TOKEN values, consider
+HLBOT_DAILY_LOSS_FLOOR. Next idle iterations: small honesty/robustness
+audits or pre-building the ~Jun-20 b_edge2b verdict-reading checklist.

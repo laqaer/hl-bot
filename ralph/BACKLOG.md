@@ -529,13 +529,17 @@ Keep it ruthlessly prioritized: the top item should always be the highest-levera
   in /etc/hl-bot/env + give the role s3:PutObject (deploy/README §Operate,
   env.example). tests/conftest.py guards the suite from real uploads on an
   armed box.
-- [ ] **B-STOREBKP2 — health warn when an ARMED store backup is silently
-  failing.** The backup warns in the journal only; if the operator arms
-  HLBOT_STORE_BACKUP_S3 and uploads start failing (perms drift, bucket
-  deleted), protection silently lapses. Mirror B-PAPERHB: read the
-  `.candle_backup_state.json` marker's last_success age in `assess_health`,
-  warn-only, gated on the env being set so unarmed boxes stay quiet. Small;
-  do once the operator actually arms it (no marker exists until then).
+- [x] **B-STOREBKP2 — health warn when an ARMED store backup is silently
+  failing.** Done (Iter 97), pulled forward from "once the operator arms it"
+  so the silent-failure window never exists: arming and the watch now land
+  together. `ops/health.py` `BackupSignals`/`read_backup_signals` reads the
+  `.candle_backup_state.json` marker via the SAME env gate + path resolution
+  `backup_store` writes with (reader/writer cannot diverge; marker written
+  by the real uploader in the round-trip test). `assess_health(backup=)`:
+  unarmed ⇒ no check; armed + no/corrupt marker ⇒ warn "no upload has ever
+  succeeded"; armed + last success >3 h (≈3 missed hourly fires) ⇒ warn
+  "going stale"; warn-only, never pages or blocks ticks. Wired into `hlbot
+  health`; deploy/README backup section notes the watch.
 - [x] **B-M4 — Auto-tuner auto-apply is risk-tightening only.** Done (Iter 63,
   REVIEW M4): `scripts/auto_tuner.py` was the last ungated live-params writer —
   Hermes cron auto-applied LLM tweaks to `agent_overrides.json`, including

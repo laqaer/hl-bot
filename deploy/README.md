@@ -81,7 +81,10 @@ It overwrites a stable `candle_store.tar` and writes one dated
 corrupted store can't silently replace the only good copy. The instance role
 needs `s3:PutObject` on the bucket (the `deploy/aws` Terraform's Litestream
 policy already grants it when `backup_bucket` is set). Backup failures warn
-in the journal but never turn the harvest timer red. Restore:
+in the journal but never turn the harvest timer red — and once armed,
+`hlbot health` watches the upload marker (B-STOREBKP2): no success ever, or
+none in ~3 h, prints a warn-only `backup` line, so lapsed protection can't
+stay invisible. Restore:
 `aws s3 cp s3://<bucket>/<prefix>/candle_store.tar - | tar -x -C data/candle_store/`.
 
 ## Host sizing & "I can't SSH in"

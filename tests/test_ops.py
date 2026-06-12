@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import time
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
@@ -15,11 +16,13 @@ from hl_bot.ops.health import (
     PAPER_DB_BASENAME,
     PAPER_DB_ENV,
     UPDATE_HEARTBEAT,
+    BackupSignals,
     DeploySignals,
     PagerSignals,
     PaperSignals,
     assess_health,
     empty_feeds,
+    read_backup_signals,
     read_deploy_signals,
     read_pager_signals,
     read_paper_signals,
@@ -555,6 +558,108 @@ def test_health_cli_reports_paper(monkeypatch, tmp_path):
     res = CliRunner().invoke(app, ["health", "--no-heartbeat"])
     assert res.exit_code == 0, res.output
     assert "paper" in res.output and "no paper tick" in res.output
+
+
+def test_health_backup_unarmed_is_quiet(conn):
+    # No HLBOT_STORE_BACKUP_S3 ⇒ the operator never promised off-host copies:
+    # no check at all (the standing state of dev/loop boxes).
+    now = int(time.time() * 1000)
+    _fresh(conn, now)
+    rep = assess_health(conn, now_ms=now, backup=BackupSignals(
+        armed=False, last_success_age_s=None))
+    assert not any(n == "backup" for n, _, _ in rep.checks)
+
+
+def test_health_backup_never_succeeded_warns(conn):
+    # The B-STOREBKP2 failure mode: env armed, but the uploader has never
+    # landed a tarball (bad perms from day one) — protection that the
+    # operator believes exists doesn't.
+    now = int(time.time() * 1000)
+    _fresh(conn, now)
+    rep = assess_health(conn, now_ms=now, backup=BackupSignals(
+        armed=True, last_success_age_s=None, target="bkt/hl-bot"))
+    assert rep.status == "warn"
+    assert any(n == "backup" and lvl == "warn"
+               and "no upload has ever succeeded" in d and "s3://bkt/hl-bot" in d
+               for n, lvl, d in rep.checks)
+    assert rep.metrics["backup_age_s"] is None
+
+
+def test_health_backup_stale_warns(conn):
+    # Uploads were landing, then stopped (perms drift, deleted bucket):
+    # marker age past ~3 missed hourly fires must surface.
+    now = int(time.time() * 1000)
+    _fresh(conn, now)
+    rep = assess_health(conn, now_ms=now, backup=BackupSignals(
+        armed=True, last_success_age_s=4 * 3600.0, target="bkt/hl-bot"))
+    assert rep.status == "warn"
+    assert any(n == "backup" and lvl == "warn" and "going stale" in d
+               for n, lvl, d in rep.checks)
+    assert rep.metrics["backup_age_s"] == 4 * 3600.0
+
+
+def test_health_backup_fresh_ok(conn):
+    now = int(time.time() * 1000)
+    _fresh(conn, now)
+    rep = assess_health(conn, now_ms=now, backup=BackupSignals(
+        armed=True, last_success_age_s=2400.0, target="bkt/hl-bot"))
+    assert rep.status == "ok"
+    assert any(n == "backup" and lvl == "ok" and "s3://bkt/hl-bot" in d
+               for n, lvl, d in rep.checks)
+    assert rep.metrics["backup_age_s"] == 2400.0
+
+
+def test_read_backup_signals(tmp_path):
+    from hl_bot.backtest import store_backup as sb
+
+    now = datetime(2026, 6, 12, 18, 0, tzinfo=UTC)
+    now_ms = int(now.timestamp() * 1000)
+    root = tmp_path / "candle_store"
+    root.mkdir()
+    env = {"HLBOT_STORE_BACKUP_S3": "bkt/hl-bot", "AWS_ACCESS_KEY_ID": "AK",
+           "AWS_SECRET_ACCESS_KEY": "SK", "AWS_REGION": "us-east-1"}
+
+    # Unarmed (env unset) → armed=False, regardless of marker state.
+    sig = read_backup_signals(now_ms=now_ms, env={}, store_root=root)
+    assert sig == BackupSignals(armed=False, last_success_age_s=None)
+
+    # Armed but the uploader never wrote its marker → "never succeeded".
+    sig = read_backup_signals(now_ms=now_ms, env=env, store_root=root)
+    assert sig.armed and sig.last_success_age_s is None
+    assert sig.target == "bkt/hl-bot"
+
+    # Marker written by the REAL uploader (same path resolution + format —
+    # reader and writer cannot diverge): a success 40 min ago reads ~2400 s.
+    (root / "BTC_1m.json.gz").write_bytes(b"x")
+    res = sb.backup_store(root, env=env, now=now - timedelta(minutes=40),
+                          http_put=lambda *a: None)
+    assert res.keys and res.error is None
+    sig = read_backup_signals(now_ms=now_ms, env=env, store_root=root)
+    assert sig.last_success_age_s == pytest.approx(2400.0)
+
+    # Corrupt marker degrades to "never succeeded", never a crash.
+    sb.state_path(root).write_text("{not json")
+    sig = read_backup_signals(now_ms=now_ms, env=env, store_root=root)
+    assert sig.armed and sig.last_success_age_s is None
+
+
+def test_health_cli_reports_backup(monkeypatch, tmp_path):
+    # Wiring pin: `hlbot health` must feed real backup signals — an armed box
+    # whose uploader never succeeded prints the warn. DATA_DIR is repointed so
+    # a real marker on the host (e.g. an armed deploy box) can't leak in.
+    from typer.testing import CliRunner
+
+    import hl_bot.config as config
+    from hl_bot.cli.main import app
+
+    db = tmp_path / "data" / "h.sqlite"
+    init_db(db).close()
+    monkeypatch.setenv("HLBOT_DB", str(db))
+    monkeypatch.setenv("HLBOT_STORE_BACKUP_S3", "bkt/hl-bot")
+    monkeypatch.setattr(config, "DATA_DIR", tmp_path / "data")
+    res = CliRunner().invoke(app, ["health", "--no-heartbeat"])
+    assert res.exit_code == 0, res.output
+    assert "backup" in res.output and "succeeded" in res.output
 
 
 def _beat_feeds(conn, t_ms, feeds, mode="paper"):
