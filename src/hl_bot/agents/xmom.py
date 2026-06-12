@@ -19,6 +19,11 @@ Entry : rank eligible coins by trailing return over ``lookback_bars``,
         reversal at <1d horizons is exactly what twap_mr harvests). Long the
         top ``top_k``, short the bottom ``top_k``. Entries require a cross-
         section of at least 2×top_k ranked coins, else ranks are noise.
+        ``invert`` flips the signal sign — long the biggest losers, short the
+        biggest winners (cross-sectional short-term reversal; the momentum
+        promotion case died on extended history, Iter 74). Ranking, the
+        ``min_abs_return`` floor, and hysteresis all judge the signed signal,
+        so under invert they operate on |drawup/drawdown| symmetrically.
 Exit  : rank hysteresis — a long leaves only when it falls out of the top
         ``exit_rank`` ranks (a short, the bottom ones); plus a safety stop
         and max-hold. Hysteresis instead of exact-rank-rotation exits because
@@ -62,6 +67,7 @@ def trailing_return(
 class XMomConfig:
     lookback_bars: int = 168          # trailing-return window (bars; 168×1h = 7d)
     skip_bars: int = 0                # most-recent bars excluded from the signal
+    invert: bool = False              # reversal: long losers / short winners
     top_k: int = 2                    # legs per side
     exit_rank: int = 5                # hysteresis: exit when out of the top/bottom N
     min_abs_return: float = 0.0       # |trailing return| floor to enter a leg
@@ -87,6 +93,7 @@ class XMomAgent(Agent):
         self.cfg = XMomConfig(
             lookback_bars=int(c.get("lookback_bars", 168)),
             skip_bars=int(c.get("skip_bars", 0)),
+            invert=bool(c.get("invert", False)),
             top_k=int(c.get("top_k", 2)),
             exit_rank=int(c.get("exit_rank", 5)),
             min_abs_return=float(c.get("min_abs_return", 0.0)),
@@ -141,6 +148,11 @@ class XMomAgent(Agent):
         open_pos, last_flat_ms = self._position_state()
         now_ms = int(time.time() * 1000)
 
+        # rets holds the SIGNED SIGNAL: the raw trailing return for momentum,
+        # its negation under invert (reversal). Everything downstream — ranks,
+        # the min_abs_return floor, hysteresis — judges the signal; raw
+        # returns are recovered (sign * signal) only for the audit trail.
+        sign = -1.0 if cfg.invert else 1.0
         rets: dict[str, float] = {}
         for coin, closes in closes_by_coin.items():
             if vol.get(coin, 0) < cfg.min_daily_volume_usd:
@@ -149,7 +161,7 @@ class XMomAgent(Agent):
                 continue
             r = trailing_return(closes, cfg.lookback_bars, cfg.skip_bars)
             if r is not None:
-                rets[coin] = r
+                rets[coin] = sign * r
         ranked = sorted(rets.items(), key=lambda kv: kv[1], reverse=True)
         # 1-based rank from each end: rank_top[c]=1 is the strongest coin,
         # rank_bot[c]=1 the weakest. Hysteresis exits judge these.
@@ -220,14 +232,15 @@ class XMomAgent(Agent):
                 break
             sz = round(notional / mid, 5)
             direction = "long" if side == "B" else "short"
-            r = rets[coin]
+            r = sign * rets[coin]   # raw trailing return for the audit trail
+            kind = "reversal rank" if cfg.invert else "rank"
             out.append(Decision(
                 agent=self.name, action="place", coin=coin, side=side,
                 sz=sz, px=mid, cloid=make_cloid(self.name),
                 reasoning=(
                     f"XMOM ENTER {direction} {coin} @ ${mid:.4f} "
                     f"ret {r*100:+.2f}% over {cfg.lookback_bars} bars"
-                    f" (rank {rank_top[coin]}/{len(ranked)}), notional ${notional:.2f}"
+                    f" ({kind} {rank_top[coin]}/{len(ranked)}), notional ${notional:.2f}"
                 ),
                 market_snapshot={"mid": mid, "trailing_return": r,
                                  "rank": rank_top[coin], "universe": len(ranked),

@@ -133,6 +133,49 @@ def test_decide_respects_room_and_notional_caps():
 
 
 # ---------------------------------------------------------------------------
+# decide(): invert (cross-sectional reversal — long losers / short winners)
+# ---------------------------------------------------------------------------
+
+
+def test_decide_invert_longs_losers_shorts_winners():
+    mids, closes = _cross_section()
+    out = _agent({"invert": True}).decide(_view(20 * HOUR, mids, closes))
+    places = {d.coin: d.side for d in out if d.action == "place"}
+    assert places == {"L1": "B", "L2": "B", "W1": "A", "W2": "A"}
+    # audit trail carries the RAW return: the loser-long shows a negative ret
+    snap = next(d.market_snapshot for d in out
+                if d.action == "place" and d.coin == "L1")
+    assert snap["trailing_return"] < 0 and snap["rank"] == 1
+    assert "reversal rank" in next(
+        d.reasoning for d in out if d.action == "place" and d.coin == "L1")
+
+
+def test_decide_invert_min_abs_return_floors_raw_magnitude():
+    mids, closes = _cross_section()
+    out = _agent({"invert": True, "min_abs_return": 0.02}).decide(
+        _view(20 * HOUR, mids, closes))
+    places = {d.coin: d.side for d in out if d.action == "place"}
+    # near-flat M1/M2 are inside the floor either way; strong legs trade
+    assert places == {"L1": "B", "L2": "B", "W1": "A", "W2": "A"}
+    out = _agent({"invert": True, "min_abs_return": 0.5}).decide(
+        _view(20 * HOUR, mids, closes))
+    assert all(d.action == "hold" for d in out)
+
+
+def test_decide_invert_hysteresis_on_signal_rank():
+    mids, closes = _cross_section()
+    conn = init_db(":memory:")
+    _seed(conn, "M2", "B", closes["M2"][-1])   # signal rank 3 under invert
+    out = _agent({"invert": True, "exit_rank": 4}, conn).decide(
+        _view(20 * HOUR, mids, closes))
+    assert not [d for d in out if d.action == "flatten"]
+    out = _agent({"invert": True, "exit_rank": 2}, conn).decide(
+        _view(20 * HOUR, mids, closes))
+    flats = [d for d in out if d.action == "flatten"]
+    assert len(flats) == 1 and "RANK-OUT" in flats[0].reasoning
+
+
+# ---------------------------------------------------------------------------
 # decide(): exits (seeded open position in the audit log)
 # ---------------------------------------------------------------------------
 
@@ -266,6 +309,33 @@ def test_backtest_xmom_stays_flat_without_dispersion():
     assert res.scorecard.n_trades == 0
 
 
+def test_backtest_invert_flips_book_on_divergence():
+    # Same divergence tape as the momentum integration test: under invert the
+    # agent fades it — long the loser, short the winner.
+    bars = 60
+    series = {
+        "WIN": [100.0] * 15 + _trend(100.0, 0.005, bars - 15),
+        "LOSE": [100.0] * 15 + _trend(100.0, -0.005, bars - 15),
+        "F1": [100.0] * bars,
+        "F2": [100.0] * bars,
+    }
+    frames = []
+    for i in range(1, bars):
+        closes = {c: p[max(0, i + 1 - 12):i + 1] for c, p in series.items()}
+        frames.append(Frame(
+            ts_ms=i * HOUR, mids={c: p[i] for c, p in series.items()},
+            day_ntl_vlm={c: VOL5 for c in series}, closes=closes,
+        ))
+    conn = init_db(":memory:")
+    bt = Backtester(CostModel(maker=True), conn=conn)
+    agent = XMomAgent(config={"invert": True, "lookback_bars": 10, "top_k": 1,
+                              "exit_rank": 2, "min_abs_return": 0.01}, conn=conn)
+    bt.run(agent, frames)
+    sides = {(r["coin"], r["side"]) for r in conn.execute(
+        "SELECT coin, side FROM agent_decisions WHERE action='place'")}
+    assert ("LOSE", "B") in sides and ("WIN", "A") in sides
+
+
 def test_backtest_factory_registered():
     from hl_bot.cli.main import _backtest_factories
 
@@ -273,3 +343,6 @@ def test_backtest_factory_registered():
     agent = factories["xmom_v1"](init_db(":memory:"))
     assert isinstance(agent, XMomAgent)
     assert agent.cfg.lookback_bars == 7 and agent.cfg.skip_bars == 3
+    assert agent.cfg.invert is False   # reversal lever ships default-OFF
+    inv = _backtest_factories({"invert": True})["xmom_v1"](init_db(":memory:"))
+    assert inv.cfg.invert is True
