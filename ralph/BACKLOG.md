@@ -881,6 +881,28 @@ each on ≥90d real history (`hlbot confirm` / `hlbot backtest --config`) before
     min_span_days bumped 150→200 post-run per the frozen protocol — next
     rerun ~Jul 10 with ~28d of post-selection accrual.
 
+- [x] **B-REV — momentum-reversal (fade) screen. PRUNED without a backtest
+  (Iter 83)** — pure arithmetic on the existing b_edge3 + b_edge2_1h records.
+  A sign-flipped momentum book pays the same round-trip cost C the momentum
+  book paid, so `reversal_net = −mom_net − 2C` (engine C: taker 13bps RT,
+  optimistic-maker 2bps RT). Condition to clear zero at taker:
+  `mom_net < −26bps` somewhere. Across EVERY recorded segment (3 xmom arms +
+  3 Donchian arms × IS/OOS/full on 208d×1h, plus the Iter-72 90d lookback
+  sweep at 72/168/336 bars), exactly one cell clears: xmom-breadth IS −27.4
+  → fade +1.4bps — below the +3bps G0 bar, IS-segment-only on the most
+  expensive-to-trade universe, with the same-calendar OOS at −30.4. The
+  optimistic-maker screen has one positive (xmom-breadth full −9.2 → +5.2)
+  sitting on the fill model Iter 50 proved flips sign under honest resting
+  fills — and fade entries (quote against the prevailing move) are exactly
+  the adverse-selection shape the resting model punishes. Verdict: this tape's
+  momentum is too weak to ride at taker and not negative enough to fade —
+  the gross alpha lives inside the ±26bps cost band almost everywhere.
+  Numbers in PROGRESS Iter 83. **Standing cheap re-check (no new task):**
+  each pre-registered b_edge3 / b_edge2_1h rerun (~Jul 10) prints fresh
+  IS/OOS/full nets — re-read this screen off the new record; only if an arm
+  prints net < −26bps taker on IS *and* full-sample coherently does fading
+  earn an actual backtest.
+
 ## P3 — capital formation (see docs/CAPITAL.md)
 
 - [x] **B15 — Public-grade track-record export.** Done: `reports/track_record.py`

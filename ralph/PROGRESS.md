@@ -4654,3 +4654,66 @@ queue: xmom-reversal cost math (frame from existing b_edge3 records —
 reversal net ≈ −(xmom gross) − costs, so it needs xmom_net < −2×RT-cost
 at some horizon to clear zero; check the Iter-72 lookback sweep before
 spending a backtest); B-SCALE doc once real G2 evidence exists.
+
+## Iteration 83 — 2026-06-12 — B-REV: the momentum-fade idea dies to arithmetic, no backtest spent
+
+**Ripeness checks** (per-iteration readout): b_edge2b NOT RIPE (15m span
+52.5d < 60d, ~Jun 20); b_g014 NOT RIPE (1m span 4.1d < 14d, ~Jun 26).
+Store fresh (step-0 harvest: worst lag 11.4m, skipped).
+
+**Why this.** All headline work is time-gated; the idle queue's top item
+was the xmom-reversal cost framing (queued Iter 81): before spending a
+backtest on "fade the momentum that keeps failing," check whether the
+existing records already answer it. They do.
+
+**The screen.** A sign-flipped momentum book (short trailing winners /
+long losers, or fade-the-breakout) earns ≈ −(momentum gross) and pays the
+same round-trip cost C the momentum book paid. With `mom_net = gross − C`:
+`fade_net = −gross − C = −mom_net − 2C`. Engine costs (engine.py): taker
+4.5bps fee + 2bps slip per side → C=13bps, 2C=26; optimistic-maker → 2C=4.
+So a fade clears zero at taker only where `mom_net < −26bps`. Caveat noted:
+stop/max-hold/rank-hysteresis exits are path-dependent on the held side, so
+antisymmetry is first-order — fine for deciding whether to SPEND a
+backtest, not for claiming an edge.
+
+**Evidence (every recorded segment, taker, fade_net = −mom_net − 26).**
+b_edge3 record (xmom lb336, 208d×1h, `results/b_edge3.20260612T124331Z.json`):
+- combined: IS −11.8→−14.2 | OOS +51.4→−77.4 | full +4.2→−30.2
+- original: IS −13.1→−12.9 | OOS +45.3→−71.3 | full +5.1→−31.1
+- breadth: IS −27.4→**+1.4** | OOS +4.4→−30.4 | full −15.2→−10.8
+
+b_edge2_1h record (Donchian, 208d×1h, `results/b_edge2_1h.20260612T125649Z.json`):
+- original: IS −10.5→−15.5 | OOS +17.1→−43.1 | full −2.6→−23.4
+- breadth: IS −17.6→−8.4 | OOS +12.6→−38.6 | full −6.9→−19.1
+- combined-ER: IS −13.9→−12.1 | OOS +16.3→−42.3 | full −4.0→−22.0
+
+Iter-72 sweep (xmom 90d×1h×20, full-sample): lb336 +67.0→−93.0; lb168
++4.0→−30.0; lb72 +3.7→−29.7 (lb72 split IS +29.8→−55.8 / OOS −41.9→+15.9
+— the mirror image of a walk-forward FAIL, the Iter-72 "regime noise"
+flip); skip24@lb168 −14.3→−11.7.
+
+One taker cell clears zero in the entire history: fading xmom on the
+breadth mid-caps, in-sample only, **+1.4bps** — under the +3bps G0 bar,
+on the universe where flat 2bps slippage most understates reality
+(B-EDGE2d), with the same-calendar OOS at −30.4. The optimistic-maker
+screen (2C=4) has one positive — xmom-breadth full −9.2→+5.2 — but it
+sits on the fill model Iter 50 proved is an upper bound that flipped sign
+under honest resting fills, and fade entries (resting quotes leaning
+against the prevailing move) are precisely the adverse-selection shape
+the resting model punishes. **Verdict: PRUNE.** This tape's momentum is
+too weak to ride at taker and not negative enough to fade — gross alpha
+lives inside the ±26bps cost band almost everywhere. Backlog entry B-REV
+records a standing free re-check: each b_edge3/b_edge2_1h rerun (~Jul 10)
+prints fresh nets; fading earns a backtest only if some arm prints
+< −26bps taker on IS and full coherently.
+
+**Live watch (Iter-82 items).** (1) Deploy: `.deployed_sha` = 1e135aa
+(B-DEPLOY-HB) — shipped at the 16:20:47 updater fire, exit 0. 269a7b4
+(B-PAGER) was pushed ~simultaneously with that fire's fetch, so it ships
+at the 16:35:35 fire. (2) `.update_heartbeat` not yet born — CORRECT, not
+late: the 16:20 run executed the pre-1e135aa update.sh (bash runs the
+on-disk copy from before its own `git pull`), so the first `beat()` runs
+at the 16:35:35 fire. Same one-deploy-lag mechanism as loop.sh step-0
+(Iter 78). (3) TON −112.5 still open, max-hold force-close due ~19:12 —
+next iteration. Account equity ~$628, manual book unchanged,
+`daily_loss_floor` operator question stands.
