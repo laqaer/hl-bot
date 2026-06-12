@@ -282,7 +282,18 @@ def run(
 
     exchange = info = None
     if live:
-        from ..exec.orders import build_exchange, telegram_alert
+        from ..exec.orders import HL_TRADER_ADDRESS, build_exchange, telegram_alert
+        if not HL_TRADER_ADDRESS:
+            console.print("[red]FATAL: HL_TRADER_ADDRESS / HL_ADDRESS not set[/red]")
+            raise typer.Exit(2)
+        if not s.hl_address or s.hl_address.lower() != HL_TRADER_ADDRESS.lower():
+            # Fill ingest is keyed to HL_ADDRESS; trading to HL_TRADER_ADDRESS.
+            # A split brain makes fill detection, the daily-loss guardrail and
+            # the equity floor watch the WRONG account. Refuse to start.
+            console.print(
+                f"[red]FATAL: HL_ADDRESS ({s.hl_address or 'unset'}) must equal "
+                f"HL_TRADER_ADDRESS ({HL_TRADER_ADDRESS}) in live mode[/red]")
+            raise typer.Exit(2)
         try:
             exchange, info, _ = build_exchange(env_path=s.api_wallet_env)
         except Exception as e:  # noqa: BLE001
@@ -300,6 +311,7 @@ def run(
 
     last_ingest = 0.0
     last_supervise = 0.0
+    ingest_failures = 0
     last_enrich = 0.0
     cached_extra: dict = {}
     cycles = 0
@@ -326,11 +338,21 @@ def run(
             if t0 - last_ingest >= ingest_every_s:
                 last_ingest = t0
                 if s.hl_address:
-                    with contextlib.suppress(Exception):
+                    try:
                         _ingest_fills(conn, s.hl_address, s.hl_api_url)
                         _ingest_funding(conn, s.hl_address, s.hl_api_url, 7)
                         _snapshot_equity(conn, s.hl_address, s.hl_api_url)
                         refresh_attribution(conn)
+                        ingest_failures = 0
+                    except Exception as ie:  # noqa: BLE001
+                        ingest_failures += 1
+                        logging.getLogger("hlbot.run").warning(
+                            "ingest failed (%d consecutive): %s", ingest_failures, ie)
+                        if live and ingest_failures >= 10 and not kill_active(data_dir):
+                            # ~50 min blind: guardrails/equity floor/maker fill
+                            # detection are all starved — stop the book.
+                            trip_kill(data_dir, f"INGEST BLIND x{ingest_failures}: {ie}")
+                            console.print("[red]KILL tripped: ingest blind[/red]")
                 breached, why = equity_floor_breached(conn)
                 if breached and not kill_active(data_dir):
                     trip_kill(data_dir, f"EQUITY FLOOR: {why}")
@@ -343,6 +365,7 @@ def run(
                     console.print(f"[bold]supervisor[/bold]: {json.dumps(actions)}")
 
             heartbeat_path.touch()
+            _ping_healthcheck()
         except KeyboardInterrupt:
             console.print("[yellow]run loop interrupted[/yellow]")
             return
@@ -355,6 +378,22 @@ def run(
         if max_cycles and cycles >= max_cycles:
             return
         time.sleep(max(0.0, interval - (time.time() - t0)))
+
+
+def _ping_healthcheck() -> None:
+    """Dead-man switch: GET HEALTHCHECK_URL after each successful cycle so a
+    hung/crashed engine pages by SILENCE. Best-effort, never raises."""
+    import os
+
+    url = os.environ.get("HEALTHCHECK_URL")
+    if not url:
+        return
+    try:
+        import httpx
+
+        httpx.get(url, timeout=5)
+    except Exception:  # noqa: BLE001
+        pass
 
 
 @app.command()
@@ -463,6 +502,11 @@ def femr_tick(live: bool = False, execution: str = "auto"):
         console.print("[dim]liq_cascade_v1: no HLBOT_WS_SNAPSHOT — no liquidation "
                       "signal, entries impossible (exits still managed)[/dim]")
     if live:
+        heartbeat = Path(str(s.db_path.parent / "run_heartbeat"))
+        if heartbeat.exists() and (time.time() - heartbeat.stat().st_mtime) < 60:
+            console.print("[red]REFUSED: hlbot run is active (run_heartbeat fresh) — "
+                          "two live executors would duplicate orders[/red]")
+            raise typer.Exit(2)
         full_roster = agents
         agents, skipped_live = _filter_live_agents_by_state(conn, agents)
         disabled = {
@@ -508,6 +552,19 @@ def femr_tick(live: bool = False, execution: str = "auto"):
         for a in agents if hasattr(a, "cfg")
     }
     resolved = resolve_agent_caps(allocs, risk_cap, configured_caps_in)
+    if live:
+        # Same clamp the engine applies: live_small runs deliberately tiny
+        # regardless of allocator grant (this path skipped it — a live_small
+        # agent could size at the full 1x-portfolio cap).
+        from ..engine.runner import load_agent_goals
+        from ..risk.allocation import apply_mode_sizing
+        modes = {r["agent"]: r["mode"] for r in
+                 conn.execute("SELECT agent, mode FROM agent_state").fetchall()}
+        goals_by_agent = load_agent_goals(CONFIG_DIR)
+        for name, cap in list(resolved.items()):
+            g = goals_by_agent.get(name)
+            resolved[name] = apply_mode_sizing(
+                cap, modes.get(name, "paper"), g.sizing if g else None)
     effective_caps: dict[str, float] = {}
     effective_order_caps: dict[str, float] = {}
     for a in agents:

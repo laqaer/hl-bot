@@ -10,7 +10,8 @@ WorkingDirectory=/opt/hl-bot
 EnvironmentFile=/etc/hl-bot/env
 # Sleeve overrides LAST so they win: HL_TRADER_ADDRESS=<subaccount>,
 # HL_BOT_API_WALLET_ENV=<sleeve wallet env>, HLBOT_MOONSHOT_ARGS.
-EnvironmentFile=-/etc/hl-bot/moonshot.env
+# REQUIRED (no '-'): a missing sleeve env would silently run against the MAIN account
+EnvironmentFile=/etc/hl-bot/moonshot.env
 Environment=HLBOT_PROFILE=moonshot
 Environment=HLBOT_DB=/opt/hl-bot/data/moonshot/hlbot.sqlite
 ExecStart=/usr/bin/env bash -lc 'uv run hlbot run --profile moonshot $${HLBOT_MOONSHOT_ARGS:-}'

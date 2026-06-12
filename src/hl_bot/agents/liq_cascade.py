@@ -12,6 +12,12 @@ Exit   : 30min max hold, +0.5% TP, -1.5% SL
 Auxiliary data: view.extra['liquidations'] = list of {coin, side, notional_usd, ts_ms}
 "side" follows HL convention: side of the LIQUIDATED order. 'A'=sells (longs liq'd),
 'B'=buys (shorts liq'd). We trade SAME side as that resolved liquidation pressure.
+
+FEED WARNING (2026-06 audit): the WS 'liquidation' flag this agent depends on
+is UNVERIFIED against HL's public trades schema, and the REST fallback endpoint
+likely does not exist — the agent may never see an event until V1 (backlog)
+verifies/rewires the feed on a live host. Treat all liq_cascade evidence as
+absent until data/liq_log.jsonl demonstrably accrues.
 """
 
 from __future__ import annotations
@@ -33,6 +39,7 @@ log = logging.getLogger(__name__)
 @dataclass
 class LiqCascadeConfig:
     min_liq_notional_usd: float = 100_000.0
+    min_dominance: float = 0.7      # dominant side must be >= 70% of gross liq flow
     min_daily_volume_usd: float = 10_000_000.0
     window_s: int = 300
     take_profit_pct: float = 0.005
@@ -54,6 +61,7 @@ class LiqCascadeAgent(Agent):
         c = config or {}
         self.cfg = LiqCascadeConfig(
             min_liq_notional_usd=float(c.get("min_liq_notional_usd", 100_000.0)),
+            min_dominance=float(c.get("min_dominance", 0.7)),
             min_daily_volume_usd=float(c.get("min_daily_volume_usd", 10_000_000.0)),
             window_s=int(c.get("window_s", 300)),
             take_profit_pct=float(c.get("take_profit_pct", 0.005)),
@@ -72,8 +80,9 @@ class LiqCascadeAgent(Agent):
             """SELECT ts_ms, coin, action, side, sz, px, cloid
                FROM agent_decisions
                WHERE agent=? AND coin IS NOT NULL AND action IN ('place','flatten')
+                 AND is_paper = ?
                ORDER BY ts_ms ASC""",
-            (self.name,),
+            (self.name, 0 if self.is_live else 1),
         ).fetchall()
         open_by_coin: dict[str, dict] = {}
         for r in rows:
@@ -141,9 +150,14 @@ class LiqCascadeAgent(Agent):
                 continue
             if vol.get(coin, 0) < self.cfg.min_daily_volume_usd:
                 continue
-            # Net dominant side
-            net = sides["A"] + sides["B"]
+            # Signal = directional IMBALANCE with dominance, not gross flow:
+            # a balanced two-sided washout summed to "cascade" before and
+            # could trigger a full-size trade off a tiny majority.
+            total = sides["A"] + sides["B"]
+            net = abs(sides["A"] - sides["B"])
             if net < self.cfg.min_liq_notional_usd:
+                continue
+            if total > 0 and max(sides["A"], sides["B"]) / total < self.cfg.min_dominance:
                 continue
             # Trade in direction of cascade pressure:
             # liquidated longs (side 'A' = forced sell) -> price down -> SHORT (side 'A')

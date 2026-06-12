@@ -223,8 +223,21 @@ def run_ws(
     liq_log = Path(snapshot_path).parent / "liq_log.jsonl"
     seen_liqs: set[tuple] = set()
     start = time.time()
+    last_update_seen = 0
+    last_advance = time.time()
     while duration_s is None or time.time() - start < duration_s:
         time.sleep(write_interval_s)
         if state.updated_ms:
             write_snapshot(state, snapshot_path)
             append_liq_events(state.recent_liquidations(), liq_log, seen_liqs)
+        # Stall watchdog: if the WS thread dies the loop keeps rewriting a
+        # stale snapshot (fresh mtime, frozen updated_ms). Exit non-zero so
+        # systemd Restart=always reconnects us.
+        if state.updated_ms > last_update_seen:
+            last_update_seen = state.updated_ms
+            last_advance = time.time()
+        elif time.time() - last_advance > 90 and last_update_seen:
+            import sys
+            print("WS feed stalled (updated_ms frozen >90s) — exiting for restart",
+                  flush=True)
+            sys.exit(1)

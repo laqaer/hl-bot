@@ -40,6 +40,13 @@ log "4/8 fetch repo into ${HLBOT_HOME} (branch ${BRANCH})"
 if [ -d "${HLBOT_HOME}/.git" ]; then
   git -C "$HLBOT_HOME" fetch --depth 1 origin "$BRANCH"
   git -C "$HLBOT_HOME" checkout -q "$BRANCH"
+  # The repo is owned by the hlbot service user but the installer's git runs
+  # as root: declare the exception or git refuses ("dubious ownership").
+  git config --global --add safe.directory "$HLBOT_HOME" 2>/dev/null || true
+  if [ -n "$(git -C "$HLBOT_HOME" log --oneline "origin/${BRANCH}..HEAD" 2>/dev/null)" ] && [ "${FORCE_RESET:-0}" != "1" ]; then
+    log "REFUSED: unpushed local commits on $(git -C "$HLBOT_HOME" rev-parse --abbrev-ref HEAD) — push them or rerun with FORCE_RESET=1"
+    exit 1
+  fi
   git -C "$HLBOT_HOME" reset --hard "origin/${BRANCH}"
 else
   [ -n "$REPO_URL" ] || die "REPO_URL required for first install"
@@ -70,7 +77,10 @@ systemctl daemon-reload
 # hlbot-run (continuous engine) supersedes the 5-min hlbot-tick timer; the
 # timer unit stays installed as a documented fallback but is disabled.
 systemctl disable --now hlbot-tick.timer 2>/dev/null || true
-systemctl enable --now hlbot-run.service hlbot-report.timer hlbot-ws.service hlbot-sweep.timer
+systemctl enable --now hlbot-run.service hlbot-report.timer hlbot-ws.service hlbot-sweep.timer hlbot-health.timer
+# Code is loaded at process start (configs hot-reload, code does not): a
+# pulled update without restart runs OLD code with NEW configs.
+systemctl try-restart hlbot-run.service hlbot-ws.service 2>/dev/null || true
 log "  -> run engine + report timer + ws feed + nightly sweep enabled (PAPER)."
 log "  -> hlbot-loop + hlbot-moonshot NOT enabled (start manually, see docs)."
 

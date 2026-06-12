@@ -23,6 +23,7 @@ LADDER_YAML = {
         {
             "from": "paper", "to": "live_small",
             "min_days_in_mode": 10, "require_g0": True,
+            "persist_days": 0, "persist_evals": 1,
             "conditions": [
                 {"metric": "edge_bps", "window": "30d", "op": ">=", "threshold": 3,
                  "source": "paper"},
@@ -33,6 +34,7 @@ LADDER_YAML = {
         {
             "from": "live_small", "to": "live",
             "min_days_in_mode": 21,
+            "persist_days": 0, "persist_evals": 1,
             "conditions": [
                 {"metric": "edge_bps", "window": "30d", "op": ">=", "threshold": 3},
                 {"metric": "n_trades", "window": "30d", "op": ">=", "threshold": 2},
@@ -182,3 +184,49 @@ def test_g0_confirmed_helper(conn):
     g0_stamp(conn)
     assert g0_confirmed(conn, "carry") is True
     assert g0_confirmed(conn, "other") is False
+
+
+def test_persistence_blocks_single_look_promotion(conn):
+    # One lucky look on a rolling window must not promote: the stage requires
+    # an unbroken pass streak spanning persist_days with persist_evals looks.
+    y = dict(LADDER_YAML)
+    y["promotion_ladder"] = [dict(y["promotion_ladder"][0],
+                                  persist_days=2.0, persist_evals=3)]
+    g = AgentGoals.model_validate(y)
+    seed_paper_evidence(conn)
+    g0_stamp(conn)
+    assert promote_actions(conn, g, current_mode="paper") == []
+    # Streak seeded over >2 days with passing looks -> promotes.
+    ready = "promotion_ready:paper->live_small"
+    for ts in (NOW - int(2.5 * DAY), NOW - 2 * DAY, NOW - DAY):
+        conn.execute(
+            """INSERT INTO goal_evaluations(ts_ms, agent, goal_name, status)
+               VALUES(?, 'carry', ?, 'pass')""", (ts, ready))
+    acts = promote_actions(conn, g, current_mode="paper")
+    assert len(acts) == 1 and acts[0].to_mode == "live_small"
+    # A single failing look inside the window breaks the streak.
+    conn.execute(
+        """INSERT INTO goal_evaluations(ts_ms, agent, goal_name, status)
+           VALUES(?, 'carry', ?, 'fail')""", (NOW - DAY // 2, ready))
+    assert promote_actions(conn, g, current_mode="paper") == []
+
+
+def test_paused_agent_never_repromoted_and_unpause_is_human_only(conn, tmp_path):
+    from hl_bot.supervisor.loop import _pause, run_once, unpause
+    seed_paper_evidence(conn)
+    g0_stamp(conn)
+    g = goals()
+    _pause(conn, "carry", "guardrail breach")
+    # Evidence still passes, but pause is sticky AND the min_days clock reset.
+    acts = run_once(conn, [g], data_dir=tmp_path)
+    assert not any("PROMOTE:" in a for a in acts.get("carry", []))
+    row = conn.execute(
+        "SELECT enabled, mode FROM agent_state WHERE agent='carry'").fetchone()
+    assert row["enabled"] == 0 and row["mode"] == "paper"
+    assert unpause(conn, "carry") is True
+    row = conn.execute(
+        "SELECT enabled, last_promoted_ms FROM agent_state WHERE agent='carry'").fetchone()
+    assert row["enabled"] == 1
+    # Fresh clock: still cannot promote until min_days_in_mode re-elapses.
+    acts = run_once(conn, [g], data_dir=tmp_path)
+    assert not any("PROMOTE:" in a for a in acts.get("carry", []))

@@ -32,16 +32,20 @@ def _pause(conn: sqlite3.Connection, agent: str, reason: str) -> None:
     ts = int(time.time() * 1000)
     conn.execute(
         """
-        INSERT INTO agent_state(agent, mode, enabled, paused_reason, paused_at_ms)
-        VALUES(?, 'paper', 0, ?, ?)
+        INSERT INTO agent_state(agent, mode, enabled, paused_reason, paused_at_ms,
+                                last_promoted_ms)
+        VALUES(?, 'paper', 0, ?, ?, ?)
         ON CONFLICT(agent) DO UPDATE SET
             mode = excluded.mode,
             enabled = 0,
             paused_reason = excluded.paused_reason,
-            paused_at_ms = excluded.paused_at_ms
+            paused_at_ms = excluded.paused_at_ms,
+            last_promoted_ms = excluded.last_promoted_ms
         """,
-        (agent, reason, ts),
+        (agent, reason, ts, ts),
     )
+    # Resetting last_promoted_ms restarts the min_days clock: without it a
+    # paused agent's mode flipped back within minutes on stale evidence.
 
 
 def _demote(conn: sqlite3.Connection, agent: str) -> None:
@@ -90,8 +94,17 @@ def run_once(
                 if kill_reason:
                     acts.append(f"PROMOTE-SUPPRESSED (kill active: {kill_reason}): {e.detail}")
                     continue
+                if st is not None and not int(st["enabled"]):
+                    # Pause is sticky: only a human (unpause) re-enables.
+                    acts.append(f"PROMOTE-SUPPRESSED (paused): {e.detail}")
+                    continue
                 _set_mode(conn, g.agent, e.to_mode,
                           reason=f"promoted via {e.detail}")
+                if e.to_mode in ("live_small", "live"):
+                    # Paper-position hygiene: stale resting paper quotes must
+                    # not fill post-promotion and mint phantom positions.
+                    conn.execute("DELETE FROM paper_orders WHERE agent = ?",
+                                 (g.agent,))
                 acts.append(f"PROMOTE: {e.detail}")
         if acts:
             actions_taken[g.agent] = acts
@@ -106,6 +119,19 @@ def _alert(message: str) -> None:
         telegram_alert(message)
     except Exception:  # noqa: BLE001
         log.debug("supervisor alert not sent")
+
+
+def unpause(conn: sqlite3.Connection, agent: str) -> bool:
+    """Human-only re-enable for a paused agent (the supervisor never does
+    this). Leaves the agent in paper with a fresh min_days clock — it must
+    re-earn its ladder."""
+    ts = int(time.time() * 1000)
+    cur = conn.execute(
+        """UPDATE agent_state SET enabled = 1, paused_reason = NULL,
+           last_promoted_ms = ? WHERE agent = ? AND enabled = 0""",
+        (ts, agent),
+    )
+    return cur.rowcount > 0
 
 
 def supervise(

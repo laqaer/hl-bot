@@ -68,6 +68,7 @@ class SweepRow:
     universe: list[str]
     params: dict[str, Any]
     confirmed: bool
+    is_edge_bps: float | None
     oos_edge_bps: float | None
     oos_sharpe: float | None
     oos_net_pnl: float
@@ -79,6 +80,7 @@ class SweepRow:
                     res: ConfirmationResult) -> SweepRow:
         return cls(
             universe=universe, params=params, confirmed=res.confirmed,
+            is_edge_bps=res.in_sample.edge_bps,
             oos_edge_bps=res.out_of_sample.edge_bps,
             oos_sharpe=res.out_of_sample.sharpe,
             oos_net_pnl=res.out_of_sample.net_pnl,
@@ -106,8 +108,11 @@ def run_sweep(
                 periods_per_year=per_year,
             )
             rows.append(SweepRow.from_result(universe, params, res))
-    rows.sort(key=lambda r: (r.oos_edge_bps is None,
-                             -(r.oos_edge_bps or float("-inf"))))
+    # Rank by IN-SAMPLE edge: ranking on OOS consumes the held-out window as
+    # a selection set (max-order-statistic inflation) and the subsequent
+    # `confirm --record` would just re-stamp the selection.
+    rows.sort(key=lambda r: (r.is_edge_bps is None,
+                             -(r.is_edge_bps or float("-inf"))))
     return rows
 
 
@@ -119,7 +124,8 @@ def render_markdown(spec: SweepSpec, rows: list[SweepRow], *, date: str | None =
         "",
         f"- dataset: {spec.days}d of {spec.interval} candles, prefer={spec.prefer}",
         f"- gate: OOS edge ≥ {spec.min_edge_bps} bps, sharpe ≥ {spec.min_sharpe}, 2x-slippage robust",
-        f"- combos: {len(rows)} (ranked by out-of-sample edge)",
+        f"- combos: {len(rows)} (ranked by IN-SAMPLE edge; OOS columns are a "
+        f"one-shot readout, never the selection key)",
         "",
         "| # | verdict | OOS edge (bps) | OOS sharpe | OOS net | trades | universe | params |",
         "|---:|---|---:|---:|---:|---:|---|---|",

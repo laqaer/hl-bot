@@ -94,7 +94,7 @@ def test_resolve_trader_address(monkeypatch):
     from hl_bot.exec.orders import _resolve_trader_address
     monkeypatch.delenv("HL_TRADER_ADDRESS", raising=False)
     monkeypatch.delenv("HL_ADDRESS", raising=False)
-    assert _resolve_trader_address().startswith("0x5C3a")   # legacy default
+    assert _resolve_trader_address() == ""   # no legacy default: fail loudly
     monkeypatch.setenv("HL_ADDRESS", "0x" + "a" * 40)
     assert _resolve_trader_address() == "0x" + "a" * 40      # falls back to HL_ADDRESS
     monkeypatch.setenv("HL_TRADER_ADDRESS", "0x" + "b" * 40)

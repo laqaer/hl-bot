@@ -85,6 +85,12 @@ class Promotion(BaseModel):
     # history) before paper performance is allowed to promote into live.
     require_g0: bool = False
     g0_max_age_days: float = 30.0
+    # PERSISTENCE: the stage's conditions must have passed on EVERY supervisor
+    # evaluation over this many trailing days (with at least persist_evals
+    # looks) before promotion fires. Rolling windows re-checked every ~15min
+    # are a first-passage problem — one lucky look must not promote.
+    persist_days: float = 3.0
+    persist_evals: int = 12
 
     model_config = {"populate_by_name": True}
 
@@ -276,6 +282,22 @@ def evaluate(
                 f"no fresh G0 confirmation (≤{stage.g0_max_age_days:g}d)")
         results = [c.evaluate(cards[(c.window, c.source)]) for c in stage.conditions]
         conditions_pass = bool(results) and all(ok is True for ok, _ in results)
+        # Persistence: record this look's readiness, then require an unbroken
+        # pass streak spanning persist_days with persist_evals looks.
+        ready_name = f"promotion_ready:{stage.from_mode}->{stage.to_mode}"
+        out.append(Evaluation(
+            agent=g.agent, goal_name=ready_name,
+            metric_value=None, threshold=None,
+            status="pass" if conditions_pass else "fail",
+            detail="conditions snapshot for the persistence gate",
+        ))
+        if conditions_pass:
+            n_passes, streak_days = _ready_streak(conn, g.agent, ready_name, now_ms)
+            n_passes += 1  # include this (not-yet-persisted) look
+            if n_passes < stage.persist_evals or streak_days < stage.persist_days:
+                blockers.append(
+                    f"persistence {n_passes}/{stage.persist_evals} looks over "
+                    f"{streak_days:.1f}/{stage.persist_days:g}d")
         if conditions_pass and not blockers:
             out.append(Evaluation(
                 agent=g.agent, goal_name="promotion",
@@ -294,6 +316,26 @@ def evaluate(
             ))
 
     return out
+
+
+def _ready_streak(
+    conn: sqlite3.Connection, agent: str, ready_name: str, now_ms: int,
+) -> tuple[int, float]:
+    """(consecutive passing looks, days the streak spans) for a promotion
+    stage's readiness snapshots — any 'fail' look breaks the streak."""
+    rows = conn.execute(
+        """SELECT ts_ms, status FROM goal_evaluations
+           WHERE agent = ? AND goal_name = ?
+           ORDER BY ts_ms DESC LIMIT 500""",
+        (agent, ready_name),
+    ).fetchall()
+    n, oldest = 0, now_ms
+    for r in rows:
+        if r["status"] != "pass":
+            break
+        n += 1
+        oldest = int(r["ts_ms"])
+    return n, (now_ms - oldest) / 86_400_000 if n else 0.0
 
 
 def persist(conn: sqlite3.Connection, evals: list[Evaluation]) -> None:

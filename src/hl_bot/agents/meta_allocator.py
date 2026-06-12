@@ -32,8 +32,13 @@ class MetaAllocatorConfig:
     min_alloc: float = 50.0          # new/cold agents
     neg_floor: float = 25.0          # negative-Sharpe agents
     max_alloc: float = 150.0         # ceiling per agent
-    min_trades: int = 20             # below this -> cold-start min_alloc
-    window_days: int = 7
+    # 2026-06-12 audit: 7d annualized Sharpe from daily buckets is a noise
+    # statistic that starves slow carry agents (1-2 fills/day = permanently
+    # "cold") while Sharpe-weighting churny ones. 30d window + close-event
+    # counting; single-agent share capped at 50%.
+    min_trades: int = 10             # CLOSE events below this -> cold-start min_alloc
+    window_days: int = 30
+    max_share: float = 0.5
 
 
 @dataclass
@@ -76,8 +81,9 @@ class MetaAllocator:
         var = sum((x - mean) ** 2 for x in daily) / n
         std = math.sqrt(var) if var > 0 else 0.0
         sharpe = (mean / std * math.sqrt(365)) if std > 0 else None
+        n_closes = sum(1 for r in rows if float(r["pnl"]) != 0.0)
         return AgentStats(
-            agent=agent, n_trades=len(rows), pnl_7d=total,
+            agent=agent, n_trades=n_closes, pnl_7d=total,
             sharpe=sharpe, daily_pnls=daily,
         )
 
@@ -105,6 +111,7 @@ class MetaAllocator:
             sum_sh = sum(stats[a].sharpe or 0 for a in positive)
             for a in positive:
                 share = (stats[a].sharpe or 0) / sum_sh if sum_sh > 0 else 1.0 / len(positive)
+                share = min(share, self.cfg.max_share)  # one agent never takes the book
                 allocs[a] = min(self.cfg.max_alloc, max(self.cfg.min_alloc, remaining * share))
         else:
             # No positive performers — split remaining equally over warm-negatives

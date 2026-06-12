@@ -154,7 +154,15 @@ def simulate_cycle(
             if not pos:
                 continue
             exit_side = "A" if pos["net_sz"] > 0 else "B"
-            slip = cost.slippage_bps / 10_000.0
+            # Exit slippage floored at the OBSERVED half-spread (x1.5 stress —
+            # flattens fire during normalization/volatility): a flat 2bps was
+            # optimistic on everything but the majors.
+            slip_bps = cost.slippage_bps
+            book = view.book_top.get(d.coin) if view.book_top else None
+            if book and book[0] > 0 and book[1] > book[0]:
+                half_spread_bps = (book[1] - book[0]) / 2 / mid * 10_000
+                slip_bps = max(slip_bps, half_spread_bps * 1.5)
+            slip = slip_bps / 10_000.0
             px = mid * (1 - slip) if exit_side == "A" else mid * (1 + slip)
             _execute(conn, d, px=px, sz=abs(pos["net_sz"]), side=exit_side,
                      fee_rate=cost.taker_fee_bps / 10_000.0, ts=ts, res=res,

@@ -92,6 +92,8 @@ def confirm_strategy(
     oos_fraction: float = 0.3,
     min_edge_bps: float = 3.0,
     min_sharpe: float = 1.0,
+    min_trades_is: int = 30,
+    min_trades_oos: int = 10,
     periods_per_year: float = 8_760,
     starting_capital: float = 1_000.0,
 ) -> ConfirmationResult:
@@ -131,10 +133,12 @@ def confirm_strategy(
     taker_2x = next(s for s in ladder if s.name == "taker-2x")
     robust_2x = (taker_2x.edge_bps is not None and taker_2x.edge_bps > 0)
 
-    # Verdict
+    # Verdict. min-trade counts gate against single-lucky-episode passes: a
+    # 180d majors run of a carry agent can clear 3bps on 2 round trips.
     ok_oos_edge = out_of_sample.edge_bps is not None and out_of_sample.edge_bps >= min_edge_bps
     ok_in_edge = in_sample.edge_bps is not None and in_sample.edge_bps >= min_edge_bps
     ok_sharpe = out_of_sample.sharpe is not None and out_of_sample.sharpe >= min_sharpe
+    ok_n = in_sample.n_trades >= min_trades_is and out_of_sample.n_trades >= min_trades_oos
 
     if not ok_in_edge:
         reasons.append(f"in-sample edge {_fmt(in_sample.edge_bps)} < {min_edge_bps:+.0f}bps")
@@ -142,10 +146,14 @@ def confirm_strategy(
         reasons.append(f"out-of-sample edge {_fmt(out_of_sample.edge_bps)} < {min_edge_bps:+.0f}bps (overfit/none)")
     if not ok_sharpe:
         reasons.append(f"oos sharpe {_fmtn(out_of_sample.sharpe)} < {min_sharpe:.1f}")
+    if not ok_n:
+        reasons.append(f"too few trades (IS {in_sample.n_trades} < {min_trades_is} "
+                       f"or OOS {out_of_sample.n_trades} < {min_trades_oos}) — "
+                       "not enough evidence to confirm anything")
     if not robust_2x:
-        reasons.append("edge does not survive 2x taker slippage (info; not required if maker-only)")
+        reasons.append("edge does not survive 2x taker slippage (REQUIRED)")
 
-    confirmed = ok_in_edge and ok_oos_edge and ok_sharpe
+    confirmed = ok_in_edge and ok_oos_edge and ok_sharpe and ok_n and robust_2x
     if confirmed and not reasons:
         reasons.append(f"clears +{min_edge_bps:.0f}bps in & out of sample with sharpe >= {min_sharpe:.1f}")
 

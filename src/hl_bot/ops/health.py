@@ -83,7 +83,14 @@ def assess_health(
     import os
     ws_path = os.environ.get("HLBOT_WS_SNAPSHOT")
     if ws_path and Path(ws_path).exists():
-        age = now_ms / 1000 - Path(ws_path).stat().st_mtime
+        # Data freshness, not file freshness: a zombie writer keeps mtime
+        # fresh while updated_ms freezes.
+        try:
+            import json as _json
+            snap_ms = int((_json.loads(Path(ws_path).read_text()) or {}).get("updated_ms", 0))
+            age = (now_ms - snap_ms) / 1000 if snap_ms else float("inf")
+        except (ValueError, OSError):
+            age = now_ms / 1000 - Path(ws_path).stat().st_mtime
         metrics["ws_snapshot_age_s"] = age
         level = "warn" if age > 120 else "ok"
         checks.append(("ws-feed", level, f"snapshot {age:.0f}s old"))

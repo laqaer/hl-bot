@@ -154,7 +154,11 @@ def split_roster(
         e.mode = mode
         if not enabled:
             continue
-        if live and e.goals.roster == "live" and mode in ("live_small", "live"):
+        is_live = live and e.goals.roster == "live" and mode in ("live_small", "live")
+        # Agents replay their own positions from agent_decisions; this flag
+        # scopes that replay to the matching is_paper universe.
+        e.agent.is_live = is_live
+        if is_live:
             live_entries.append(e)
         else:
             paper_entries.append(e)
@@ -265,7 +269,7 @@ def run_cycle(
         now_ms=now_ms,
     )
 
-    if not live or not live_entries:
+    if not live:
         return res
 
     # --- live execution ---
@@ -274,18 +278,25 @@ def run_cycle(
         res.halted = f"KILL: {kill}"
 
     ok = True
-    if info is not None:
-        ok, why = check_guardrails(
-            conn, info,
-            GuardrailConfig(
-                min_bot_capital=40.0,
-                max_daily_loss=dynamic_daily_loss_limit(portfolio_value),
-                max_total_notional=compute_notional_cap(
-                    conn, live_portfolio_value=portfolio_value).max_total_notional,
-                max_concurrent_positions=4,
-            ),
-            agents=list(live_names),
-        )
+    if info is not None and live_entries:
+        try:
+            ok, why = check_guardrails(
+                conn, info,
+                GuardrailConfig(
+                    min_bot_capital=40.0,
+                    max_daily_loss=dynamic_daily_loss_limit(portfolio_value),
+                    max_total_notional=compute_notional_cap(
+                        conn, live_portfolio_value=portfolio_value).max_total_notional,
+                    max_concurrent_positions=4,
+                ),
+                agents=list(live_names),
+            )
+        except Exception as exc:  # noqa: BLE001
+            # An account-state outage must halt ENTRIES, never the rest of the
+            # cycle — the lifecycle and flatten decisions below are risk
+            # reduction and must keep running.
+            ok, why = False, f"guardrail check failed: {exc}"
+            log.exception("check_guardrails raised; halting entries only")
         if not ok:
             res.halted = res.halted or f"guardrail: {why}"
             res.events.append(f"HALT new entries: {why}")
@@ -296,17 +307,47 @@ def run_cycle(
                 res.events.append("KILL tripped (account daily loss)")
 
     cooldowns = {e.agent.name: e.goals.cooldown_s for e in live_entries}
+    entries_allowed = (not kill) and ok and bool(live_entries)
 
     # Maker lifecycle first: detect fills, reprice, expire, escalate exits.
-    if execution == "maker" and exchange is not None:
+    # Runs whenever orders are resting — regardless of execution mode or an
+    # EMPTY live roster (a mass demotion must not orphan resting orders), and
+    # only against fills at least as fresh as the requote clock (acting on
+    # stale fills is how a filled order gets "repriced" into a duplicate).
+    if exchange is not None:
         orders = open_orders(conn)
         if orders:
+            fills_fresh = True
+            try:
+                from ..exec.orders import HL_TRADER_ADDRESS
+                from ..ingest.hyperliquid import ingest_fills
+                ingest_fills(conn, HL_TRADER_ADDRESS, s.hl_api_url)
+            except Exception as exc:  # noqa: BLE001
+                fills_fresh = False
+                log.warning("pre-lifecycle fills ingest failed (%s): "
+                            "state transitions deferred this cycle", exc)
             fills = fills_by_cloid(conn, [o["cloid"] for o in orders])
-            actions = plan_actions(orders, fills, view, now_ms, maker_cfg)
+            actions = plan_actions(orders, fills, view, now_ms, maker_cfg,
+                                   entries_allowed=entries_allowed)
+            if not fills_fresh:
+                # Without fresh fills, only record what we can already prove
+                # (fills/partials from existing data); never cancel/reprice.
+                actions = [a for a in actions if a.kind in ("fill", "partial")]
             res.events.extend(apply_actions(conn, exchange, actions, now_ms=now_ms))
+        res.events.extend(_reconcile_exchange_orders(conn, exchange, info))
+
+    if not live_entries:
+        return res
 
     open_by_agent_coin = {
         (o["agent"], o["coin"]) for o in open_orders(conn)
+    }
+
+    # 'auto' routes each agent's entries per its own execution mode (carry
+    # posts maker, momentum crosses taker); 'maker'/'taker' force every agent.
+    exec_modes = {
+        e.agent.name: (e.agent.execution_mode() if execution == "auto" else execution)
+        for e in live_entries
     }
 
     for d in res.decisions:
@@ -331,12 +372,17 @@ def run_cycle(
             if exchange is None:
                 res.events.append(f"SKIP {d.agent} {d.coin}: no exchange")
                 continue
-            if execution == "maker" and d.urgency == "normal":
+            if exec_modes.get(d.agent, execution) == "maker" and d.urgency == "normal":
                 if (d.agent, d.coin) in open_by_agent_coin:
                     res.events.append(f"SKIP {d.agent} {d.coin}: quote already resting")
                     continue
-                res.events.append(submit_entry(conn, exchange, view, d, maker_cfg,
-                                               now_ms=now_ms))
+                event = submit_entry(conn, exchange, view, d, maker_cfg,
+                                     now_ms=now_ms)
+                if event.startswith(("RESTING", "FILLED")):
+                    # keep the same-cycle dedupe set current so a second
+                    # decision for this coin can't double-quote
+                    open_by_agent_coin.add((d.agent, d.coin))
+                res.events.append(event)
             else:
                 r = place_market_order(exchange, d.coin, d.side == "B", d.sz,
                                        slippage_pct=0.01, cloid=d.cloid)
@@ -374,6 +420,31 @@ def run_cycle(
 # ---------------------------------------------------------------------------
 # helpers
 # ---------------------------------------------------------------------------
+
+
+def _reconcile_exchange_orders(conn: sqlite3.Connection, exchange: Any, info: Any) -> list[str]:
+    """Cancel exchange orders that carry our cloid magic but have no open
+    maker_orders row (crash between placement and record_quote, or operator
+    surgery). Best-effort; never raises into the cycle."""
+    if info is None:
+        return []
+    from ..agents.cloid import MAGIC
+    from ..exec.orders import HL_TRADER_ADDRESS, cancel_order
+    events: list[str] = []
+    try:
+        fetch = getattr(info, "frontend_open_orders", None) or info.open_orders
+        ex_orders = fetch(HL_TRADER_ADDRESS) or []
+        known = {o["cloid"] for o in open_orders(conn)}
+        for eo in ex_orders:
+            cl = str(eo.get("cloid") or "").lower()
+            if not cl.startswith("0x" + MAGIC) or cl in known:
+                continue
+            r = cancel_order(exchange, eo.get("coin"), int(eo["oid"]))
+            events.append(f"UNTRACKED-CANCEL {eo.get('coin')} oid={eo.get('oid')} "
+                          f"({'ok' if r.ok else r.error})")
+    except Exception as exc:  # noqa: BLE001
+        log.warning("exchange open-order reconcile failed: %s", exc)
+    return events
 
 
 def _load_overrides(configs_dir: str | Path) -> dict[str, dict]:

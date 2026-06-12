@@ -80,7 +80,7 @@ def test_maker_entry_requires_cross_not_touch(conn):
     assert len(res.fills) == 1
     row = conn.execute("SELECT * FROM paper_fills").fetchone()
     assert row["px"] == pytest.approx(99.0)
-    assert row["fee"] == pytest.approx(99.0 * 1.0 * 1.0 / 10_000)  # maker 1 bp
+    assert row["fee"] == pytest.approx(99.0 * 1.0 * 1.5 / 10_000)  # maker 1.5 bp (HL base)
     assert conn.execute("SELECT COUNT(*) FROM paper_orders").fetchone()[0] == 0
 
 
@@ -158,7 +158,8 @@ def test_paper_scorecard_includes_funding(conn):
     simulate_cycle(conn, view(NOW, {"BTC": 100.0}), [flatten("a1", "BTC")], now_ms=NOW)
 
     sc = score_agent(conn, "a1", "24h", source="paper")
-    assert sc.n_trades == 2
+    assert sc.n_trades == 1      # one round trip (close events, not fills)
+    assert sc.n_fills == 2
     assert sc.funding_pnl > 0          # short collected positive funding
     assert sc.fees_paid > 0
     # Carry round-trip at flat price: net = funding - fees - slippage costs.
@@ -170,3 +171,17 @@ def test_live_scorecard_unaffected_by_paper(conn):
     simulate_cycle(conn, view(t0, {"BTC": 100.0}), [place("a1", "BTC", "B", 1.0)], now_ms=t0)
     sc_live = score_agent(conn, "a1", "24h", source="live")
     assert sc_live.n_trades == 0
+
+
+def test_exit_slippage_floored_at_observed_half_spread(conn):
+    t0 = NOW - 2 * HOUR
+    simulate_cycle(conn, view(t0, {"WIF": 2.0}), [place("a1", "WIF", "B", 10.0)], now_ms=t0)
+    # Wide book: half-spread = 0.5% of mid = 50bps >> flat 2bps.
+    v = MarketView(ts_ms=NOW, mids={"WIF": 2.0}, funding={},
+                   book_top={"WIF": (1.99, 2.01)})
+    simulate_cycle(conn, v, [flatten("a1", "WIF")], now_ms=NOW)
+    exit_row = conn.execute(
+        "SELECT px FROM paper_fills ORDER BY id DESC LIMIT 1").fetchone()
+    half_spread_bps = (2.01 - 1.99) / 2 / 2.0 * 10_000   # 50bps
+    expected = 2.0 * (1 - half_spread_bps * 1.5 / 10_000)
+    assert exit_row["px"] == pytest.approx(expected)

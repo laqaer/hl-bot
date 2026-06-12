@@ -1,0 +1,13 @@
+[Unit]
+Description=hl-bot health check (dead-man ping + telegram on degradation)
+After=network-online.target
+
+[Service]
+Type=oneshot
+User=hlbot
+WorkingDirectory=/opt/hl-bot
+EnvironmentFile=/etc/hl-bot/env
+ExecStart=/usr/local/bin/uv run hlbot health
+NoNewPrivileges=true
+ProtectSystem=strict
+ReadWritePaths=/opt/hl-bot/data

@@ -235,3 +235,53 @@ def test_rejected_entries_are_audited(conn):
         "SELECT action FROM agent_decisions WHERE agent='a2'").fetchone()
     assert row["action"] == "rejected"
     assert coin_in_cooldown(conn, "ETH", agent="a2", cooldown_s=3600)
+
+
+class CancelFailExchange(FakeExchange):
+    def cancel(self, coin, oid):
+        self.cancelled.append((coin, oid))
+        return {"response": {"data": {"statuses": [{"error": "Order already filled"}]}}}
+
+
+def test_reprice_aborts_when_cancel_fails(conn):
+    # A failed cancel almost always means the order FILLED and our fills table
+    # lags. Placing the replacement anyway duplicates the position; the row
+    # must stay open for re-evaluation against fresher fills.
+    o = order(conn, px=99.0)
+    ex = CancelFailExchange()
+    v = view(book={"BTC": (99.9, 100.1)})
+    events = apply_actions(conn, ex, plan_actions([o], {}, v, NOW + 60_000, CFG),
+                           now_ms=NOW + 60_000)
+    assert any("REPRICE-DEFERRED" in e for e in events)
+    assert ex.limit_orders == []                       # no replacement placed
+    row = conn.execute("SELECT state FROM maker_orders WHERE cloid='c1'").fetchone()
+    assert row["state"] == "quoted"                    # still open, re-evaluated next cycle
+
+
+def test_partial_fill_owned_on_expire(conn):
+    # Ownership rows are written only on FULL fills; a partial that expires
+    # must own its filled portion or no agent ever exits the live position.
+    o = order(conn, px=99.0, sz=1.0)
+    fills = {"c1": (0.4, 99.0)}
+    actions = plan_actions([o], fills, view(), NOW + 901_000, CFG)
+    kinds = [a.kind for a in actions]
+    assert "expire" in kinds
+    events = apply_actions(conn, FakeExchange(), actions, now_ms=NOW + 901_000)
+    assert any("PARTIAL-OWNED" in e for e in events)
+    row = conn.execute(
+        "SELECT action, sz, is_paper FROM agent_decisions "
+        "WHERE agent='a1' AND action='place'").fetchone()
+    assert row is not None and row["sz"] == pytest.approx(0.4)
+    assert row["is_paper"] == 0
+
+
+def test_entries_not_allowed_expires_entry_quotes(conn):
+    # Kill switch / guardrail halt: resting ENTRY quotes are cancelled, never
+    # repriced — a halted book must not keep working quotes into fills.
+    o = order(conn, px=99.0)
+    actions = plan_actions([o], {}, view(), NOW + 1_000, CFG, entries_allowed=False)
+    assert [a.kind for a in actions] == ["expire"]
+    # Reduce-only exits keep their lifecycle under the same halt.
+    o2 = order(conn, cloid="c2", px=101.0, urgency="exit", reduce_only=True)
+    actions = plan_actions([o2], {}, view(), NOW + 1_000, CFG, entries_allowed=False)
+    assert all(a.kind != "expire" for a in actions)
