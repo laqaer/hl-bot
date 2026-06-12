@@ -12,12 +12,16 @@ from hl_bot.db.schema import init_db
 from hl_bot.ops.doctor import render, run_doctor
 from hl_bot.ops.health import (
     DEPLOYED_SHA,
+    PAPER_DB_BASENAME,
+    PAPER_DB_ENV,
     UPDATE_HEARTBEAT,
     DeploySignals,
     PagerSignals,
+    PaperSignals,
     assess_health,
     read_deploy_signals,
     read_pager_signals,
+    read_paper_signals,
 )
 
 
@@ -364,6 +368,108 @@ def test_health_cli_reports_pager(monkeypatch, tmp_path):
     res = CliRunner().invoke(app, ["health", "--no-heartbeat"])
     assert res.exit_code == 0, res.output
     assert "pager" in res.output and "pages nobody" in res.output
+
+
+def test_health_paper_stale_warns(conn):
+    # The B-PAPERLOOP failure mode, instrumented: a paper DB exists (a paper
+    # loop was set up) but its timer died — every G1 calendar clock gaps.
+    now = int(time.time() * 1000)
+    _fresh(conn, now)
+    rep = assess_health(conn, now_ms=now, paper=PaperSignals(
+        present=True, beat_age_s=4 * 3600.0))
+    assert rep.status == "warn"
+    assert any(n == "paper" and lvl == "warn" and "stale" in d
+               for n, lvl, d in rep.checks)
+    assert rep.metrics["paper_beat_age_s"] == 4 * 3600.0
+
+
+def test_health_paper_never_ticked_warns(conn):
+    # Paper DB born (e.g. by hand or a crashed first run) but no completed
+    # paper tick: the clock never started — same warn, different message.
+    now = int(time.time() * 1000)
+    _fresh(conn, now)
+    rep = assess_health(conn, now_ms=now, paper=PaperSignals(
+        present=True, beat_age_s=None))
+    assert rep.status == "warn"
+    assert any(n == "paper" and lvl == "warn" and "no paper tick" in d
+               for n, lvl, d in rep.checks)
+
+
+def test_health_paper_fresh_ok(conn):
+    now = int(time.time() * 1000)
+    _fresh(conn, now)
+    rep = assess_health(conn, now_ms=now, paper=PaperSignals(
+        present=True, beat_age_s=120.0))
+    assert rep.status == "ok"
+    assert any(n == "paper" and lvl == "ok" for n, lvl, _ in rep.checks)
+
+
+def test_health_paper_absent_is_quiet(conn):
+    # No paper DB ⇒ not a paper box (dev/live-only clones): no check at all.
+    now = int(time.time() * 1000)
+    _fresh(conn, now)
+    rep = assess_health(conn, now_ms=now, paper=PaperSignals(
+        present=False, beat_age_s=None))
+    assert not any(n == "paper" for n, _, _ in rep.checks)
+
+
+def test_read_paper_signals(tmp_path):
+    now = int(time.time() * 1000)
+    live_db = tmp_path / "data" / "hlbot.sqlite"
+    init_db(live_db).close()
+
+    # No paper DB beside the live one → absent.
+    sig = read_paper_signals(live_db, now_ms=now, env={})
+    assert sig == PaperSignals(present=False, beat_age_s=None)
+
+    # Paper DB with a completed paper tick → present, age from its newest
+    # paper beat (live-mode rows in that DB don't count as paper liveness).
+    paper_db = live_db.parent / PAPER_DB_BASENAME
+    pc = init_db(paper_db)
+    _beat(pc, now - 600_000, mode="paper")
+    _beat(pc, now - 60_000, mode="live")
+    pc.commit()
+    pc.close()
+    sig = read_paper_signals(live_db, now_ms=now, env={})
+    assert sig.present and sig.beat_age_s == pytest.approx(600.0)
+
+    # HLBOT_PAPER_DB overrides the beside-the-DB default (run-paper-tick.sh
+    # semantics); pointing it at the live DB itself ⇒ nothing separate to watch.
+    elsewhere = tmp_path / "elsewhere.sqlite"
+    ec = init_db(elsewhere)
+    _beat(ec, now - 120_000, mode="paper")
+    ec.commit()
+    ec.close()
+    sig = read_paper_signals(live_db, now_ms=now, env={"HLBOT_PAPER_DB": str(elsewhere)})
+    assert sig.present and sig.beat_age_s == pytest.approx(120.0)
+    self_ref = read_paper_signals(live_db, now_ms=now,
+                                  env={"HLBOT_PAPER_DB": str(live_db)})
+    assert self_ref == PaperSignals(present=False, beat_age_s=None)
+
+
+def test_health_cli_reports_paper(monkeypatch, tmp_path):
+    # Wiring pin: `hlbot health` must feed real paper signals — a box with a
+    # never-ticked paper DB beside the live DB prints the warn.
+    from typer.testing import CliRunner
+
+    from hl_bot.cli.main import app
+
+    db = tmp_path / "data" / "h.sqlite"
+    init_db(db).close()
+    init_db(db.parent / PAPER_DB_BASENAME).close()
+    monkeypatch.setenv("HLBOT_DB", str(db))
+    monkeypatch.delenv("HLBOT_PAPER_DB", raising=False)
+    res = CliRunner().invoke(app, ["health", "--no-heartbeat"])
+    assert res.exit_code == 0, res.output
+    assert "paper" in res.output and "no paper tick" in res.output
+
+
+def test_paper_db_names_match_script():
+    # Name pin: run-paper-tick.sh and health.py share the paper-DB basename
+    # and override env by string; renaming one side kills the liveness check.
+    script = (Path(__file__).parents[1] / "deploy" / "run-paper-tick.sh").read_text()
+    assert PAPER_DB_BASENAME in script
+    assert PAPER_DB_ENV in script
 
 
 def test_update_sh_touches_heartbeat():

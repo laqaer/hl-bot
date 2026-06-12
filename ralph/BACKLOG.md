@@ -197,6 +197,18 @@ Keep it ruthlessly prioritized: the top item should always be the highest-levera
   tests/test_deploy_paper_tick.py + exec-bit auto-pin. **All G1 calendar
   clocks start when the timer lands (Jun 12) → earliest 30d paper span ≈
   Jul 12** (B-EDGE2f, breakout_er_v1, xmom_v1).
+- [x] **B-PAPERHB — Paper-loop liveness warning in `hlbot health`.** Done
+  (Iter 86, the Iter-85 idle-queue item): B-PAPERLOOP's failure mode — a dead
+  paper timer silently stopping every G1 calendar clock — had no detector;
+  the main health check watches the LIVE DB only, and the paper loop writes
+  its heartbeats to a separate file. Now `read_paper_signals(db_path)`
+  (paper DB resolved beside the live DB / via HLBOT_PAPER_DB, exactly
+  run-paper-tick.sh's rule; read-only open; self-reference and read failures
+  degrade safely) + a warn-only `paper` check in `assess_health` (stale
+  >1h ≈ 12 missed 5-min fires, or present-but-never-ticked), gated to boxes
+  where a paper DB exists so dev/live-only clones stay silent. Names shared
+  with run-paper-tick.sh pinned by test. 7 new tests; live-fired all three
+  arms (absent → quiet, stale → warn, fresh → ok).
 - [x] **B-MAKERFILL — Honest maker-fill model in the backtester.** Done
   (Iter 50): `CostModel(maker_fill="resting")` + `--maker-fill resting` on
   backtest/confirm replay the live maker lifecycle (entries rest at the

@@ -9,6 +9,7 @@
   * is it bleeding?                       (24h realized PnL vs a floor)
   * is the auto-deployer alive/shipping? (``DeploySignals``; warn-only)
   * can a bad verdict reach a human?     (``PagerSignals``; warn-only)
+  * is the paper forward-test loop alive? (``PaperSignals``; warn-only)
 
 The verdict drives a dead-man switch: ``hlbot health`` pings ``HEALTHCHECK_URL``
 only when status is ok, so a missed ping (crashed/hung bot) pages you. Anything
@@ -30,6 +31,11 @@ Level = str  # "ok" | "warn" | "crit"
 # Written by deploy/update.sh beside the DB; names shared with that script.
 DEPLOYED_SHA = ".deployed_sha"        # content: sha of the last test-green deploy
 UPDATE_HEARTBEAT = ".update_heartbeat"  # touched on every COMPLETED updater run
+
+# Default paper-DB basename + override env; names shared with
+# deploy/run-paper-tick.sh (pinned by test, like the updater markers above).
+PAPER_DB_BASENAME = "hlbot_paper.sqlite"
+PAPER_DB_ENV = "HLBOT_PAPER_DB"
 
 
 @dataclass
@@ -94,6 +100,51 @@ def read_pager_signals(
         healthcheck_url=bool(env.get("HEALTHCHECK_URL")),
         telegram_token=tg,
     )
+
+
+@dataclass
+class PaperSignals:
+    """Is the paper forward-test loop (run-paper-tick.sh) actually running?"""
+
+    present: bool                   # a separate paper DB exists beside this one
+    beat_age_s: float | None        # age of its newest paper tick_heartbeat
+
+
+def read_paper_signals(
+    db_path: Path | str,
+    *,
+    now_ms: int | None = None,
+    env: Mapping[str, str] | None = None,
+) -> PaperSignals:
+    """Read the paper loop's liveness from its dedicated DB, if one exists.
+
+    The paper DB lives beside the live DB (``data/hlbot_paper.sqlite``,
+    overridable via HLBOT_PAPER_DB — same resolution run-paper-tick.sh uses).
+    No paper DB ⇒ not a paper box, stay silent; the file pointing back at
+    ``db_path`` itself ⇒ no *separate* loop to monitor (the tick check already
+    covers that DB). Read-only open; any read failure degrades to "present but
+    never beat" — warn-territory, never a crash inside ``hlbot health``.
+    """
+    env = os.environ if env is None else env
+    now_ms = now_ms or int(time.time() * 1000)
+    paper_path = Path(env.get(PAPER_DB_ENV) or Path(db_path).parent / PAPER_DB_BASENAME)
+    try:
+        if not paper_path.is_file() or paper_path.resolve() == Path(db_path).resolve():
+            return PaperSignals(present=False, beat_age_s=None)
+    except OSError:
+        return PaperSignals(present=False, beat_age_s=None)
+    beat_age: float | None = None
+    with contextlib.suppress(Exception):
+        pconn = sqlite3.connect(f"file:{paper_path}?mode=ro", uri=True)
+        try:
+            row = pconn.execute(
+                "SELECT MAX(ts_ms) FROM tick_heartbeats WHERE mode = 'paper'"
+            ).fetchone()
+            if row and row[0] is not None:
+                beat_age = (now_ms - int(row[0])) / 1000
+        finally:
+            pconn.close()
+    return PaperSignals(present=True, beat_age_s=beat_age)
 
 
 def _read_git_head(repo_dir: Path) -> str | None:
@@ -177,6 +228,8 @@ def assess_health(
     deploy: DeploySignals | None = None,
     max_update_age_s: int = 7200,     # 2 h ≈ 8 missed 15-min updater fires
     pager: PagerSignals | None = None,
+    paper: PaperSignals | None = None,
+    max_paper_age_s: int = 3600,      # 1 h ≈ 12 missed 5-min paper fires
 ) -> HealthReport:
     now_ms = now_ms or int(time.time() * 1000)
     checks: list[tuple[str, Level, str]] = []
@@ -308,6 +361,26 @@ def assess_health(
             checks.append(("pager", "ok",
                            "telegram only — a fully dead box pages nobody "
                            "(no HEALTHCHECK_URL dead-man switch)"))
+
+    # --- paper forward-test loop (are the G1 calendar clocks running?) ---
+    # B-PAPERLOOP found the pipeline dead for days with zero signal: no paper
+    # ticks anywhere meant every promotion candidate's 30d calendar clock was
+    # silently stopped, and nothing watched the watcher. Gated to boxes where
+    # a paper DB exists (dev clones stay quiet); warn-only — a stalled paper
+    # loop costs evidence-days, not money, and must not page or block ticks.
+    if paper is not None and paper.present:
+        metrics["paper_beat_age_s"] = paper.beat_age_s
+        if paper.beat_age_s is None:
+            checks.append(("paper", "warn",
+                           "paper DB exists but no paper tick has completed"))
+        elif paper.beat_age_s > max_paper_age_s:
+            checks.append(("paper", "warn",
+                           f"paper loop stale: last paper tick "
+                           f"{paper.beat_age_s/3600:.1f} h ago — G1 calendar "
+                           f"clocks are gapping"))
+        else:
+            checks.append(("paper", "ok",
+                           f"last paper tick {paper.beat_age_s/60:.1f} min ago"))
 
     # --- 24h realized PnL ---
     since = now_ms - 86_400_000
