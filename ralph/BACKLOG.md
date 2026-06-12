@@ -315,6 +315,26 @@ Keep it ruthlessly prioritized: the top item should always be the highest-levera
   + pruned: HL funding retention is ≥200d on every coin checked (BTC/XPL/ZEC/
   HYPE) — no funding store needed for 60–90d backtests.
 
+- [x] **B-STORESYNC — Union sync between the two same-host candle stores.**
+  Done (Iter 84): two independent harvesters feed two stores on this host
+  (deploy clone's hourly `hlbot-harvest.timer`, ralph loop's per-iteration
+  step-0) and EACH has already had a multi-day outage (the 203/EXEC-dead
+  timer Jun 8–12, the unparsed loop.sh step Iter 78) — one more 3.5d+ gap in
+  whichever store the B-G014 experiment reads permanently invalidates the
+  multi-week 1m sample. Now `store.sync_stores` (pure, atomic, per-file
+  error isolation; later-reaching side wins conflicting open times since
+  only the newest stored bar can be non-final; unreadable side heals from
+  the healthy one) + `hlbot harvest-candles --sync-peer DIR` (runs even on
+  the if-stale skip path — sync is local and free; absent peer clone skips
+  quietly so the flag is safe on other hosts; sync failures never turn the
+  timer red). Wired three ways: PROMPT step 0 + loop.sh (loop→deploy) and
+  hlbot-harvest.service (deploy→loop, ships via update.sh's unit-cp).
+  Live-fired: stores converged to the identical union — deploy store gained
+  the 12,702 bars it lacked (incl. the irreplaceable Jun 8–9 1m history),
+  loop store pulled 177 fresher ones, 0 missing bars on both. Either
+  harvester dying alone can no longer gap the sample; host loss remains the
+  residual risk (off-host store backup = operator-gated follow-up if ever
+  needed).
 - [x] **B-M4 — Auto-tuner auto-apply is risk-tightening only.** Done (Iter 63,
   REVIEW M4): `scripts/auto_tuner.py` was the last ungated live-params writer —
   Hermes cron auto-applied LLM tweaks to `agent_overrides.json`, including

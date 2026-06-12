@@ -728,6 +728,7 @@ def harvest_candles(
     breadth_coins: str = "CRV,ENA,LIT,NEAR,SUI,TON,WLD,XMR,XPL,XRP",
     breadth_intervals: str = "15m,1h",
     if_stale_minutes: float = 0.0,
+    sync_peer: str = "",
 ):
     """Append the latest fine-interval candles to the rolling local store (B-HIST).
 
@@ -750,6 +751,14 @@ def harvest_candles(
     ralph loop's per-iteration step, an agent's in-session top-up, the systemd
     timer — all run unconditionally without re-fetching a store another
     mechanism just filled. 0 (default) always harvests.
+
+    --sync-peer DIR union-merges this clone's store with another clone's
+    store dir after the harvest (and even when --if-stale-minutes skipped
+    it — sync is local and free). Both stores end up holding every bar
+    either harvester captured, so one harvester dying no longer gaps the
+    irreplaceable 1m sample (both have died once: B-DEPLOY-EXEC, Iter 78).
+    Best-effort redundancy: a missing peer clone is skipped, sync failures
+    never change the exit code (only harvest failures turn the timer red).
     """
     from ..backtest.store import harvest, harvest_pairs, worst_store_lag
 
@@ -768,6 +777,8 @@ def harvest_candles(
                 f"store fresh (worst lag {lag:.1f}m at {label} ≤ "
                 f"{if_stale_minutes:g}m) — skipping harvest"
             )
+            if sync_peer:
+                _sync_peer_store(sync_peer)
             return
     results = harvest(coin_list, interval_list, extra_pairs=extra, base_url=s.hl_api_url)
     table = Table(title="Candle harvest")
@@ -780,8 +791,36 @@ def harvest_candles(
             f"[red]{r.error}[/red]" if r.error else "[green]ok[/green]",
         )
     console.print(table)
+    if sync_peer:
+        _sync_peer_store(sync_peer)
     if any(r.error for r in results):
         raise typer.Exit(2)
+
+
+def _sync_peer_store(peer: str) -> None:
+    """Best-effort union sync with another clone's candle store; never raises.
+
+    Skips quietly when the peer clone isn't present (its data/ dir missing) so
+    the flag is safe to bake into units/scripts that may run on other hosts.
+    """
+    from ..backtest.store import store_dir, sync_stores
+
+    peer_dir = Path(peer)
+    if not peer_dir.parent.is_dir():
+        console.print(f"[dim]sync peer {peer_dir} absent — skipped[/dim]")
+        return
+    try:
+        results = sync_stores(store_dir(), peer_dir)
+    except Exception as e:  # noqa: BLE001 — redundancy must not block the harvest
+        console.print(f"[yellow]store sync failed: {e}[/yellow]")
+        return
+    pulled = sum(r.added_a for r in results)
+    pushed = sum(r.added_b for r in results)
+    errs = [r for r in results if r.error]
+    line = f"store sync ↔ {peer_dir}: +{pulled} bars here, +{pushed} bars peer"
+    if errs:
+        line += f" [yellow]({len(errs)} file(s) errored, e.g. {errs[0].name}: {errs[0].error})[/yellow]"
+    console.print(line)
 
 
 def _load_backtest_frames(

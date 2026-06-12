@@ -26,6 +26,7 @@ from hl_bot.backtest.store import (
     merge_candles,
     save_store,
     store_path,
+    sync_stores,
     worst_store_lag,
 )
 
@@ -233,6 +234,122 @@ def test_harvest_candles_if_stale_runs_when_stale_or_missing(monkeypatch, tmp_pa
                             lambda *a, _calls=calls, **k: _calls.append(True) or [])
         harvest_candles(if_stale_minutes=30.0)
         assert calls == [True]
+
+
+# ---------------------------------------------------------------------------
+# sync_stores (B-STORESYNC) — union redundancy between two harvesters' stores
+# ---------------------------------------------------------------------------
+
+
+def _dirs(tmp_path):
+    a, b = tmp_path / "a", tmp_path / "b"
+    a.mkdir()
+    b.mkdir()
+    return a, b
+
+
+def test_sync_unions_both_sides_and_later_side_wins_conflicts(tmp_path):
+    a, b = _dirs(tmp_path)
+    # a holds an older exclusive bar; b reaches later, so its version of the
+    # shared bar (a's possibly-forming last) must win on BOTH sides.
+    save_store(store_path("BTC", "1m", a), [_bar(0), _bar(MIN, v=1.0)])
+    save_store(store_path("BTC", "1m", b), [_bar(MIN, v=42.0), _bar(2 * MIN)])
+    (res,) = sync_stores(a, b)
+    assert (res.name, res.added_a, res.added_b, res.error) == ("BTC_1m.json.gz", 1, 1, None)
+    want = [_bar(0), _bar(MIN, v=42.0), _bar(2 * MIN)]
+    assert load_store(store_path("BTC", "1m", a)) == want
+    assert load_store(store_path("BTC", "1m", b)) == want
+
+
+def test_sync_later_side_wins_regardless_of_argument_order(tmp_path):
+    a, b = _dirs(tmp_path)
+    save_store(store_path("BTC", "1m", a), [_bar(MIN, v=42.0), _bar(2 * MIN)])
+    save_store(store_path("BTC", "1m", b), [_bar(0), _bar(MIN, v=1.0)])
+    sync_stores(a, b)  # a is the later-reaching side this time
+    assert load_store(store_path("BTC", "1m", b))[1]["v"] == 42.0
+
+
+def test_sync_creates_files_missing_on_one_side(tmp_path):
+    a, b = _dirs(tmp_path)
+    save_store(store_path("BTC", "1m", a), [_bar(0)])
+    save_store(store_path("ETH", "1m", b), [_bar(0), _bar(MIN)])
+    by_name = {r.name: r for r in sync_stores(a, b)}
+    assert (by_name["BTC_1m.json.gz"].added_a, by_name["BTC_1m.json.gz"].added_b) == (0, 1)
+    assert (by_name["ETH_1m.json.gz"].added_a, by_name["ETH_1m.json.gz"].added_b) == (2, 0)
+    assert load_store(store_path("ETH", "1m", a)) == [_bar(0), _bar(MIN)]
+    assert load_store(store_path("BTC", "1m", b)) == [_bar(0)]
+
+
+def test_sync_heals_unreadable_side_and_records_the_error(tmp_path):
+    a, b = _dirs(tmp_path)
+    (a / "BTC_1m.json.gz").write_bytes(b"not gzip at all")
+    save_store(store_path("BTC", "1m", b), [_bar(0), _bar(MIN)])
+    (res,) = sync_stores(a, b)
+    assert res.error is not None
+    assert load_store(store_path("BTC", "1m", a)) == [_bar(0), _bar(MIN)]  # healed
+    assert load_store(store_path("BTC", "1m", b)) == [_bar(0), _bar(MIN)]  # untouched
+
+
+def test_sync_identical_sides_write_nothing(tmp_path, monkeypatch):
+    import hl_bot.backtest.store as store_mod
+
+    a, b = _dirs(tmp_path)
+    save_store(store_path("BTC", "1m", a), [_bar(0)])
+    save_store(store_path("BTC", "1m", b), [_bar(0)])
+    monkeypatch.setattr(store_mod, "save_store",
+                        lambda *args, **kw: pytest.fail("identical stores must not be rewritten"))
+    (res,) = store_mod.sync_stores(a, b)
+    assert (res.added_a, res.added_b, res.error) == (0, 0, None)
+
+
+def test_sync_one_bad_file_does_not_kill_the_sweep(tmp_path, monkeypatch):
+    import hl_bot.backtest.store as store_mod
+
+    a, b = _dirs(tmp_path)
+    save_store(store_path("BTC", "1m", a), [_bar(0)])
+    save_store(store_path("ETH", "1m", a), [_bar(0)])
+    real_save = store_mod.save_store
+
+    def flaky_save(path, candles):
+        if "BTC" in str(path):
+            raise OSError("disk full")
+        return real_save(path, candles)
+
+    monkeypatch.setattr(store_mod, "save_store", flaky_save)
+    by_name = {r.name: r for r in store_mod.sync_stores(a, b)}
+    assert by_name["BTC_1m.json.gz"].error == "disk full"
+    assert by_name["ETH_1m.json.gz"].error is None
+    assert load_store(store_path("ETH", "1m", b)) == [_bar(0)]
+
+
+def test_harvest_candles_sync_peer_runs_even_when_fresh(monkeypatch, tmp_path):
+    # CLI wiring: the union sync is local and free, so it must run even on the
+    # --if-stale-minutes skip path (the loop's common case).
+    import hl_bot.backtest.store as store_mod
+    from hl_bot.cli.main import harvest_candles
+
+    monkeypatch.setenv("HLBOT_DB", str(tmp_path / "t.sqlite"))
+    monkeypatch.setattr(store_mod, "worst_store_lag", lambda pairs, **k: ("BTC_1m", 3.0))
+    monkeypatch.setattr(store_mod, "harvest",
+                        lambda *a, **k: pytest.fail("harvest must not run on a fresh store"))
+    peer = tmp_path / "peer" / "candle_store"
+    peer.parent.mkdir()
+    calls: list[tuple] = []
+    monkeypatch.setattr(store_mod, "sync_stores", lambda ra, rb: calls.append((ra, rb)) or [])
+    harvest_candles(if_stale_minutes=30.0, sync_peer=str(peer))
+    assert len(calls) == 1 and calls[0][1] == peer
+
+
+def test_harvest_candles_sync_peer_absent_clone_is_skipped(monkeypatch, tmp_path):
+    import hl_bot.backtest.store as store_mod
+    from hl_bot.cli.main import harvest_candles
+
+    monkeypatch.setenv("HLBOT_DB", str(tmp_path / "t.sqlite"))
+    monkeypatch.setattr(store_mod, "worst_store_lag", lambda pairs, **k: ("BTC_1m", 3.0))
+    monkeypatch.setattr(store_mod, "sync_stores",
+                        lambda *a: pytest.fail("absent peer clone must skip the sync"))
+    harvest_candles(if_stale_minutes=30.0,
+                    sync_peer=str(tmp_path / "no-such-clone" / "data" / "candle_store"))
 
 
 # ---------------------------------------------------------------------------

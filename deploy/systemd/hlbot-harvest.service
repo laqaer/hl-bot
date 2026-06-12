@@ -8,7 +8,10 @@ Type=oneshot
 User=hlbot
 WorkingDirectory=/opt/hl-bot
 EnvironmentFile=/etc/hl-bot/env
-ExecStart=/usr/bin/env bash -c 'uv run hlbot harvest-candles'
+# --sync-peer: union-merge with the ralph loop clone's store so either
+# harvester dying can't gap the irreplaceable 1m sample (B-STORESYNC);
+# skipped quietly on hosts without the loop clone.
+ExecStart=/usr/bin/env bash -c 'uv run hlbot harvest-candles --sync-peer /opt/hl-bot-loop/data/candle_store'
 TimeoutStartSec=300
 NoNewPrivileges=true
 ProtectSystem=full

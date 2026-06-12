@@ -170,6 +170,73 @@ def harvest_one(
 
 
 @dataclass
+class SyncResult:
+    """Outcome of union-merging one store file between two store dirs."""
+
+    name: str
+    added_a: int = 0
+    added_b: int = 0
+    error: str | None = None
+
+
+def _load_side(path: Path) -> tuple[list[dict[str, Any]], str | None]:
+    try:
+        return load_store(path), None
+    except Exception as e:  # noqa: BLE001 — unreadable side heals from the other
+        return [], str(e)
+
+
+def sync_stores(root_a: str | Path, root_b: str | Path) -> list[SyncResult]:
+    """Union-merge every store file between two store directories (B-STORESYNC).
+
+    Two independent harvesters can feed two stores on one host (the deploy
+    clone's hourly ``hlbot-harvest.timer`` and the ralph loop's per-iteration
+    top-up) and each has already had a multi-day outage (the 203/EXEC-dead
+    timer, the unparsed loop.sh step). The 1m series is irreplaceable —
+    retention is ~3.5d — so after a sync EITHER store surviving keeps the
+    full sample, and a gap in one heals from the other.
+
+    Per file, both sides end up holding the union of bars. On a conflicting
+    open time the side whose series extends later wins: within one store
+    every bar except the newest is final (``harvest_one`` refetches the last
+    stored bar until it is), so the later-reaching side holds the final
+    version of any overlapping bar. An unreadable side is treated as empty
+    and overwritten with the union (healed; the read error is recorded).
+    Per-file failures are recorded, never raised. Writes are atomic
+    (``save_store``) and skipped when a side already holds exactly the
+    union, so a concurrent harvest can lose at most its own latest top-up
+    to the write race — the next sync re-adds it.
+    """
+    a_dir, b_dir = Path(root_a), Path(root_b)
+    names = sorted(
+        {p.name for d in (a_dir, b_dir) if d.is_dir() for p in d.glob("*.json.gz")}
+    )
+    out: list[SyncResult] = []
+    for name in names:
+        res = SyncResult(name=name)
+        try:
+            rows_a, err_a = _load_side(a_dir / name)
+            rows_b, err_b = _load_side(b_dir / name)
+            res.error = err_a or err_b
+            ts_a = {t for r in rows_a if (t := _t(r)) is not None}
+            ts_b = {t for r in rows_b if (t := _t(r)) is not None}
+            if max(ts_b, default=-1) >= max(ts_a, default=-1):
+                merged = merge_candles(rows_a, rows_b)
+            else:
+                merged = merge_candles(rows_b, rows_a)
+            res.added_a = len(merged) - len(ts_a)
+            res.added_b = len(merged) - len(ts_b)
+            if merged != rows_a:
+                save_store(a_dir / name, merged)
+            if merged != rows_b:
+                save_store(b_dir / name, merged)
+        except Exception as e:  # noqa: BLE001 — one bad file must not kill the sweep
+            res.error = str(e)
+        out.append(res)
+    return out
+
+
+@dataclass
 class StoreCoverage:
     """How complete one (coin, interval) store series is over its own span.
 

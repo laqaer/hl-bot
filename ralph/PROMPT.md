@@ -8,8 +8,11 @@ You run repeatedly. Each run, make **one** real, tested increment of progress.
 ## Iteration procedure (do this, in order)
 
 0. **Keep the evidence store alive.** Run
-   `uv run hlbot harvest-candles --if-stale-minutes 30` (no-op when fresh; a
-   network failure must not block the iteration — note it and continue).
+   `uv run hlbot harvest-candles --if-stale-minutes 30 --sync-peer
+   /opt/hl-bot/data/candle_store` (no-op fetch when fresh; the sync
+   union-merges with the deploy clone's store so either harvester dying
+   can't gap the sample — B-STORESYNC, Iter 84; a network failure must not
+   block the iteration — note it and continue).
    This step lives in the PROMPT because loop.sh's own top-up only exists in
    loop processes started after 2026-06-12 02:08 — bash parses the loop body
    at startup, so editing loop.sh never reaches an already-running loop. 1m

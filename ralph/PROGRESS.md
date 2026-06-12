@@ -4717,3 +4717,68 @@ at the 16:35:35 fire. Same one-deploy-lag mechanism as loop.sh step-0
 (Iter 78). (3) TON −112.5 still open, max-hold force-close due ~19:12 —
 next iteration. Account equity ~$628, manual book unchanged,
 `daily_loss_floor` operator question stands.
+
+## Iteration 84 — 2026-06-12 — B-STORESYNC: the two candle stores become each other's backup
+
+**Ripeness checks** (per-iteration readout): b_edge2b NOT RIPE (15m span
+52.5d < 60d, ~Jun 20); b_g014 NOT RIPE (1m span 4.1d < 14d, ~Jun 26).
+Store fresh (step-0 harvest: worst lag 19.2m, skipped).
+
+**Why this.** All headline work is time-gated and the idle queue was empty,
+so went looking at the one asset everything time-gated depends on: the
+candle store. Found the deploy clone's store (fed by hlbot-harvest.timer,
+same host) held exactly ONE 5000-bar 1m page ending 16:23 — its timer only
+came alive after Iter 79's 203/EXEC fix, so it restarted from scratch
+today and lacked the Jun 8–9 bars. Meanwhile the loop store is the single
+copy of those irreplaceable bars. BOTH harvesters have already had a
+multi-day outage (dead timer Jun 8–12; unparsed loop.sh step, Iter 78) —
+the B-G014 sample was one more process-level failure away from permanent
+invalidation, four days into a 14-day accrual.
+
+**Changed.**
+- `backtest/store.py`: `SyncResult` + `sync_stores(root_a, root_b)` —
+  union-merge every `*.json.gz` between two store dirs. Conflict rule:
+  the side whose series reaches later wins (within one store every bar
+  except the newest is final — `harvest_one` refetches the last stored
+  bar until it is — so the later-reaching side holds the final version
+  of any overlap). Unreadable side → treated empty, healed from the
+  healthy one, error recorded. Per-file error isolation; atomic writes;
+  identical sides are never rewritten (a concurrent harvest can lose at
+  most its own latest top-up to the race — the next sync re-adds it).
+- `cli`: `harvest-candles --sync-peer DIR` runs the sync after the harvest
+  AND on the `--if-stale-minutes` skip path (sync is local + free).
+  Missing peer clone (parent dir absent) skips quietly — safe to bake into
+  units that may run elsewhere; sync failures print but never change the
+  exit code (only harvest failures turn the timer red).
+- Wiring, both directions: PROMPT.md step 0 + loop.sh now pass
+  `--sync-peer /opt/hl-bot/data/candle_store`; `hlbot-harvest.service`
+  passes `--sync-peer /opt/hl-bot-loop/data/candle_store` (ships to the
+  box via update.sh's unit-cp on the next deploy). Either harvester alone
+  now keeps BOTH stores complete.
+
+**Evidence.** 521 → **529 tests pass** (+8: union both sides + later-side
+wins both argument orders; missing-file creation; corrupt-side heal with
+error recorded; identical-sides-no-write; one-bad-file sweep isolation;
+CLI sync-on-fresh-skip pin; CLI absent-clone skip pin); ruff clean.
+Live-fired the real step-0 command: "+177 bars here, +12702 bars peer" —
+both stores now identical unions, BTC/ZEC 1m 06-08 13:00 → 06-12 16:23,
+**0 missing bars** on either side. Residual risk is host loss (both
+stores share a disk); off-host backup is an operator-gated follow-up.
+
+**Live watch (Iter-83 items).** (1) Deploy: `.deployed_sha` = a35b6b4 —
+the box caught up to ALL pushed commits at the 16:35:35 fire (B-PAGER +
+B-DEPLOY-HB now live). (2) `.update_heartbeat` born 16:36 — exactly the
+predicted one-deploy-lag fire. (3) Box health output verified live:
+"✓ deploy: at a35b6b4e, updater ran 2.5 min ago" + "⚠ pager: DOWN pages
+nobody" — both new signals working; box reads 🟡 until the operator wires
+a channel (by design; operator question stands). (4) TON −112.5 still
+open, max-hold force-close due ~19:12 — verify next iteration. Equity
+$645.18 (was $627.54).
+
+**What's next (loop).** Verify TON's max-hold close (~19:12) and that the
+box's 17:23 harvest-timer fire runs the synced unit (deploy→loop sync line
+in its journal / loop store gaining the timer's bars without a loop-side
+harvest). Per-iteration readouts unchanged (b_edge2b ~Jun 20, b_g014
+~Jun 26, b_edge3 + b_edge2_1h ~Jul 10). Idle queue: B-SCALE doc once real
+G2 evidence exists; off-host store backup proposal if the operator wants
+host-loss coverage.
