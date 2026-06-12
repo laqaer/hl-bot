@@ -286,10 +286,26 @@ def check_guardrails(
            FROM fills WHERE time_ms >= ? AND agent IN ({placeholders})""",
         (since_ms, *bot_agents),
     ).fetchone()
-    daily_pnl = float(row[0] or 0.0)
+    fills_pnl = float(row[0] or 0.0)
+    # Funding is realized hourly cash flow on HL, but it lands in
+    # funding_payments, not fills — a book parked against extreme funding can
+    # bleed past the daily limit without printing a single fill (femr trades
+    # exactly that regime). Net 24h funding INCOME is clamped to zero: a
+    # funding loss tightens the halt, income never widens the loss headroom
+    # (symmetric inclusion would loosen the gate vs fills-only — operator call).
+    from ..scoring.metrics import agents_funding_since
+    try:
+        funding_24h = agents_funding_since(conn, bot_agents, since_ms)
+    except Exception as e:  # noqa: BLE001
+        # Degrade to the fills-only measure rather than abort the tick: a
+        # guardrail crash here would also skip the risk-REDUCING flattens.
+        log.warning("funding attribution for guardrail failed: %s", e)
+        funding_24h = 0.0
+    daily_pnl = fills_pnl + min(0.0, funding_24h)
     if daily_pnl < -abs(cfg.max_daily_loss):
         return False, (
-            f"24h bot PnL ${daily_pnl:.2f} < -${cfg.max_daily_loss:.2f} "
+            f"24h bot PnL ${daily_pnl:.2f} (fills ${fills_pnl:.2f}, "
+            f"funding ${funding_24h:+.2f}) < -${cfg.max_daily_loss:.2f} "
             f"(agents={','.join(bot_agents)})"
         )
 
@@ -305,7 +321,10 @@ def check_guardrails(
     if bot_ntl >= cfg.max_total_notional:
         return False, f"bot open notional ${bot_ntl:.2f} >= cap ${cfg.max_total_notional:.2f}"
 
-    return True, f"OK capital ${capital:.2f} 24h-pnl ${daily_pnl:+.2f} bot-open ${bot_ntl:.2f}"
+    return True, (
+        f"OK capital ${capital:.2f} 24h-pnl ${daily_pnl:+.2f} "
+        f"(funding ${funding_24h:+.2f}) bot-open ${bot_ntl:.2f}"
+    )
 
 
 # ---------------------------------------------------------------------------

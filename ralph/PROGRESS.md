@@ -3562,3 +3562,67 @@ revisit if B-SCALE raises caps materially.
 readouts (b_edge2b ~Jun 20 FIRST, then bump its min_span_days after the
 run; b_g014 ~Jun 26). B-EDGE2f at ≥30d paper books (~Jul 8). Idle queue:
 B-SCALE doc once G2 evidence is real.
+
+## Iteration 68 — 2026-06-12 — B-FUNDGR: the daily-loss halt was blind to funding
+
+**Ripeness checks** (per-iteration readout): b_edge2b NOT RIPE (15m span
+52.1d < 60d, breadth coins binding, ETA ~Jun 20); b_g014 NOT RIPE (1m span
+3.7d < 14d, ETA ~Jun 26). Store healthy (20/20 + 10/10 pairs reporting).
+
+**Why this.** Headline items time-blocked; REVIEW swept. Iter 67's flagged
+"no order-time portfolio check" was scoped and deliberately NOT built:
+`check_guardrails` already blocks entries on the marked aggregate pre-tick,
+per-agent caps bound the intra-tick add (post-B-AGG Σ caps ≤ 5×), so the
+residual is second-order drift — Iter 67's own "revisit when B-SCALE raises
+caps" stands. But auditing that same guardrail surfaced a first-order hole
+in the layer that IS the hard stop.
+
+**Root cause.** The 24h daily-loss measure summed `closed_pnl − fee` from
+`fills` only. Funding is realized hourly cash flow on HL but lands in
+`funding_payments`, not fills — so a book sitting against extreme funding
+bleeds without printing a single fill and the halt never trips. Magnitude:
+extreme HL funding ~0.1%/hr × 5× portfolio notional ≈ 12%/day vs the 3%/day
+`dynamic_daily_loss_limit` — funding can DOMINATE the daily loss exactly in
+the funding-extreme regime femr trades and breakout's multi-day holds sit
+through. Second find while wiring it: `_coin_holders_over_time` (the
+equal-split fallback behind funding attribution, used by live scorecards
+too) read `agent_decisions` without an `is_paper` filter — a paper agent
+"holding" a coin in its paper book could claim a share of REAL funding
+whenever a coin had no fills or netted ~0.
+
+**Changed.** (a) `scoring/metrics.py`: `_coin_holders_over_time` filters
+`is_paper = 0` (paper rows never claim live cash); new public
+`agents_funding_since(conn, agents, since_ms)` rolls up the existing
+size-weighted attribution across the roster, deduped. (b)
+`exec/orders.py check_guardrails`: 24h PnL = fills + min(0, attributed
+funding) — clamped so a funding LOSS tightens the halt but funding income
+never widens the loss headroom (symmetric inclusion would loosen the gate
+vs fills-only; left as a documented operator call). Attribution failure
+degrades to the fills-only measure with a log warning rather than aborting
+the tick (a crash here would also skip the risk-reducing flattens). Both
+halt and OK messages now show the funding term.
+
+**Evidence.** 441 → **447 tests pass**; `ruff check src tests scripts`
+clean. New: 4 in test_guardrails.py (funding-only bleed halts + message
+names funding; fills −6 + funding −6 trips a $10 limit neither alone would;
++$50 funding cannot mask a −$11 fills breach; manual-coin funding ignored)
++ 2 in test_attribution.py (paper rows get no share while a live holder
+over the same span gets the full payment — the pre-fix leak; rollup splits
+3:1 by size, dedups repeated names, excludes manual). Live-fired
+`agents_funding_since` against the real `data/hlbot.sqlite` (runs clean on
+the production schema; 0 funding rows on the loop box — funding ingest
+happens on the deployed box, unit tests carry the behavior).
+
+**Found.** (a) Clamp is applied to the cross-agent NET funding (consistent
+with fills netting across agents); per-agent clamping would be stricter —
+revisit if a funding-collecting agent ever shares the live book with a
+funding-paying one. (b) `check_guardrails` re-fetches user_state + spot
+USDC although `femr_tick` already holds an `AccountState` — duplicate API
+call, two reads could diverge within one tick; harmless today, fold into
+B12-style consolidation if touched again. (c) Iter 67(c) (order-time
+aggregate check) re-confirmed as second-order; stays parked behind B-SCALE.
+
+**What's next (loop).** Per-iteration: the two `--check-only` ripeness
+readouts (b_edge2b ~Jun 20 FIRST, then bump its min_span_days after the
+run; b_g014 ~Jun 26). B-EDGE2f at ≥30d paper books (~Jul 8). Idle queue:
+B-SCALE doc once G2 evidence is real.

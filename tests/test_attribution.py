@@ -112,6 +112,37 @@ def test_funding_after_fill_close_not_attributed(conn):
     assert _agent_funding_payments(conn, "funding_carry_v1", now - DAY) == []
 
 
+def test_paper_rows_never_claim_live_funding(conn):
+    """funding_payments are REAL account cash flows: a paper agent 'holding'
+    the coin in its paper book (is_paper=1 decision rows, no fills) must get
+    no share — the equal-split fallback used to leak paper holders in."""
+    now = int(time.time() * 1000)
+    conn.execute(
+        "INSERT INTO agent_decisions(ts_ms, agent, action, coin, is_paper) VALUES(?,?,?,?,1)",
+        (now - 600_000, "breakout_v1", "place", "BTC"),
+    )
+    _funding(conn, "BTC", now - 300_000, 2.50)
+    assert _agent_funding_payments(conn, "breakout_v1", now - DAY) == []
+    # A live holder over the same span still gets the full payment.
+    _decision(conn, "funding_carry_v1", "place", "BTC", now - 600_000)
+    pays = _agent_funding_payments(conn, "funding_carry_v1", now - DAY)
+    assert sum(s for _, s in pays) == pytest.approx(2.50)
+
+
+def test_agents_funding_since_rolls_up_and_dedups(conn):
+    from hl_bot.scoring.metrics import agents_funding_since
+
+    now = int(time.time() * 1000)
+    # A long 3, B long 1 -> $4 split 3:1 by size; manual-only coin excluded.
+    _fill(conn, "xfund_carry_v1", "BTC", now - 600_000, pnl=0.0, fee=0.0, sz=3.0)
+    _fill(conn, "funding_carry_v1", "BTC", now - 600_000, pnl=0.0, fee=0.0, sz=1.0)
+    _funding(conn, "BTC", now - 300_000, -4.0)
+    total = agents_funding_since(
+        conn, ["xfund_carry_v1", "funding_carry_v1", "xfund_carry_v1"], now - DAY)
+    assert total == pytest.approx(-4.0)  # repeated name does not double-count
+    assert agents_funding_since(conn, ["xfund_carry_v1"], now - DAY) == pytest.approx(-3.0)
+
+
 def test_funding_not_attributed_outside_holding_window(conn):
     now = int(time.time() * 1000)
     _decision(conn, "funding_carry_v1", "place", "SOL", now - 600_000)

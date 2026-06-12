@@ -94,10 +94,16 @@ def _coin_holders_over_time(
     opens an interval for (agent, coin); a `flatten` closes it. Still-open
     positions run to +inf. This is the basis for attributing account-level
     funding payments back to the agent that actually held the position.
+
+    LIVE rows only: funding_payments are real account cash flows, so a paper
+    decision row must never claim a share of one (the equal-split fallback
+    would otherwise leak paper holders into live attribution whenever a coin
+    has no fills, or nets to ~0 across agents).
     """
     rows = conn.execute(
         """SELECT ts_ms, agent, action, coin FROM agent_decisions
            WHERE action IN ('place', 'flatten') AND coin IS NOT NULL
+             AND is_paper = 0
            ORDER BY ts_ms ASC"""
     ).fetchall()
     open_pos: dict[tuple[str, str], int] = {}
@@ -198,6 +204,24 @@ def _agent_funding_payments(
             if agent in holders:
                 out.append((t, usdc / len(holders)))
     return out
+
+
+def agents_funding_since(
+    conn: sqlite3.Connection, agents: list[str], since_ms: int | None
+) -> float:
+    """Total funding attributed to ``agents`` since ``since_ms`` (signed USDC).
+
+    Guardrail-tier rollup of :func:`_agent_funding_payments`: size-weighted
+    fills attribution with the live decision-log fallback, summed across the
+    given agents (deduplicated, so a repeated roster name cannot double-count
+    a payment). Coins held only by manual size stay unattributed, exactly as
+    in the scorecards.
+    """
+    return sum(
+        share
+        for agent in dict.fromkeys(agents)
+        for _, share in _agent_funding_payments(conn, agent, since_ms)
+    )
 
 
 def _daily_pnl_sharpe(daily: list[float], periods_per_year: float = 365) -> float | None:

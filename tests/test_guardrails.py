@@ -91,6 +91,83 @@ def test_guardrail_passes_when_aggregate_pnl_above_limit(conn):
     assert ok is True
 
 
+def _insert_funding(conn, coin, t_ms, usdc):
+    conn.execute(
+        """INSERT INTO funding_payments(time_ms, coin, usdc, szi, funding_rate, raw_json)
+           VALUES(?,?,?,?,?,?)""",
+        (t_ms, coin, usdc, 0.0, 0.0, "{}"),
+    )
+
+
+def test_guardrail_halts_on_funding_bleed_without_fills_pnl(conn):
+    """A book parked against extreme funding bleeds via funding_payments, not
+    fills — the daily-loss guardrail must see it (it used to sum fills only)."""
+    now = int(time.time() * 1000)
+    # twap holds ADA (open fill, zero closed PnL) and pays $50 funding on it.
+    _insert_fill(conn, "twap_mr_v1", now - 7_200_000, pnl=0.0, fee=0.0, coin="ADA")
+    _insert_funding(conn, "ADA", now - 3_600_000, -50.0)
+
+    info = FakeInfo(account_value=1000.0)
+    cfg = GuardrailConfig(min_bot_capital=40.0, max_daily_loss=10.0,
+                          max_total_notional=5000.0)
+    ok, why = check_guardrails(conn, info, cfg, agents=["femr_v1", "twap_mr_v1"])
+
+    assert ok is False
+    assert "funding" in why.lower()
+
+
+def test_guardrail_funding_and_fills_losses_combine(conn):
+    """Neither the fills loss nor the funding loss alone trips the limit; the
+    honest 24h total does."""
+    now = int(time.time() * 1000)
+    _insert_fill(conn, "twap_mr_v1", now - 7_200_000, pnl=-6.0, fee=0.0, coin="ADA")
+    _insert_funding(conn, "ADA", now - 3_600_000, -6.0)
+
+    info = FakeInfo(account_value=1000.0)
+    cfg = GuardrailConfig(min_bot_capital=40.0, max_daily_loss=10.0,
+                          max_total_notional=5000.0)
+    ok, why = check_guardrails(conn, info, cfg, agents=["twap_mr_v1"])
+
+    assert ok is False
+
+
+def test_guardrail_funding_income_never_widens_loss_headroom(conn):
+    """Tightening-only: a $50 funding windfall must not mask an $11 fills loss
+    that breaches a $10 limit (symmetric inclusion is an operator call)."""
+    now = int(time.time() * 1000)
+    _insert_fill(conn, "twap_mr_v1", now - 7_200_000, pnl=-11.0, fee=0.0, coin="ADA")
+    _insert_funding(conn, "ADA", now - 3_600_000, 50.0)
+
+    info = FakeInfo(account_value=1000.0)
+    cfg = GuardrailConfig(min_bot_capital=40.0, max_daily_loss=10.0,
+                          max_total_notional=5000.0)
+    ok, why = check_guardrails(conn, info, cfg, agents=["twap_mr_v1"])
+
+    assert ok is False
+
+
+def test_guardrail_ignores_funding_on_manual_coins(conn):
+    """Funding on a coin held only by a manual (unattributed) fill must not
+    halt the bot — a human's carry trade is not the bot's loss."""
+    now = int(time.time() * 1000)
+    conn.execute(
+        """INSERT INTO fills(hash, tid, time_ms, coin, side, px, sz,
+           start_position, dir, closed_pnl, fee, fee_token, builder_fee,
+           cloid, agent, raw_json)
+           VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+        (f"hmanual{now}", now - 7_200_000, now - 7_200_000, "DOGE", "B", 0.1,
+         1000.0, 0, "Open Long", 0.0, 0.0, "USDC", 0, None, None, "{}"),
+    )
+    _insert_funding(conn, "DOGE", now - 3_600_000, -50.0)
+
+    info = FakeInfo(account_value=1000.0)
+    cfg = GuardrailConfig(min_bot_capital=40.0, max_daily_loss=10.0,
+                          max_total_notional=5000.0)
+    ok, why = check_guardrails(conn, info, cfg, agents=["femr_v1", "twap_mr_v1"])
+
+    assert ok is True
+
+
 def test_dynamic_daily_loss_limit_scales_with_portfolio():
     # Floor applies for tiny accounts.
     assert dynamic_daily_loss_limit(100.0, floor=10.0, pct=0.03) == pytest.approx(10.0)

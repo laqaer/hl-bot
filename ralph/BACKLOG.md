@@ -296,6 +296,22 @@ Keep it ruthlessly prioritized: the top item should always be the highest-levera
   spot mids adopted for BTC/ETH/SOL at +4–12bps basis; paper tick shows
   basis_v1 holding honestly below its 20bps entry. REVIEW is now fully swept.
 
+- [x] **B-FUNDGR — Daily-loss guardrail counts funding (clamped) + paper rows
+  can't claim live funding.** Done (Iter 68): `check_guardrails`' 24h loss
+  summed `closed_pnl − fee` from fills ONLY — funding lands in
+  `funding_payments`, so a book parked against extreme funding (femr's exact
+  regime; at 5× notional an extreme print can rival the 3%/day limit) could
+  bleed past the halt without printing a fill. Now the attributed bot funding
+  (`scoring.agents_funding_since`, reusing the B6/B9b size-weighted split)
+  joins the measure, clamped to ≤0: a funding loss tightens the halt, income
+  never widens headroom (symmetric inclusion = loosening = operator call,
+  documented in-code). Attribution failure degrades to fills-only with a
+  warning (a crash here would also skip risk-REDUCING flattens). Bundled
+  fix: `_coin_holders_over_time` now reads live rows only — the equal-split
+  fallback could leak PAPER decision-rows into REAL funding attribution
+  (scorecards too, not just the guardrail). Noted, not done: per-agent
+  clamping (stricter than the aggregate clamp) and the duplicate
+  user_state fetch in check_guardrails vs fetch_account_state.
 - [x] **B10 — WebSocket market view.** Done: `ingest/ws.py` MarketState +
   `hlbot ws` service writes a snapshot; live tick overlays it (HLBOT_WS_SNAPSHOT)
   for sub-second mids, L2 book_top, and a real liquidations feed (fixes C6), with
