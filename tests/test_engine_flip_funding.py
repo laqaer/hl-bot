@@ -55,7 +55,7 @@ def test_opposite_side_place_opens_only_remainder():
 
     # No double-count: traded notional = 5 (open) + 5 (close) + 2 (open) + 2 (close) = 14 units.
     assert res.scorecard.notional_traded == 14.0 * 100.0
-    assert res.scorecard.n_trades == 4
+    assert res.scorecard.n_fills == 4   # n_trades counts nonzero closes only
     # No price move, no cost -> flat PnL (would be nonzero if sizing/fees were wrong).
     assert abs(res.net_pnl) < 1e-6
 

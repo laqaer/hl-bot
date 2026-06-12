@@ -80,7 +80,7 @@ def test_maker_entry_requires_cross_not_touch(conn):
     assert len(res.fills) == 1
     row = conn.execute("SELECT * FROM paper_fills").fetchone()
     assert row["px"] == pytest.approx(99.0)
-    assert row["fee"] == pytest.approx(99.0 * 1.0 * 1.0 / 10_000)  # maker 1 bp
+    assert row["fee"] == pytest.approx(99.0 * 1.0 * 1.5 / 10_000)  # maker 1.5 bp (HL base)
     assert conn.execute("SELECT COUNT(*) FROM paper_orders").fetchone()[0] == 0
 
 
@@ -158,7 +158,8 @@ def test_paper_scorecard_includes_funding(conn):
     simulate_cycle(conn, view(NOW, {"BTC": 100.0}), [flatten("a1", "BTC")], now_ms=NOW)
 
     sc = score_agent(conn, "a1", "24h", source="paper")
-    assert sc.n_trades == 2
+    assert sc.n_trades == 1      # one round trip (close events, not fills)
+    assert sc.n_fills == 2
     assert sc.funding_pnl > 0          # short collected positive funding
     assert sc.fees_paid > 0
     # Carry round-trip at flat price: net = funding - fees - slippage costs.

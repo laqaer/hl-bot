@@ -68,7 +68,7 @@ class CostModel:
     """
 
     taker_fee_bps: float = 4.5
-    maker_fee_bps: float = 1.0
+    maker_fee_bps: float = 1.5
     slippage_bps: float = 2.0
     maker: bool = False
 

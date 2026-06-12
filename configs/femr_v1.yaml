@@ -30,14 +30,17 @@ sizing:
   live_small_max_total: 75
   live_small_max_per_trade: 25
 
+# n_trades counts CLOSE events (round trips), not fills, since 2026-06-12.
 promotion_ladder:
   - from: paper
     to: live_small
     min_days_in_mode: 5
     require_g0: true
     conditions:
+      # recent-window risk gate: don't promote an agent that's bleeding NOW
+      - {metric: net_pnl,  window: 7d,  op: ">=", threshold: 0, source: paper}
       - {metric: edge_bps, window: 30d, op: ">=", threshold: 3, source: paper}
-      - {metric: n_trades, window: 30d, op: ">=", threshold: 100, source: paper}
+      - {metric: n_trades, window: 30d, op: ">=", threshold: 50, source: paper}
   - from: live_small
     to: live
     min_days_in_mode: 14
@@ -45,4 +48,4 @@ promotion_ladder:
       - {metric: edge_bps, window: 30d, op: ">=", threshold: 3}
       - {metric: net_pnl,  window: 30d, op: ">=", threshold: 0}
       - {metric: sharpe,   window: 30d, op: ">=", threshold: 1.0}
-      - {metric: n_trades, window: 30d, op: ">=", threshold: 40}
+      - {metric: n_trades, window: 30d, op: ">=", threshold: 20}

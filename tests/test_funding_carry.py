@@ -40,7 +40,8 @@ def test_single_name_carry_collects_funding():
     res, _ = _run(FundingCarryAgent, frames)
     assert res.net_pnl > 0
     # it entered then closed (liquidate-at-end) -> funding realized
-    assert res.scorecard.n_trades >= 2
+    assert res.scorecard.n_fills >= 2
+    assert res.scorecard.n_trades >= 1
 
 
 def test_xsectional_carry_is_two_sided_and_positive():

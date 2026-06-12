@@ -40,7 +40,7 @@ WINDOW_MS: dict[Window, int | None] = {
 class Scorecard:
     agent: str
     window: str
-    n_trades: int
+    n_trades: int            # CLOSE events (round-trip legs) — the sample-size truth
     realized_pnl: float
     fees_paid: float
     funding_pnl: float
@@ -55,6 +55,7 @@ class Scorecard:
     notional_traded: float
     edge_bps: float | None      # net_pnl / notional_traded in basis points
     max_drawdown_usd: float | None = None  # dollar peak-to-trough (all agents)
+    n_fills: int = 0                       # raw fill count (ops display only)
 
     def as_dict(self) -> dict:
         return asdict(self)
@@ -140,9 +141,13 @@ def score_agent(
     since = now_ms - w if w else None
 
     fills = _fills_df(conn, agent, since, source)
-    n_trades = int(len(fills))
-    realized = float(fills["closed_pnl"].sum()) if n_trades else 0.0
-    fees = float(fills["fee"].sum()) if n_trades else 0.0
+    n_fills = int(len(fills))
+    # Sample size = CLOSE events, not fills: a 2-leg carry round trip is 4
+    # fills but only 2 closes; counting fills made the n_trades gates look
+    # 2-4x stronger than the statistical evidence they actually had.
+    n_trades = int((fills["closed_pnl"] != 0).sum()) if n_fills else 0
+    realized = float(fills["closed_pnl"].sum()) if n_fills else 0.0
+    fees = float(fills["fee"].sum()) if n_fills else 0.0
     if agent == "_account":
         # Account row keeps the exchange total (includes residual + manual).
         funding = _funding_total(conn, since) if source == "live" else 0.0
@@ -169,7 +174,10 @@ def score_agent(
     profit_factor = float(wins.sum() / abs(losses.sum())) if losses.sum() != 0 else float("inf") if wins.sum() > 0 else 0.0
 
     # Notional & edge
-    notional = float((fills["px"] * fills["sz"]).abs().sum()) if n_trades else 0.0
+    notional = float((fills["px"] * fills["sz"]).abs().sum()) if n_fills else 0.0
+    # NOTE: trades straddling the window start put full closed_pnl against
+    # only their exit-leg notional (edge inflated on some rolling looks);
+    # the promotion persistence gate damps this — proper fix is V4.
     edge_bps = float(net / notional * 10_000) if notional > 0 else None
 
     # Sharpe / DD. The account gets fractional DD from its real equity curve;
@@ -215,7 +223,7 @@ def score_agent(
             dd_usd = dollar_max_drawdown(curve)
 
     return Scorecard(
-        agent=agent, window=window, n_trades=n_trades,
+        agent=agent, window=window, n_trades=n_trades, n_fills=n_fills,
         realized_pnl=realized, fees_paid=fees, funding_pnl=funding, net_pnl=net,
         win_rate=win_rate, avg_win=avg_win, avg_loss=avg_loss, profit_factor=profit_factor,
         sharpe=sharpe, max_drawdown=dd, calmar=calmar,
