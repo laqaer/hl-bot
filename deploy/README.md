@@ -110,15 +110,22 @@ decisions as paper rows (`is_paper=1`), so paper agents track positions,
 exits, and cooldowns exactly like live — that paper book is the forward-test
 evidence for promoting a candidate. Replays are book-aware (a live tick never
 acts on paper rows and vice versa), so sharing one DB is safe; still, to keep
-the live DB clean, prefer a dedicated file when running a paper loop next to a
-live one:
+the live DB clean, the paper loop uses a dedicated file.
+
+`hlbot-paper-tick.timer` runs this loop every 5 minutes (`run-paper-tick.sh`:
+paper `femr_tick` + `supervisor` against `data/hlbot_paper.sqlite`, no ingest,
+no orders ever). It is enabled by install.sh and self-enables via update.sh's
+timer loop on existing boxes. It exists because the live tick in live mode
+runs only promoted agents — paper evidence for a candidate accumulates only
+where paper ticks actually run, and a live-mode box without this timer accrues
+NONE (found Iter 85). Read the book with
+`HLBOT_DB=data/hlbot_paper.sqlite uv run hlbot score --paper`.
+
+One-off manual paper tick (same DB the unit uses):
 
 ```bash
 sudo -u hlbot bash -c 'cd /opt/hl-bot && HLBOT_DB=data/hlbot_paper.sqlite uv run hlbot femr_tick'
 ```
-
-Note the live tick in live mode runs only promoted agents — paper evidence for
-a candidate accumulates only where paper ticks actually run.
 
 The paper roster includes `breakout_v1` (96h Donchian channel on 15m bars,
 B-EDGE2a), which adds one 15m candleSnapshot call per top-20 coin to each

@@ -11,3 +11,12 @@ dbs:
         # AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY from the environment.
         retention: 168h          # keep 7d of restore points
         snapshot-interval: 1h
+  # Paper forward-test book (hlbot-paper-tick.timer): losing it resets every
+  # promotion candidate's 30d G1 calendar clock, so it replicates too.
+  - path: /opt/hl-bot/data/hlbot_paper.sqlite
+    replicas:
+      - type: s3
+        bucket: ${LITESTREAM_S3_BUCKET}
+        path: ${LITESTREAM_S3_PATH}-paper
+        retention: 168h
+        snapshot-interval: 1h

@@ -4782,3 +4782,92 @@ harvest). Per-iteration readouts unchanged (b_edge2b ~Jun 20, b_g014
 ~Jun 26, b_edge3 + b_edge2_1h ~Jul 10). Idle queue: B-SCALE doc once real
 G2 evidence exists; off-host store backup proposal if the operator wants
 host-loss coverage.
+
+## Iteration 85 — 2026-06-12 — B-PAPERLOOP: the G1 evidence pipeline was dead; shipped the paper forward-test loop
+
+**Ripeness checks** (per-iteration readout): b_g014 NOT RIPE (1m span 4.1d
+< 14d, ~Jun 26); b_edge2b NOT RIPE (15m span 52.5d < 60d, ~Jun 20). Store
+fresh (worst lag 17.8m, harvest skipped; peer sync +0/+0 — the two stores
+remain identical unions, B-STORESYNC holding).
+
+**Finding 1 (the work): no G1 paper evidence was accruing ANYWHERE.** The
+live box ticks `--live` only (run-tick.sh + HLBOT_TICK_ARGS), and in live
+mode `filter_live_agents` drops unpromoted agents — so paper candidates
+never tick there. No paper loop existed on any host. Evidence from the
+deploy DB: ONE paper tick total in its life (15:42:21 today — femr_v1 1
+row, twap_mr_regime_v1 1, xmom_v1 3; breakout_v1/breakout_er_v1 ZERO paper
+rows ever), while live rows run continuously since Jun 9.
+deploy/README §Paper book literally warned "paper evidence for a candidate
+accumulates only where paper ticks actually run" — but the documented
+operator setup was never done, and every forward-test ETA in the backlog
+(breakout_er_v1 G1, xmom_v1 ~mid-July, B-EDGE2f ≥30d readout) assumed a
+calendar clock that was not running. G1 requires ≥30d *calendar span*
+(B-GATES) — every day this stood cost a calendar day at the gate.
+
+**Changed.**
+- `deploy/run-paper-tick.sh` (exec-bit set in-index): paper `femr_tick` +
+  `supervisor` (the G1 audit trail) against `data/hlbot_paper.sqlite`.
+  Safety shape: HLBOT_DB exported INSIDE the script (a stray HLBOT_DB in
+  /etc/hl-bot/env can never point it at the live DB; override knob is
+  HLBOT_PAPER_DB), HLBOT_TICK_ARGS deliberately unread (the live box's
+  "--live --execution maker" can't leak in), no ingest step (live-account
+  fills stay out of the paper evidence stream), best-effort steps like
+  run-tick.sh.
+- `hlbot-paper-tick.service` (oneshot, bash-wrapped ExecStart per
+  B-DEPLOY-EXEC, OOMScoreAdjust=+500 — sacrificial vs the live trader's
+  −700) + `hlbot-paper-tick.timer` (5min, OnBootSec=4min offsets it from
+  the live tick's 2min).
+- Wiring: install.sh enable line (fresh boxes); existing update.sh
+  hlbot-*.timer self-enable loop ships + enables it on the live box at the
+  next deploy fire — no operator action needed. litestream.yml gains the
+  paper DB (path suffix `-paper`): losing this file resets every
+  candidate's 30d G1 clock, so it replicates beside the live DB.
+- deploy/README §Paper book rewritten around the unit.
+
+**Evidence.** 529 → **534 tests pass** (+5 pins in
+test_deploy_paper_tick.py: dedicated-DB export before any hlbot call;
+no --live / no HLBOT_TICK_ARGS / no ingest in invocations; tick+supervisor
+present; bash-wrapped ExecStart + EnvironmentFile; timer wired in
+install.sh + reachable by update.sh's self-enable glob — plus the exec-bit
+test auto-covers the new script); ruff clean. Live-fired the exact script
+(HLBOT_HOME=loop clone, scratch DB, deleted after): full 8-agent roster
+ticked PAPER — twap_mr/regime/xmom logged 10 is_paper=1 entries, breakout
+agents evaluated their 20-coin closes_15m channels (held — no break),
+supervisor wrote 49 goal_evaluations, tick_heartbeats row mode='paper'.
+No orders possible (no --live anywhere).
+
+**Finding 2 (operator FYI — no loop action taken): twap_mr_v1's live_small
+state dates to a 16:19:04 promote by the PRE-FIX code.** History from
+goal_evaluations: the old deployed code auto-"promoted" paper→live_small
+on EVERY tick from Jun 9 02:44 to Jun 12 15:07 (987 promote rows — this,
+not a one-off, is what Iter 80 caught the tail of), demoted every tick
+15:12→16:13 while 7d edge < −10bps, then promoted once more at 16:19:04 —
+one minute before the fixed code deployed (16:20:47). Under the new code
+(B-PAPER3c) that state is durable: re-promotion off paper cards is
+refused, but standing agent_state isn't reverted, and guardrails currently
+pass (16:39:25 eval: 7d edge −8.3bps > −10 rail, 30d net +$166, win 52.8%)
+so the supervisor has no cause to demote. Net: twap_mr_v1 trades live via
+a promotion path the codebase has since classified as illegitimate.
+Operator call, both honest options: keep it (it is the P0.5 B-SCALE
+strategy, within guardrails, and HLBOT_TICK_ARGS=--live suggests intent)
+or revert with GO_LIVE.md §kill-switch SQL (`UPDATE agent_state SET
+enabled=0, mode='paper' ...`); B-EXITONLY manages any open inventory
+either way. The loop won't flip live state in either direction.
+
+**Live watch (Iter-84 items).** (1) TON −112.5: no longer visible in the
+fills-replay positions table (TON ownership was never in the DB —
+Iter 80); exchange-truth check after the ~19:12 max-hold deadline is next
+iteration's item. (2) 17:23 harvest-timer fire (first with --sync-peer on
+the box) hadn't fired yet this iteration — verify journal/store next.
+(3) Equity $671.20 (was $645.18 at Iter 84). (4) Deploy heartbeat healthy
+(box at a35b6b4 pre-push; this commit lands at the next 15-min fire).
+
+**What's next (loop).** Next iteration: verify hlbot-paper-tick.timer is
+enabled + fired on the box (systemctl list-timers + paper DB born under
+/opt/hl-bot/data + journal), verify the 17:23 harvest sync line, check TON
+after 19:12. Per-iteration readouts unchanged (b_edge2b ~Jun 20, b_g014
+~Jun 26, b_edge3 + b_edge2_1h reruns ~Jul 10, B-EDGE2f paper readout
+~Jul 12). Idle queue: paper-loop liveness warn in `hlbot health` (a dead
+paper timer = this same silent failure mode again — warn-only, keyed on
+the paper DB's tick_heartbeats staleness, gated to boxes where the paper
+DB exists).

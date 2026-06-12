@@ -1,0 +1,14 @@
+[Unit]
+Description=Run hl-bot paper forward-test tick every 5 minutes (G1 evidence)
+
+[Timer]
+# Offset from hlbot-tick.timer's 2min boot delay so the two oneshots don't
+# always contend for the same API window.
+OnBootSec=4min
+OnUnitActiveSec=5min
+# Don't fire missed runs in a burst after downtime.
+Persistent=false
+AccuracySec=15s
+
+[Install]
+WantedBy=timers.target

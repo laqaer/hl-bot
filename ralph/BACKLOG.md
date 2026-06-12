@@ -176,6 +176,27 @@ Keep it ruthlessly prioritized: the top item should always be the highest-levera
   of net/edge/sharpe/DD; `hlbot track-record --paper-mark` (default on)
   fetches mids only when open paper positions exist (`--no-paper-mark`
   opt-out, fetch failure degrades to "—"). Live-fired on real allMids.
+- [x] **B-PAPERLOOP — Ship the paper forward-test loop (the G1 evidence
+  pipeline was DEAD).** Done (Iter 85): the live box ticks `--live` only and
+  `filter_live_agents` drops unpromoted agents, so since the box went live
+  (≥Jun 9) NO paper evidence accrued anywhere — the deploy DB held ONE paper
+  tick total (15:42 Jun 12; breakout_v1/breakout_er_v1: zero paper rows EVER)
+  and every "G1 ≈ mid-July" forward-test ETA assumed a 30d calendar clock
+  that was not running. deploy/README even warned about this exact hole
+  ("evidence accumulates only where paper ticks run") but nothing ran them.
+  Now `hlbot-paper-tick.timer` (5min, boot-offset from the live tick) runs
+  `run-paper-tick.sh`: paper `femr_tick` + `supervisor` against a dedicated
+  `data/hlbot_paper.sqlite` (exported inside the script so a stray HLBOT_DB
+  in /etc/hl-bot/env can never point it at the live DB; HLBOT_TICK_ARGS
+  deliberately unread so the live box's `--live --execution maker` can't
+  leak in; no ingest — the live account's fills stay out of the paper
+  evidence stream). Wired: install.sh enables it on fresh boxes; update.sh's
+  existing hlbot-*.timer self-enable loop ships it to the live box
+  automatically; litestream.yml replicates the paper DB too (losing it
+  resets every candidate's G1 clock). 5 safety pins in
+  tests/test_deploy_paper_tick.py + exec-bit auto-pin. **All G1 calendar
+  clocks start when the timer lands (Jun 12) → earliest 30d paper span ≈
+  Jul 12** (B-EDGE2f, breakout_er_v1, xmom_v1).
 - [x] **B-MAKERFILL — Honest maker-fill model in the backtester.** Done
   (Iter 50): `CostModel(maker_fill="resting")` + `--maker-fill resting` on
   backtest/confirm replay the live maker lifecycle (entries rest at the
@@ -850,7 +871,10 @@ each on ≥90d real history (`hlbot confirm` / `hlbot backtest --config`) before
     books have ≥30d: `hlbot correlate` breakout_er_v1-config vs twap_mr_v1
     (expect ≈ breakout's −0.1) and compare the two breakout paper cards —
     the filtered arm should show fewer trades and better edge if the
-    backtest result is real out-of-window.
+    backtest result is real out-of-window. _Clock correction (Iter 85,
+    B-PAPERLOOP): no paper book existed before Jun 12 — the box never ran
+    paper ticks. The ≥30d mark is ~Jul 12, counted from the paper timer's
+    first fire, and the book lives in the box's `data/hlbot_paper.sqlite`._
   - [x] **B-EDGE2c — quantify correlation to twap_mr_v1.** Done (Iter 36):
     `backtest/correlate.py` (UTC-day PnL bucketing + Pearson, tested) +
     `hlbot correlate` (two arms, per-arm config/vwap-window, same frames/cost

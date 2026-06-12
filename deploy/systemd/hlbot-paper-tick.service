@@ -1,0 +1,21 @@
+[Unit]
+Description=hl-bot paper forward-test tick (full roster, paper DB, no orders)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=hlbot
+WorkingDirectory=/opt/hl-bot
+EnvironmentFile=/etc/hl-bot/env
+ExecStart=/usr/bin/bash /opt/hl-bot/deploy/run-paper-tick.sh
+# Don't pile up overlapping runs if one is slow.
+TimeoutStartSec=300
+# Hardening (full protects /usr,/etc,/boot but leaves /opt + /home writable so
+# uv can manage its venv + cache; read-only home breaks uv).
+NoNewPrivileges=true
+ProtectSystem=full
+PrivateTmp=true
+# Paper evidence is sacrificial relative to the live trader: positive score =
+# the OOM killer takes this before hlbot-tick (which runs at -700).
+OOMScoreAdjust=500
