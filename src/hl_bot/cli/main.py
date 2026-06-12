@@ -73,25 +73,6 @@ def _fetch_paper_funding(conn, s) -> dict[str, list[dict[str, Any]]]:
     return funding_by_coin
 
 
-def _filter_live_agents_by_state(conn, agents):
-    """Return agents allowed to place live orders plus skipped reasons.
-
-    Paper/default state is safe: an agent must be explicitly enabled and in
-    live_small/live mode before it enters the live execution roster.
-    """
-    rows = conn.execute("SELECT agent, mode, enabled FROM agent_state").fetchall()
-    state = {r["agent"]: (r["mode"], int(r["enabled"])) for r in rows}
-    live_agents = []
-    skipped: dict[str, str] = {}
-    for agent in agents:
-        mode, enabled = state.get(agent.name, ("paper", 1))
-        if enabled == 1 and mode in ("live_small", "live"):
-            live_agents.append(agent)
-        else:
-            skipped[agent.name] = f"mode={mode} enabled={enabled}"
-    return live_agents, skipped
-
-
 @app.command()
 def init():
     """Create the database and ensure config dir exists."""
@@ -459,11 +440,14 @@ def femr_tick(live: bool = False, execution: str = "taker", vwap_window: int = 0
     """
     from ..agents.runtime import (
         apply_allocator_caps,
+        build_roster,
         classify_position_ownership,
         closes_15m_bars,
         fetch_account_state,
         fetch_market_view,
+        filter_live_agents,
         gather_decisions,
+        load_agent_overrides,
         overlay_ws_snapshot,
         positions_from_clearinghouse,
         reconcile_agents,
@@ -482,20 +466,6 @@ def femr_tick(live: bool = False, execution: str = "taker", vwap_window: int = 0
 
     conn, s = _conn()
 
-    # Load auto-tuner overrides if present
-    overrides_path = Path(__file__).resolve().parents[3] / "configs" / "agent_overrides.json"
-    overrides: dict = {}
-    if overrides_path.exists():
-        try:
-            overrides = json.loads(overrides_path.read_text())
-        except (ValueError, OSError):
-            overrides = {}
-
-    def _cfg(agent_name: str, defaults: dict) -> dict:
-        merged = dict(defaults)
-        merged.update(overrides.get(agent_name) or {})
-        return merged
-
     account = fetch_account_state(s.hl_api_url, HL_TRADER_ADDRESS)
     acct_val = account.account_value
     portfolio_value = account.portfolio_value
@@ -512,33 +482,13 @@ def femr_tick(live: bool = False, execution: str = "taker", vwap_window: int = 0
         f"source={risk_cap.source})"
     )
 
-    # Instantiate the full agent roster. In paper mode, evaluate everything. In
-    # live mode, only agents explicitly enabled and promoted to live_small/live
-    # in agent_state are allowed into the execution roster.
-    agents = [
-        FemrAgent(config=_cfg("femr_v1", {
-            "max_notional_per_trade": 20.0,
-            "max_total_notional": 40.0,
-            "funding_enter_per_hr": 0.00015,
-            "funding_exit_per_hr": 0.00005,
-        }), conn=conn),
-        TwapMrAgent(config=_cfg("twap_mr_v1", {}), conn=conn),
-        TwapMrRegimeAgent(config=_cfg("twap_mr_regime_v1", {}), conn=conn),
-        LiqCascadeAgent(config=_cfg("liq_cascade_v1", {}), conn=conn),
-        BasisAgent(config=_cfg("basis_v1", {}), conn=conn),
-        # B-EDGE2a: the G0-validated 15m-bar Donchian config (96h channel,
-        # 24h exit). Paper-only until promoted in agent_state — the live
-        # filter below drops it, which also zeroes the 15m feed in live mode.
-        BreakoutAgent(config=_cfg("breakout_v1", {
-            "lookback_bars": 384,
-            "exit_lookback_bars": 96,
-            "closes_key": "closes_15m",
-            "max_notional_per_trade": 20.0,
-            "max_total_notional": 60.0,
-        }), conn=conn),
-    ]
+    # Instantiate the full agent roster (shared, tested construction — defaults
+    # + auto-tuner overrides live in agents.runtime). In paper mode, evaluate
+    # everything. In live mode, only agents explicitly enabled and promoted to
+    # live_small/live in agent_state are allowed into the execution roster.
+    agents = build_roster(conn, load_agent_overrides())
     if live:
-        agents, skipped_live = _filter_live_agents_by_state(conn, agents)
+        agents, skipped_live = filter_live_agents(conn, agents)
         if skipped_live:
             console.print(
                 "[yellow]live roster skipped[/yellow]: "

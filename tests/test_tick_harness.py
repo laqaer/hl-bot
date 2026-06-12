@@ -13,6 +13,9 @@ These functions were extracted from the inlined, untested ``femr_tick`` preamble
   REST view, enabling the real liquidations feed.
 - ``fetch_account_state`` — the clearinghouse/spot account fetch + derived
   sizing values (perp value, spot USDC, unified portfolio, withdrawable).
+- ``load_agent_overrides`` / ``build_roster`` — auto-tuner override loading
+  (every failure mode degrades to built-in defaults) and the canonical agent
+  roster with defaults + overrides merged per agent.
 """
 
 from __future__ import annotations
@@ -25,9 +28,11 @@ from hl_bot.agents.base import MarketView
 from hl_bot.agents.decisions import Decision, log_decision
 from hl_bot.agents.runtime import (
     apply_allocator_caps,
+    build_roster,
     classify_position_ownership,
     closes_15m_bars,
     fetch_account_state,
+    load_agent_overrides,
     overlay_ws_snapshot,
     positions_from_clearinghouse,
     reconcile_agents,
@@ -479,3 +484,76 @@ def test_enrich_view_fetches_15m_closes_only_when_asked(monkeypatch):
     _enrich_view(view2, "http://fake", {"TST": 1e9}, vwap_window=60)
     assert all(r["interval"] == "1m" for r in _FakeHlClient.requests)
     assert view2.extra["closes_15m"] == {}
+
+
+# ---------------------------------------------------------------------------
+# load_agent_overrides / build_roster (B12h)
+
+
+def test_load_agent_overrides_missing_file_is_empty(tmp_path):
+    assert load_agent_overrides(tmp_path / "nope.json") == {}
+
+
+def test_load_agent_overrides_parses_valid_file(tmp_path):
+    p = tmp_path / "agent_overrides.json"
+    p.write_text('{"femr_v1": {"max_notional_per_trade": 7.5}}')
+    assert load_agent_overrides(p) == {"femr_v1": {"max_notional_per_trade": 7.5}}
+
+
+def test_load_agent_overrides_malformed_json_degrades_to_defaults(tmp_path, caplog):
+    p = tmp_path / "agent_overrides.json"
+    p.write_text("{not json")
+    with caplog.at_level("WARNING"):
+        assert load_agent_overrides(p) == {}
+    assert "using built-in defaults" in caplog.text
+
+
+def test_load_agent_overrides_non_object_top_level_degrades(tmp_path, caplog):
+    # Previously this passed json.loads and crashed the tick at roster build
+    # (AttributeError on list.get). Now it must degrade like malformed JSON.
+    p = tmp_path / "agent_overrides.json"
+    p.write_text("[1, 2, 3]")
+    with caplog.at_level("WARNING"):
+        assert load_agent_overrides(p) == {}
+    assert "not an object" in caplog.text
+
+
+def test_load_agent_overrides_non_object_agent_entry_dropped(tmp_path, caplog):
+    p = tmp_path / "agent_overrides.json"
+    p.write_text('{"femr_v1": "garbage", "twap_mr_v1": {"a": 1}, "basis_v1": null}')
+    with caplog.at_level("WARNING"):
+        out = load_agent_overrides(p)
+    assert out == {"twap_mr_v1": {"a": 1}}, \
+        "bad entry dropped, null skipped, good entry kept"
+    assert "femr_v1" in caplog.text
+
+
+def test_build_roster_names_and_validated_defaults(conn):
+    agents = build_roster(conn)
+    assert [a.name for a in agents] == [
+        "femr_v1", "twap_mr_v1", "twap_mr_regime_v1",
+        "liq_cascade_v1", "basis_v1", "breakout_v1",
+    ]
+    femr = agents[0]
+    assert femr.cfg.funding_enter_per_hr == 0.00015
+    assert femr.cfg.max_notional_per_trade == 20.0
+    breakout = agents[-1]
+    assert breakout.cfg.lookback_bars == 384
+    assert breakout.cfg.exit_lookback_bars == 96
+    assert breakout.cfg.closes_key == "closes_15m"
+    assert breakout.cfg.max_total_notional == 60.0
+    # the roster's breakout entry must keep driving the 15m feed sizing
+    assert closes_15m_bars(agents) == 385
+
+
+def test_build_roster_overrides_merge_without_bleed(conn):
+    agents = build_roster(conn, {
+        "femr_v1": {"max_notional_per_trade": 7.0},
+        "unknown_agent_v9": {"max_notional_per_trade": 999.0},
+    })
+    femr = agents[0]
+    assert femr.cfg.max_notional_per_trade == 7.0, "override applied"
+    assert femr.cfg.funding_enter_per_hr == 0.00015, "untouched default survives"
+    others = [a for a in agents if a.name != "femr_v1"]
+    assert all(a.config.get("max_notional_per_trade") != 7.0 for a in others), \
+        "an override for one agent doesn't bleed into the rest"

@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from hl_bot.cli.main import _filter_live_agents_by_state
+from hl_bot.agents.runtime import filter_live_agents
 from hl_bot.db.schema import init_db
 
 
@@ -32,7 +32,7 @@ def test_live_roster_requires_enabled_live_mode(tmp_path):
     )
 
     agents = [DummyAgent("femr_v1"), DummyAgent("twap_mr_v1"), DummyAgent("basis_v1")]
-    live_agents, skipped = _filter_live_agents_by_state(conn, agents)
+    live_agents, skipped = filter_live_agents(conn, agents)
 
     assert [a.name for a in live_agents] == ["femr_v1"]
     assert skipped == {
@@ -44,7 +44,7 @@ def test_live_roster_requires_enabled_live_mode(tmp_path):
 def test_missing_agent_state_is_paper_by_default(tmp_path):
     conn = init_db(tmp_path / "state.sqlite")
 
-    live_agents, skipped = _filter_live_agents_by_state(conn, [DummyAgent("liq_cascade_v1")])
+    live_agents, skipped = filter_live_agents(conn, [DummyAgent("liq_cascade_v1")])
 
     assert live_agents == []
     assert skipped == {"liq_cascade_v1": "mode=paper enabled=1"}

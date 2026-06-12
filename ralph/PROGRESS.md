@@ -2129,3 +2129,60 @@ the remaining slices.
 `_enrich_view` move into runtime), B-EDGE2b re-confirm as the 15m store span
 grows, B1c remaining hypotheses if idle. B-G014 still blocked: store 1m span
 checked this iteration = 3.6d (needs ≥14d, ETA ~2026-06-26).
+
+## Iteration 45 — 2026-06-12 — B12(h): overrides + roster construction into the tested tick harness
+
+**What.** The auto-tuner overrides load, the agent-roster literal, and the
+live-state filter — the last *logic* in the `femr_tick` preamble besides
+`_enrich_view` — moved from `cli/main.py` into `agents/runtime.py`:
+
+- `load_agent_overrides(path=None)` reads `configs/agent_overrides.json`
+  (default path now shared with the auto-tuner command via `CONFIG_DIR`
+  instead of a duplicated `parents[3]` walk). **Every** failure mode degrades
+  to `{}` = built-in defaults, with a warning: missing/unreadable file,
+  malformed JSON, non-object top level, or a non-object per-agent entry
+  (dropped individually). Two of those used to crash the tick: a JSON array
+  top level passed `json.loads` then died at `overrides.get` (AttributeError)
+  during roster build, and a string-valued agent entry died at `dict.update`.
+  Degrading is the right direction here: the defaults are the long-running
+  tested baseline and the hard risk caps (compute_notional_cap /
+  apply_allocator_caps) clamp sizing downstream whichever config wins.
+- `build_roster(conn, overrides)` is the canonical 6-agent roster (femr,
+  twap_mr, twap_mr_regime, liq_cascade, basis, breakout incl. the B-EDGE2a
+  validated 15m Donchian config) with the per-agent defaults + override merge
+  that previously lived inline as `_cfg`.
+- `filter_live_agents` is `_filter_live_agents_by_state` relocated verbatim
+  (CLI copy deleted; tests/test_live_agent_state.py imports updated).
+
+`femr_tick` now does `agents = build_roster(conn, load_agent_overrides())` —
+the preamble's remaining untested piece is just the `_enrich_view` pipeline.
+
+**Why.** B12/REVIEW M3: the roster IS the trading system's configuration —
+which strategies run and at what size — and it lived in an untested CLI
+function, drifting one copy at a time. Now one tested function owns it, which
+is also the prerequisite for `run_tick` (paper) consuming the same roster as
+`femr_tick` (live) in the final B12 slice.
+
+**Evidence.** 274 tests pass (7 new in tests/test_tick_harness.py: missing/
+valid/malformed/array-top-level/garbage-entry overrides loading incl. the two
+crash regressions; roster names+validated defaults incl. closes_15m_bars=385
+sizing off the breakout entry; override merge applies without bleeding into
+other agents). Ruff clean. Live-fire (real API, scratch DB, paper mode):
+full 6-agent roster decided (8 decisions incl. femr XMR short, breakout XPL
+long via the 385-bar 15m feed), PAPER MODE, no orders; the real production
+`configs/agent_overrides.json` parses through the new loader byte-identical
+to the old inline code (femr stop_loss_pct=0.0225 + twap_mr tuned params
+merged over defaults, verified by direct comparison).
+
+**Honest caveats.** (1) Behavior-preserving refactor except the two
+crash→default hardenings noted above (both convert an aborted tick into a
+defaults-run tick; sizing stays clamped by the risk caps either way).
+(2) The paper `tick` command still builds its own small roster (veto +
+funding_arb) — unifying it onto `build_roster` is part of the remaining
+`_enrich_view` slice, not done here.
+
+**What's next (loop).** B12 final slice (`_enrich_view` → runtime, then
+`run_tick`/`femr_tick` one path end-to-end), B-EDGE2b re-confirm as the 15m
+store grows, B1c remaining hypotheses if idle. B-G014 still blocked: store
+1m span checked this iteration = 3.55d, newest bar ~2h old (top-ups healthy);
+needs ≥14d, ETA ~2026-06-23..26.

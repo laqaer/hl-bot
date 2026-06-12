@@ -10,11 +10,13 @@ the default behavior risk-free.
 from __future__ import annotations
 
 import contextlib
+import json
 import logging
 import sqlite3
 import time
 from collections.abc import Mapping
 from dataclasses import dataclass
+from pathlib import Path
 
 import httpx
 
@@ -68,6 +70,119 @@ def closes_15m_bars(agents: list[Agent]) -> int:
         )
         bars = max(bars, need)
     return bars
+
+
+def load_agent_overrides(path: Path | None = None) -> dict[str, dict]:
+    """Load auto-tuner per-agent config overrides (configs/agent_overrides.json).
+
+    Every failure mode degrades to ``{}`` — i.e. the agents' built-in defaults —
+    with a warning: missing file, unreadable file, malformed JSON, a top level
+    that isn't a JSON object, or a per-agent value that isn't an object (those
+    entries are dropped individually). A corrupt overrides file must never
+    abort a tick: the defaults are the long-running tested baseline, and the
+    hard risk caps (compute_notional_cap / apply_allocator_caps) clamp sizing
+    downstream regardless of which config wins. Previously a non-object top
+    level passed ``json.loads`` and crashed the tick at roster build.
+    """
+    if path is None:
+        from ..config import CONFIG_DIR
+        path = CONFIG_DIR / "agent_overrides.json"
+    if not path.exists():
+        return {}
+    try:
+        raw = json.loads(path.read_text())
+    except (ValueError, OSError) as e:
+        log.warning("agent overrides unreadable (%s); using built-in defaults", e)
+        return {}
+    if not isinstance(raw, dict):
+        log.warning(
+            "agent overrides top level is %s, not an object; using built-in defaults",
+            type(raw).__name__,
+        )
+        return {}
+    out: dict[str, dict] = {}
+    for name, cfg in raw.items():
+        if cfg is None:
+            continue
+        if not isinstance(cfg, dict):
+            log.warning(
+                "agent override for %s is %s, not an object; entry ignored",
+                name, type(cfg).__name__,
+            )
+            continue
+        out[name] = cfg
+    return out
+
+
+def build_roster(
+    conn: sqlite3.Connection,
+    overrides: Mapping[str, dict] | None = None,
+) -> list[Agent]:
+    """The canonical tick roster: every wired agent with its default config.
+
+    One tested function owns which agents exist and what they run with
+    (REVIEW M3) — paper ticks evaluate this full roster; the live path narrows
+    it via :func:`filter_live_agents`. ``overrides`` (see
+    :func:`load_agent_overrides`) merge over each agent's defaults by name;
+    unknown names are ignored.
+    """
+    from .basis import BasisAgent
+    from .breakout import BreakoutAgent
+    from .femr import FemrAgent
+    from .liq_cascade import LiqCascadeAgent
+    from .twap_mr import TwapMrAgent
+    from .twap_mr_regime import TwapMrRegimeAgent
+
+    ov = overrides or {}
+
+    def cfg(agent_name: str, defaults: dict) -> dict:
+        merged = dict(defaults)
+        merged.update(ov.get(agent_name) or {})
+        return merged
+
+    return [
+        FemrAgent(config=cfg("femr_v1", {
+            "max_notional_per_trade": 20.0,
+            "max_total_notional": 40.0,
+            "funding_enter_per_hr": 0.00015,
+            "funding_exit_per_hr": 0.00005,
+        }), conn=conn),
+        TwapMrAgent(config=cfg("twap_mr_v1", {}), conn=conn),
+        TwapMrRegimeAgent(config=cfg("twap_mr_regime_v1", {}), conn=conn),
+        LiqCascadeAgent(config=cfg("liq_cascade_v1", {}), conn=conn),
+        BasisAgent(config=cfg("basis_v1", {}), conn=conn),
+        # B-EDGE2a: the G0-validated 15m-bar Donchian config (96h channel,
+        # 24h exit). Paper-only until promoted in agent_state — the live
+        # filter drops it, which also zeroes the 15m feed in live mode.
+        BreakoutAgent(config=cfg("breakout_v1", {
+            "lookback_bars": 384,
+            "exit_lookback_bars": 96,
+            "closes_key": "closes_15m",
+            "max_notional_per_trade": 20.0,
+            "max_total_notional": 60.0,
+        }), conn=conn),
+    ]
+
+
+def filter_live_agents(
+    conn: sqlite3.Connection, agents: list[Agent],
+) -> tuple[list[Agent], dict[str, str]]:
+    """Return agents allowed to place live orders plus skipped reasons.
+
+    Paper/default state is safe: an agent must be explicitly enabled and in
+    live_small/live mode before it enters the live execution roster.
+    """
+    rows = conn.execute("SELECT agent, mode, enabled FROM agent_state").fetchall()
+    state = {r["agent"]: (r["mode"], int(r["enabled"])) for r in rows}
+    live_agents = []
+    skipped: dict[str, str] = {}
+    for agent in agents:
+        mode, enabled = state.get(agent.name, ("paper", 1))
+        if enabled == 1 and mode in ("live_small", "live"):
+            live_agents.append(agent)
+        else:
+            skipped[agent.name] = f"mode={mode} enabled={enabled}"
+    return live_agents, skipped
 
 
 def fetch_market_view(base_url: str, coins: list[str]) -> MarketView:

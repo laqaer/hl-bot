@@ -216,8 +216,15 @@ Keep it ruthlessly prioritized: the top item should always be the highest-levera
   failure semantics preserved exactly (perp fetch failure aborts the tick —
   never size risk blind; spot outage degrades to $0 USDC — tightening-only).
   (Iteration 44.)
-  **Remaining:** overrides loading + roster construction + the `_enrich_view`
-  pipeline, so `run_tick` and `femr_tick` share one path end-to-end.
+  (h) overrides loading + roster construction + the live-state filter are
+  extracted into tested `runtime.load_agent_overrides` / `build_roster` /
+  `filter_live_agents` (the canonical roster + auto-tuner merge now live in
+  one place; `_filter_live_agents_by_state` deleted from the CLI). Hardening:
+  a non-object overrides top level used to crash the tick at roster build —
+  every overrides failure mode now degrades to built-in defaults with a
+  warning. (Iteration 45.)
+  **Remaining:** the `_enrich_view` pipeline, so `run_tick` and `femr_tick`
+  share one path end-to-end.
 - [x] **B13 — Move hardcoded trader address to config.** Done (Iter 6, M6):
   `exec/orders.py` and `scripts/daily_scorecard.py` both resolve the trader address
   from `HL_TRADER_ADDRESS`/`HL_ADDRESS` env, legacy default only as fallback.
