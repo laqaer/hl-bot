@@ -110,6 +110,67 @@ def fetch_market_view(base_url: str, coins: list[str]) -> MarketView:
 
 
 @dataclass
+class AccountState:
+    """Exchange-truth account snapshot for one tick (two HL ``/info`` calls).
+
+    ``clearinghouse`` / ``spot_clearinghouse`` are the raw HL payloads — the
+    position parse (:func:`positions_from_clearinghouse`) and guardrails read
+    them downstream. The floats are derived once here so risk sizing and the
+    CLI summary share one tested parse instead of re-reading the dicts.
+    """
+
+    clearinghouse: dict
+    spot_clearinghouse: dict
+    account_value: float  # perp marginSummary.accountValue
+    spot_usdc: float  # USDC balance on spot
+    portfolio_value: float  # unified perp + spot USDC (live risk-sizing input)
+    withdrawable: float
+
+
+def fetch_account_state(base_url: str, address: str) -> AccountState:
+    """Fetch HL clearinghouse truth for ``address`` and derive sizing values.
+
+    Extracted verbatim from the ``femr_tick`` preamble (REVIEW M3 / B12).
+    Failure semantics are deliberate and preserved: the perp
+    ``clearinghouseState`` call is the tick's ground truth, so an HTTP failure
+    there propagates — a tick must never size risk blind. The spot call
+    degrades to ``{}`` on HTTP errors (spot USDC then counts as 0), which only
+    *shrinks* portfolio value and therefore the notional caps — a spot outage
+    tightens risk rather than aborting the tick.
+    """
+    from ..risk.scaling import (
+        perp_account_value_from_state,
+        spot_usdc_from_state,
+        unified_portfolio_value,
+    )
+
+    with httpx.Client(timeout=10) as cli:
+        st = cli.post(
+            base_url + "/info",
+            json={"type": "clearinghouseState", "user": address},
+        ).json() or {}
+        try:
+            spot_st = cli.post(
+                base_url + "/info",
+                json={"type": "spotClearinghouseState", "user": address},
+            ).json() or {}
+        except httpx.HTTPError:
+            spot_st = {}
+    try:
+        withdrawable = float(st.get("withdrawable", 0) or 0)
+    except (TypeError, ValueError):
+        withdrawable = 0.0
+    return AccountState(
+        clearinghouse=st,
+        spot_clearinghouse=spot_st,
+        account_value=perp_account_value_from_state(st),
+        spot_usdc=spot_usdc_from_state(spot_st),
+        portfolio_value=unified_portfolio_value(st, spot_st),
+        withdrawable=withdrawable,
+    )
+
+
+@dataclass
 class WsOverlay:
     """Result of overlaying a WS snapshot onto the live REST view.
 

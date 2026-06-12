@@ -34,7 +34,7 @@ from ..research.strategy_health import (
     build_proposal_document,
     propose_overrides,
 )
-from ..risk.scaling import compute_notional_cap, spot_usdc_from_state, unified_portfolio_value
+from ..risk.scaling import compute_notional_cap
 from ..scoring.metrics import score_all
 from ..scoring.paper import list_paper_agents, paper_open_positions, score_paper_all
 from ..scoring.positions import rebuild_positions
@@ -461,6 +461,7 @@ def femr_tick(live: bool = False, execution: str = "taker", vwap_window: int = 0
         apply_allocator_caps,
         classify_position_ownership,
         closes_15m_bars,
+        fetch_account_state,
         fetch_market_view,
         gather_decisions,
         overlay_ws_snapshot,
@@ -495,23 +496,10 @@ def femr_tick(live: bool = False, execution: str = "taker", vwap_window: int = 0
         merged.update(overrides.get(agent_name) or {})
         return merged
 
-    import httpx as _httpx
-    with _httpx.Client(timeout=10) as cli:
-        st = cli.post(
-            s.hl_api_url + "/info",
-            json={"type": "clearinghouseState", "user": HL_TRADER_ADDRESS},
-        ).json() or {}
-        try:
-            spot_st = cli.post(
-                s.hl_api_url + "/info",
-                json={"type": "spotClearinghouseState", "user": HL_TRADER_ADDRESS},
-            ).json() or {}
-        except _httpx.HTTPError:
-            spot_st = {}
-    acct_val = float((st.get("marginSummary") or {}).get("accountValue", 0) or 0)
-    spot_usdc = spot_usdc_from_state(spot_st)
-    portfolio_value = unified_portfolio_value(st, spot_st)
-    withdrawable = float(st.get("withdrawable", 0) or 0)
+    account = fetch_account_state(s.hl_api_url, HL_TRADER_ADDRESS)
+    acct_val = account.account_value
+    portfolio_value = account.portfolio_value
+    withdrawable = account.withdrawable
     risk_cap = compute_notional_cap(conn, live_portfolio_value=portfolio_value)
     pv_label = "—" if risk_cap.portfolio_value is None else f"${risk_cap.portfolio_value:.2f}"
     console.print(
@@ -519,7 +507,7 @@ def femr_tick(live: bool = False, execution: str = "taker", vwap_window: int = 0
         f"bot-open <= ${risk_cap.max_total_notional:.0f}; "
         f"per-position <= ${risk_cap.max_per_position_notional:.0f} "
         f"({risk_cap.multiplier:g}x / {risk_cap.per_position_multiplier:g}x live unified portfolio {pv_label}; "
-        f"perp ${acct_val:.2f} + spot USDC ${spot_usdc:.2f}; "
+        f"perp ${acct_val:.2f} + spot USDC ${account.spot_usdc:.2f}; "
         f"ceiling={'none' if risk_cap.ceiling_notional is None else f'${risk_cap.ceiling_notional:.0f}'}; "
         f"source={risk_cap.source})"
     )
@@ -599,7 +587,7 @@ def femr_tick(live: bool = False, execution: str = "taker", vwap_window: int = 0
                           f"{ov.n_liqs} liqs[/dim]")
 
     # Build position list from HL truth (shared, tested parse).
-    all_positions = positions_from_clearinghouse(st)
+    all_positions = positions_from_clearinghouse(account.clearinghouse)
 
     # RECONCILE first — clear stale DB ownership for each agent independently.
     # Live only: reconciliation compares the LIVE book to exchange truth; paper

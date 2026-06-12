@@ -11,6 +11,8 @@ These functions were extracted from the inlined, untested ``femr_tick`` preamble
   rule, and write the binding caps onto each agent's cfg.
 - ``overlay_ws_snapshot`` — additive merge of a fresh WS snapshot onto the live
   REST view, enabling the real liquidations feed.
+- ``fetch_account_state`` — the clearinghouse/spot account fetch + derived
+  sizing values (perp value, spot USDC, unified portfolio, withdrawable).
 """
 
 from __future__ import annotations
@@ -25,6 +27,7 @@ from hl_bot.agents.runtime import (
     apply_allocator_caps,
     classify_position_ownership,
     closes_15m_bars,
+    fetch_account_state,
     overlay_ws_snapshot,
     positions_from_clearinghouse,
     reconcile_agents,
@@ -222,6 +225,100 @@ def test_overlay_ws_snapshot_empty_liqs_still_enables_feed():
     assert out.n_liqs == 0
     assert view.extra["liquidations"] == []
     assert view.extra["liquidations_feed"] is True
+
+
+# ---------------------------------------------------------------------------
+# fetch_account_state (B12g): the femr_tick account/risk-sizing preamble
+# ---------------------------------------------------------------------------
+
+
+class _FakeAcctClient:
+    """Serves canned /info payloads keyed by request type; can fail per type."""
+
+    payloads: dict = {}
+    fail: set = set()
+    requests: list = []
+
+    def __init__(self, *a, **k):
+        pass
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *a):
+        return False
+
+    def post(self, url, json=None):
+        t = (json or {}).get("type")
+        _FakeAcctClient.requests.append(json)
+        if t in _FakeAcctClient.fail:
+            import httpx
+
+            raise httpx.ConnectError("boom")
+        return _Resp(_FakeAcctClient.payloads.get(t))
+
+
+def _fetch_account(monkeypatch, payloads, fail=()):
+    import httpx
+
+    _FakeAcctClient.payloads = payloads
+    _FakeAcctClient.fail = set(fail)
+    _FakeAcctClient.requests = []
+    monkeypatch.setattr(httpx, "Client", _FakeAcctClient)
+    return fetch_account_state("http://fake", "0xabc")
+
+
+def test_fetch_account_state_parses_and_unifies(monkeypatch):
+    st = {"marginSummary": {"accountValue": "123.45"}, "withdrawable": "67.8"}
+    spot = {"balances": [{"coin": "HYPE", "total": "999"},
+                         {"coin": "USDC", "total": "10.55"}]}
+    out = _fetch_account(monkeypatch, {
+        "clearinghouseState": st, "spotClearinghouseState": spot,
+    })
+    assert out.account_value == pytest.approx(123.45)
+    assert out.spot_usdc == pytest.approx(10.55)
+    assert out.portfolio_value == pytest.approx(134.0), "unified = perp + spot USDC"
+    assert out.withdrawable == pytest.approx(67.8)
+    # Raw payloads ride along for the position parse and guardrails.
+    assert out.clearinghouse is st
+    assert out.spot_clearinghouse is spot
+    # Both /info calls address the configured trader.
+    assert [r["type"] for r in _FakeAcctClient.requests] == [
+        "clearinghouseState", "spotClearinghouseState"]
+    assert all(r["user"] == "0xabc" for r in _FakeAcctClient.requests)
+
+
+def test_fetch_account_state_spot_outage_tightens_not_aborts(monkeypatch):
+    # Spot endpoint down -> spot USDC counts as 0, so portfolio value (and hence
+    # the notional caps) only shrinks. The tick must NOT abort.
+    st = {"marginSummary": {"accountValue": "50"}, "withdrawable": "5"}
+    out = _fetch_account(monkeypatch, {"clearinghouseState": st},
+                         fail={"spotClearinghouseState"})
+    assert out.spot_clearinghouse == {}
+    assert out.spot_usdc == 0.0
+    assert out.portfolio_value == pytest.approx(50.0)
+
+
+def test_fetch_account_state_perp_failure_propagates(monkeypatch):
+    # The perp clearinghouse is the tick's ground truth: a tick must never size
+    # risk blind, so the HTTP error propagates instead of degrading to zeros.
+    import httpx
+
+    with pytest.raises(httpx.HTTPError):
+        _fetch_account(monkeypatch, {}, fail={"clearinghouseState"})
+
+
+def test_fetch_account_state_null_and_malformed_fields_zero(monkeypatch):
+    # A null payload (.json() -> None) and a malformed withdrawable both degrade
+    # to zeros rather than crashing the tick.
+    out = _fetch_account(monkeypatch, {
+        "clearinghouseState": {"withdrawable": "n/a"},
+        "spotClearinghouseState": None,
+    })
+    assert out.account_value == 0.0
+    assert out.spot_usdc == 0.0
+    assert out.portfolio_value == 0.0
+    assert out.withdrawable == 0.0
 
 
 # ---------------------------------------------------------------------------

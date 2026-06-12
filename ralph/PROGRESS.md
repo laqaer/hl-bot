@@ -2083,3 +2083,49 @@ G1 samples can have guardrail-shaped holes; the pause is visible in
 re-confirm as the store grows (15m span check), B1c remaining hypotheses
 (beta-neutral xfund cross-section / lower cadence) if idle. B-G014 unblocks
 ~2026-06-26 (store 1m span ≥14d — check `hlbot harvest-candles` spans).
+
+## Iteration 44 — 2026-06-12 — B12(g): account fetch + risk-sizing values extracted to the tick harness
+
+**What.** The last inlined, untested network block in the `femr_tick` preamble
+— the httpx clearinghouse/spot fetch and the derived sizing values — is now
+`runtime.fetch_account_state(base_url, address) -> AccountState`
+(clearinghouse + spot payloads ride along raw; `account_value`, `spot_usdc`,
+`portfolio_value`, `withdrawable` derived once via the tested
+`risk.scaling` parsers). `femr_tick` calls it and keeps only the
+`compute_notional_cap` call + the console summary; `positions_from_clearinghouse`
+now reads `account.clearinghouse`. Failure semantics preserved exactly and
+now *documented in code*: a perp `clearinghouseState` HTTP failure propagates
+(a tick must never size risk blind), a spot failure degrades to `{}` →
+$0 spot USDC, which only shrinks portfolio value and hence the notional caps
+(tightening, never loosening). Two incidental hardenings: `account_value`
+now uses `perp_account_value_from_state` (malformed strings → 0 instead of
+ValueError) and a malformed `withdrawable` degrades to 0.0 instead of
+crashing the tick.
+
+**Why.** B12/REVIEW M3: live-path code that isn't importable isn't testable.
+This was the slice that decides how much the bot is *allowed to risk* — the
+5×/1× caps key off `portfolio_value` — and its error behavior (what happens
+when HL's spot endpoint hiccups mid-tick?) had zero test coverage. Series
+now: (a) execute_decisions … (g) fetch_account_state; remaining is overrides
+loading, roster construction, and `_enrich_view`.
+
+**Evidence.** 267 tests pass (4 new in tests/test_tick_harness.py: parse +
+unify (perp 123.45 + spot USDC 10.55 → portfolio 134.0, both /info calls
+address the configured user, raw payloads preserved by identity); spot outage
+→ spot_usdc 0 / portfolio == perp / no raise; perp outage → httpx.HTTPError
+propagates; null payload + malformed withdrawable → all-zero AccountState).
+Ruff clean. Live-fire (real API, scratch DB, paper mode): `hlbot femr_tick`
+risk-cap line derived through the new path (perp $23.22 + spot USDC $307.12 →
+unified $330.34, 5×→$1652 / 1×→$330), manual NEAR position parsed from
+`account.clearinghouse`, 6 decisions gathered, PAPER MODE — no orders.
+
+**Honest caveats.** (1) Pure refactor + tests: no behavior change intended;
+the two hardenings above are the only deltas (both convert a crash into a
+zero, and a zero account value can only tighten caps). (2) `run_tick` does
+not yet consume `AccountState` — full end-to-end unification still pending
+the remaining slices.
+
+**What's next (loop).** B12 remainder (overrides loading → roster →
+`_enrich_view` move into runtime), B-EDGE2b re-confirm as the 15m store span
+grows, B1c remaining hypotheses if idle. B-G014 still blocked: store 1m span
+checked this iteration = 3.6d (needs ≥14d, ETA ~2026-06-26).

@@ -210,9 +210,14 @@ Keep it ruthlessly prioritized: the top item should always be the highest-levera
   union + manual-coin split) is extracted into tested
   `runtime.classify_position_ownership` returning `PositionOwnership`; the CLI
   keeps only the femr `live_positions` line + display. (Iteration 18.)
-  **Remaining:** fold the rest of the `femr_tick` preamble (clearinghouse fetch →
-  risk-cap → view enrich) into a reusable harness so `run_tick` and `femr_tick`
-  share one path end-to-end.
+  (g) the clearinghouse/spot account fetch + derived sizing values (perp
+  account value, spot USDC, unified portfolio value, withdrawable) are
+  extracted into tested `runtime.fetch_account_state` → `AccountState`;
+  failure semantics preserved exactly (perp fetch failure aborts the tick —
+  never size risk blind; spot outage degrades to $0 USDC — tightening-only).
+  (Iteration 44.)
+  **Remaining:** overrides loading + roster construction + the `_enrich_view`
+  pipeline, so `run_tick` and `femr_tick` share one path end-to-end.
 - [x] **B13 — Move hardcoded trader address to config.** Done (Iter 6, M6):
   `exec/orders.py` and `scripts/daily_scorecard.py` both resolve the trader address
   from `HL_TRADER_ADDRESS`/`HL_ADDRESS` env, legacy default only as fallback.
