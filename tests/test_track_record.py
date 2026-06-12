@@ -149,6 +149,108 @@ def test_paper_funding_threads_into_section(conn):
     assert ag["net_pnl"] == pytest.approx(no_fund["net_pnl"] - 0.01)
 
 
+def test_paper_open_upnl_marked(conn):
+    """paper_mids marks the open book: open_upnl == the canonical
+    mark_paper_positions sum (flatten-now value), 0 for a fully-closed book,
+    rendered in the md/html paper tables (B-PAPER3e)."""
+    from hl_bot.reports.track_record import to_html
+    from hl_bot.scoring.paper import mark_paper_positions, paper_open_positions
+
+    now = int(time.time() * 1000)
+    _paper(conn, "breakout_v1", now - 5000, "place", "BTC", "B", 1.0, 100.0)
+    _paper(conn, "breakout_v1", now - 4000, "flatten", "BTC", px=110.0)
+    _paper(conn, "breakout_v1", now - 1000, "place", "ETH", "B", 1.0, 200.0)
+    _paper(conn, "femr_v1", now - 3000, "place", "SOL", "B", 1.0, 50.0)
+    _paper(conn, "femr_v1", now - 2000, "flatten", "SOL", px=55.0)
+
+    mids = {"ETH": 220.0}
+    tr = build_track_record(conn, paper_mids=mids)
+    by = {a["agent"]: a for a in tr["paper_agents"]}
+    expected = sum(
+        m.upnl for m in mark_paper_positions(
+            paper_open_positions(conn, "breakout_v1"), mids))
+    assert by["breakout_v1"]["open_upnl"] == pytest.approx(expected)
+    # eff entry 200.04, exit at 220 mid -> 219.956 - exit fee 0.099 = +19.82
+    assert by["breakout_v1"]["open_upnl"] == pytest.approx(19.82, abs=0.01)
+    assert by["femr_v1"]["open_upnl"] == 0.0      # nothing open -> exactly 0
+
+    md, html = to_markdown(tr), to_html(tr)
+    assert "open uPnL" in md and "open uPnL" in html
+    assert "$+19.82" in md and "$+19.82" in html
+    # The marks never touch the realized card.
+    no_mids = build_track_record(conn)
+    assert by["breakout_v1"]["net_pnl"] == pytest.approx(
+        no_mids["paper_agents"][0]["net_pnl"])
+
+
+def test_paper_open_upnl_unmarked_is_none(conn):
+    now = int(time.time() * 1000)
+    _paper(conn, "breakout_v1", now - 1000, "place", "ETH", "B", 1.0, 200.0)
+
+    tr = build_track_record(conn)                  # offline: no mids supplied
+    assert tr["paper_agents"][0]["open_upnl"] is None
+    row = next(ln for ln in to_markdown(tr).splitlines()
+               if ln.startswith("| breakout_v1"))
+    assert row.rstrip().endswith("| — |")
+
+    # A partially-marked book is dishonest as a sum -> None, not a partial.
+    _paper(conn, "breakout_v1", now - 900, "place", "SOL", "B", 1.0, 50.0)
+    tr2 = build_track_record(conn, paper_mids={"ETH": 220.0})  # SOL mid missing
+    assert tr2["paper_agents"][0]["open_upnl"] is None
+
+
+def test_cli_track_record_marks_open_paper(tmp_path, monkeypatch):
+    """`hlbot track-record` fetches mids only when open paper positions exist;
+    --no-paper-mark skips the fetch and the column degrades to '—'."""
+    from rich.console import Console
+    from typer.testing import CliRunner
+
+    from hl_bot.cli import main as cli
+
+    c = init_db(tmp_path / "cli.sqlite")
+    now = int(time.time() * 1000)
+    monkeypatch.setattr(cli, "_conn", lambda: (c, None))
+    monkeypatch.setattr(cli, "console", Console(width=250))
+    calls: list[int] = []
+
+    def fake_mids(s):
+        calls.append(1)
+        return {"ETH": 220.0}
+
+    monkeypatch.setattr(cli, "_fetch_mids", fake_mids)
+    runner = CliRunner()
+
+    # Fully-closed paper book: zero allMids calls.
+    _paper(c, "femr_v1", now - 3000, "place", "SOL", "B", 1.0, 50.0)
+    _paper(c, "femr_v1", now - 2000, "flatten", "SOL", px=55.0)
+    res = runner.invoke(
+        cli.app,
+        ["track-record", "--out", str(tmp_path / "tr0"), "--no-paper-funding"])
+    assert res.exit_code == 0, res.output
+    assert calls == []
+
+    # An open position: one fetch, marked value in the exported artifact.
+    _paper(c, "breakout_v1", now - 1000, "place", "ETH", "B", 1.0, 200.0)
+    res = runner.invoke(
+        cli.app,
+        ["track-record", "--out", str(tmp_path / "tr1"), "--no-paper-funding"])
+    assert res.exit_code == 0, res.output
+    assert calls == [1]
+    assert "$+19.82" in (tmp_path / "tr1" / "track_record.md").read_text()
+
+    res = runner.invoke(
+        cli.app,
+        ["track-record", "--out", str(tmp_path / "tr2"), "--no-paper-funding",
+         "--no-paper-mark"])
+    assert res.exit_code == 0, res.output
+    assert calls == [1]                            # no second fetch
+    row = next(ln for ln in
+               (tmp_path / "tr2" / "track_record.md").read_text().splitlines()
+               if ln.startswith("| breakout_v1"))
+    assert row.rstrip().endswith("| — |")
+    c.close()
+
+
 def test_html_export_has_chart_and_stats(conn, tmp_path):
     from hl_bot.reports.track_record import build_track_record, to_html
     now = int(time.time() * 1000)

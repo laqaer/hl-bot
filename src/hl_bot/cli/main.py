@@ -1167,6 +1167,13 @@ def track_record(
              "history for the paper section (network; per-coin failures "
              "degrade to funding=0 with a warning). No-op without a paper book.",
     ),
+    paper_mark: bool = typer.Option(
+        True, "--paper-mark/--no-paper-mark",
+        help="Mark open paper positions at the current mid for the paper "
+             "section's open-uPnL column (one allMids call; a fetch failure "
+             "degrades to '—'). Zero calls without open paper positions. "
+             "Marks are shown beside the cards, never folded into them.",
+    ),
 ):
     """Export a public-grade track record (equity curve, Sharpe, DD, per-agent).
 
@@ -1178,7 +1185,15 @@ def track_record(
 
     conn, s = _conn()
     funding_by_coin = _fetch_paper_funding(conn, s) if paper_funding else {}
-    jp, mp, hp = export(conn, out, paper_funding_by_coin=funding_by_coin or None)
+    mids: dict[str, float] = {}
+    if paper_mark and any(
+            paper_open_positions(conn, a) for a in list_paper_agents(conn)):
+        mids = _fetch_mids(s)
+    jp, mp, hp = export(
+        conn, out,
+        paper_funding_by_coin=funding_by_coin or None,
+        paper_mids=mids or None,
+    )
     console.print(mp.read_text())
     console.print(f"[green]✓[/green] wrote {jp}, {mp}, and {hp} (open the .html to share)")
 

@@ -168,12 +168,14 @@ Keep it ruthlessly prioritized: the top item should always be the highest-levera
   stay realized-only by design (marks beside, never folded in). Closes the
   blind spot where a multi-day breakout hold deep underwater showed a clean
   realized card.
-- [ ] **B-PAPER3e — Open-position uPnL in the track-record paper section.**
-  The public-grade artifact still shows realized-only paper cards; a reader
-  judging G1 evidence (B-EDGE2f, ~Jul 8) can't see open exposure. Add an
-  open-uPnL column/line to "Paper agents (NOT live)" using
-  `mark_paper_positions` (mids fetch beside the existing `_fetch_paper_funding`
-  pattern, offline degrade to "—"). Keep marks out of sharpe/DD math.
+- [x] **B-PAPER3e — Open-position uPnL in the track-record paper section.**
+  Done (Iter 62): `build_track_record(paper_mids=)` marks each paper agent's
+  open book via `mark_paper_positions` → `open_upnl` field + "open uPnL"
+  column in md/html (flatten-now value; 0 for a closed book; None→"—" when
+  any position lacks a mid — a partial sum is never shown). Marks stay out
+  of net/edge/sharpe/DD; `hlbot track-record --paper-mark` (default on)
+  fetches mids only when open paper positions exist (`--no-paper-mark`
+  opt-out, fetch failure degrades to "—"). Live-fired on real allMids.
 - [x] **B-MAKERFILL — Honest maker-fill model in the backtester.** Done
   (Iter 50): `CostModel(maker_fill="resting")` + `--maker-fill resting` on
   backtest/confirm replay the live maker lifecycle (entries rest at the

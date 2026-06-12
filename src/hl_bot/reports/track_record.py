@@ -14,7 +14,10 @@ Agents that only trade on paper get their own clearly-labeled section
 (B-PAPER3b): the paper decision book replayed under modeled taker costs +
 modeled funding accrual (``scoring/paper.py``). Paper numbers are forward-test
 evidence, NOT exchange truth — they are kept out of the live per-agent table
-and the account equity curve so the headline record stays fills-based.
+and the account equity curve so the headline record stays fills-based. Open
+paper positions are marked to market when the caller supplies current mids
+(B-PAPER3e, ``mark_paper_positions``): the open-uPnL column shows the
+flatten-now value beside each card, never folded into net/sharpe/DD.
 """
 
 from __future__ import annotations
@@ -29,6 +32,7 @@ from typing import Any
 from ..scoring.metrics import list_agents, score_agent
 from ..scoring.paper import (
     list_paper_agents,
+    mark_paper_positions,
     paper_daily_pnl,
     paper_open_positions,
     score_paper_agent,
@@ -36,7 +40,9 @@ from ..scoring.paper import (
 
 PAPER_NOTE = (
     "forward test — paper decision book replayed under modeled taker costs "
-    "+ modeled funding accrual; not exchange fills"
+    "+ modeled funding accrual; not exchange fills. open uPnL marks open "
+    "positions at the current mid net of modeled exit costs — reported beside "
+    "the cards, never folded into net/edge/sharpe(d)/maxDD$ ('—' = no mid)"
 )
 
 
@@ -92,6 +98,7 @@ def build_track_record(
     *,
     now_ms: int | None = None,
     paper_funding_by_coin: dict[str, list[dict[str, Any]]] | None = None,
+    paper_mids: dict[str, float] | None = None,
 ) -> dict[str, Any]:
     now_ms = now_ms or int(time.time() * 1000)
     curve = _account_equity_curve(conn)
@@ -143,6 +150,16 @@ def build_track_record(
             conn, a, "all", now_ms=now_ms, funding_by_coin=paper_funding_by_coin)
         daily = paper_daily_pnl(
             conn, a, now_ms=now_ms, funding_by_coin=paper_funding_by_coin)
+        opens = paper_open_positions(conn, a)
+        # Flatten-now value of the open book (mark_paper_positions semantics:
+        # exit crosses the spread + pays the taker fee). No open positions is
+        # exactly 0; any unmarked position makes the sum dishonest -> None.
+        open_upnl: float | None = 0.0
+        if opens:
+            upnls = [m.upnl for m in mark_paper_positions(opens, paper_mids or {})]
+            open_upnl = (
+                sum(upnls) if all(u is not None for u in upnls) else None  # type: ignore[arg-type]
+            )
         paper.append({
             "agent": a,
             "n_trades": sc.n_trades,
@@ -152,7 +169,8 @@ def build_track_record(
             "win_rate": sc.win_rate,
             "sharpe_daily": _daily_sharpe(daily),
             "max_drawdown_usd": _dollar_max_drawdown(daily),
-            "open_positions": len(paper_open_positions(conn, a)),
+            "open_positions": len(opens),
+            "open_upnl": open_upnl,
             "windows": {
                 w: score_paper_agent(
                     conn, a, w,  # type: ignore[arg-type]
@@ -203,14 +221,18 @@ def to_markdown(track: dict[str, Any]) -> str:
         lines.append("## Paper agents (NOT live)")
         lines.append(f"_{track['paper_note']}_")
         lines.append("")
-        lines.append("| agent | trades | net | funding | edge | win | sharpe(d) | maxDD$ | open |")
-        lines.append("|---|--:|--:|--:|--:|--:|--:|--:|--:|")
+        lines.append(
+            "| agent | trades | net | funding | edge | win | sharpe(d) | maxDD$ "
+            "| open | open uPnL |"
+        )
+        lines.append("|---|--:|--:|--:|--:|--:|--:|--:|--:|--:|")
         for ag in track["paper_agents"]:
             lines.append(
                 f"| {ag['agent']} | {ag['n_trades']} | ${ag['net_pnl']:+.2f} | "
                 f"${ag['funding_pnl']:+.2f} | {_bps(ag['edge_bps'])} | "
                 f"{ag['win_rate']*100:.0f}% | {_num(ag['sharpe_daily'])} | "
-                f"{_money(ag['max_drawdown_usd'])} | {ag['open_positions']} |"
+                f"{_money(ag['max_drawdown_usd'])} | {ag['open_positions']} | "
+                f"{_money(ag.get('open_upnl'))} |"
             )
     return "\n".join(lines)
 
@@ -287,7 +309,8 @@ def to_html(track: dict[str, Any]) -> str:
             f"<td>{_bps(ag['edge_bps'])}</td><td>{ag['win_rate']*100:.0f}%</td>"
             f"<td>{_num(ag['sharpe_daily'])}</td>"
             f"<td>{_money(ag['max_drawdown_usd'])}</td>"
-            f"<td>{ag['open_positions']}</td></tr>"
+            f"<td>{ag['open_positions']}</td>"
+            f"<td>{_money(ag.get('open_upnl'))}</td></tr>"
             for ag in track["paper_agents"]
         )
         paper_section = (
@@ -295,7 +318,7 @@ def to_html(track: dict[str, Any]) -> str:
             f"<p class=\"muted\">{track['paper_note']}</p>"
             "<table><thead><tr><th>agent</th><th>trades</th><th>net</th>"
             "<th>funding</th><th>edge</th><th>win</th><th>sharpe(d)</th>"
-            "<th>maxDD$</th><th>open</th></tr></thead>"
+            "<th>maxDD$</th><th>open</th><th>open uPnL</th></tr></thead>"
             f"<tbody>{paper_rows}</tbody></table>"
         )
     return (
@@ -326,9 +349,11 @@ def export(
     out_dir: str | Path,
     *,
     paper_funding_by_coin: dict[str, list[dict[str, Any]]] | None = None,
+    paper_mids: dict[str, float] | None = None,
 ) -> tuple[Path, Path, Path]:
     """Write track_record.{json,md,html}; return their paths."""
-    track = build_track_record(conn, paper_funding_by_coin=paper_funding_by_coin)
+    track = build_track_record(
+        conn, paper_funding_by_coin=paper_funding_by_coin, paper_mids=paper_mids)
     d = Path(out_dir)
     d.mkdir(parents=True, exist_ok=True)
     jp = d / "track_record.json"

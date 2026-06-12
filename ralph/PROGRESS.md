@@ -3196,3 +3196,54 @@ loss) — revisit if an open paper loser ever sits past its strategy horizon.
 maker-rest the arm to watch). B-EDGE2b three-armed reruns as the 15m store
 grows. B-EDGE2f at ≥30d paper books (~Jul 8). Idle queue: B-PAPER3e
 (track-record open-uPnL), B-SCALE doc once G2 evidence is real.
+
+## Iteration 62 — 2026-06-12 — B-PAPER3e: open-position uPnL in the track-record paper section
+
+**Why this.** Headline items stay time-blocked (1m store span vs B-G014's
+≥14d, ETA ~Jun 23–26; B-EDGE2f needs ≥30d paper books, ~Jul 8), so the
+leverage is again honesty of the evidence that IS accumulating. Iter 61
+gave `score --paper` mark-to-market but filed B-PAPER3e: the track record —
+the PUBLIC-grade artifact a reader will judge G1 evidence on — still showed
+realized-only paper cards, so a breakout arm sitting days underwater on an
+open 48–96h hold would have presented a clean card in exactly the document
+that's supposed to be un-flatterable.
+
+**Changed.** (a) `reports/track_record.py`: `build_track_record`/`export`
+grow `paper_mids=`; each paper agent gets `open_upnl` — the flatten-now
+value of its open book via the same `mark_paper_positions` the scorecard
+uses (exit crosses the spread + pays taker fee, so card-realized +
+open-uPnL = flattened-now book value, nothing double-counts on close).
+Honesty rules: a fully-closed book is exactly 0.0; if ANY open position
+lacks a mid the field is None (rendered "—") — a partial sum is never
+shown as if it covered the book. md/html paper tables grow an "open uPnL"
+column; PAPER_NOTE states the mark semantics and that marks are never
+folded into net/edge/sharpe(d)/maxDD$ (sharpe/DD math untouched).
+(b) `hlbot track-record`: `--paper-mark/--no-paper-mark` (default on)
+fetches mids via the existing `_fetch_mids` (one allMids call) ONLY when
+some paper agent has an open position — zero network with a closed/absent
+book, fetch failure degrades to unmarked with a warning, mirroring the
+`_fetch_paper_funding` degrade pattern.
+
+**Evidence.** 397 → **400 tests pass** (3 new in `test_track_record.py`:
+marked arm pins open_upnl == the canonical mark_paper_positions sum AND
+the +19.82 hand-computed value, closed-book 0.0, md+html column render,
+and realized net unchanged by marks; unmarked arm pins None→"—" offline
+and None on a PARTIALLY marked two-coin book; CLI arm pins zero fetches
+for a closed book, one fetch + $+19.82 in the exported md with an open
+position, and --no-paper-mark skipping the fetch with "—" in the
+artifact). `ruff check src tests scripts` clean. Live-fired against real
+allMids on a seeded scratch DB (closed BTC trip + open SOL long @150 +
+open ETH short @2500): track record shows realized $+0.79 beside open
+uPnL **$−74.72** — the exact clean-card-deep-underwater blind spot this
+closes — and cross-checks against `score --paper` per-position marks
+(ETH +8.20, SOL −82.92; penny drift = mid moved between the two calls).
+
+**Found.** Nothing new filed. B-PAPER3 follow-up chain is now complete
+(3a funding, 3b section, 3c goals, 3d scorecard marks, 3e track-record
+marks); the paper evidence pipeline reads honestly end-to-end ahead of
+the ~Jul 8 B-EDGE2f readout.
+
+**What's next (loop).** B-G014 when 1m store span ≥14d (~Jun 23–26; w=240
+maker-rest the arm to watch). B-EDGE2b three-armed reruns as the 15m store
+grows. B-EDGE2f at ≥30d paper books (~Jul 8). Idle queue: B-SCALE doc once
+G2 evidence is real.
