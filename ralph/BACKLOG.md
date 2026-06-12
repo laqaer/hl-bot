@@ -290,8 +290,14 @@ each on ≥90d real history (`hlbot confirm` / `hlbot backtest --config`) before
     fetch); roster entry paper-only. No live flip (human-gated).
   - [ ] **B-EDGE2b — revalidate as the store grows** (15m span 52d→90d+):
     rerun both confirms each few weeks; momentum is regime-fragile.
-  - [ ] **B-EDGE2c — quantify correlation to twap_mr_v1** (daily-PnL corr on
-    the same sample) to substantiate the diversification claim.
+  - [x] **B-EDGE2c — quantify correlation to twap_mr_v1.** Done (Iter 36):
+    `backtest/correlate.py` (UTC-day PnL bucketing + Pearson, tested) +
+    `hlbot correlate` (two arms, per-arm config/vwap-window, same frames/cost
+    model). On the 15m/52.2d 10-coin store sample, breakout_v1 (96h channel)
+    vs twap_mr_v1 daily-PnL corr is **−0.08 taker / −0.16 maker** (w=4 live
+    proxy) and **−0.07 / −0.10** (w=16 4h-window candidate) over 54 days —
+    uncorrelated (n=54 → ±0.27 CI95; claim is "uncorrelated", not "hedge").
+    Diversification thesis holds; rerun alongside B-EDGE2b as the store grows.
 
 ## P3 — capital formation (see docs/CAPITAL.md)
 

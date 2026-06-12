@@ -1606,3 +1606,50 @@ registration); ruff clean. All numbers reproducible via the CLI flags above
 candle source first: store-read vs 15m API fetch), B-EDGE2c (PnL correlation
 vs twap_mr), B12 remainder. B-G014 unblocks ~2026-06-26. No live change here:
 breakout_v1 exists only behind the backtest CLI.
+
+## Iteration 36 — 2026-06-12 — B-EDGE2c: breakout_v1 ⊥ twap_mr_v1 — daily-PnL corr ≈ −0.1, diversification thesis substantiated
+
+**What.** Iter 35 claimed breakout_v1 diversifies the twap_mr book because it's
+"a different signal family" — thesis, not evidence. Built the measurement:
+`backtest/correlate.py` (pure: UTC-day PnL bucketing from equity curves +
+Pearson; flat days kept — "A trades while B sits out" IS the diversification;
+days aligned by intersection so a longer warmup can't skew the series) and
+`hlbot correlate` (two arms, per-arm `--config`/`--vwap-window` since breakout
+needs window ≥ lookback+1 while twap wants its own cadence proxy; same frames
+source + cost model for both arms).
+
+**Numbers (store, 15m × 52.2d × 10-coin ADA…ZEC, 0 bars missing, funding from
+API, breakout = lb 384 / ex 96, 54 overlapping UTC days).**
+
+| twap arm | mode | twap edge | breakout edge | daily-PnL corr |
+|----------|------|----------:|--------------:|---------------:|
+| w=4 (live-config cadence proxy) | taker | −6.8bps | +36.4bps | **−0.08** |
+| w=4 | maker | −1.4 | +41.9 | **−0.16** |
+| w=16 (B-WIN 4h-window candidate) | taker | −4.4 | +36.4 | **−0.07** |
+| w=16 | maker | +1.1 | +41.9 | **−0.10** |
+
+Consistently ~zero-to-slightly-negative across both twap configs and both cost
+models. Breakout +36.4/+41.9 (322 tr) and twap w=16 maker +1.1 exactly
+reproduce Iters 35/33 — the harness replays deterministically. The in-sample
+anecdote from Iter 35 (breakout bleeds in the 3.6d pocket where twap earns)
+generalizes: the two PnL streams move independently day-to-day.
+
+**Honest caveats.** (1) n=54 days → CI95 ≈ ±0.27; the defensible claim is
+"uncorrelated", NOT "anti-correlated hedge". (2) The twap arm is the 15m
+cadence *proxy* of the live 1m config — the literal live strategy gives only
+~3.6d ≈ 4 daily points, too few to correlate; revisit at 1m when the store
+matures (B-G014 sample). (3) One 52d regime sample, same caveat as B-EDGE2
+itself — corr is regime-dependent; rerun with B-EDGE2b revalidations.
+(4) Curve totals vs scorecard net differ by the end-liquidation fee (booked
+after the last equity point) — visible in the CLI output, ~$0.1 on $1k.
+
+**Evidence.** 201 tests pass (10 new in tests/test_correlate.py: day
+bucketing incl. baseline/out-of-order/gap-day/empty, Pearson exact ±1 +
+undefined cases, intersection alignment, anticorrelated-arms end-to-end);
+ruff clean. All numbers reproducible via the CLI flags above.
+
+**What's next (loop).** B-EDGE2a (paper wiring for a 15m-cadence agent — the
+correlation number justifies the plumbing investment), B12 remainder.
+B-G014 unblocks ~2026-06-26 (three confirm arms). On B-EDGE2b reruns, also
+rerun `hlbot correlate` — a corr that drifts toward +1 in a new regime would
+gut the second-edge case even if breakout's own edge holds.

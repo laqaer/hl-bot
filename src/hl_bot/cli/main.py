@@ -891,6 +891,86 @@ def confirm(
 
 
 @app.command()
+def correlate(
+    agent_a: str = "twap_mr_v1",
+    agent_b: str = "breakout_v1",
+    config_a: str = "",
+    config_b: str = "",
+    vwap_window_a: int = 60,
+    vwap_window_b: int = 60,
+    coins: str = "BTC,ETH,SOL",
+    interval: str = "1h",
+    days: int = 30,
+    maker: bool = False,
+    starting_capital: float = 1000.0,
+    cache: bool = True,
+    source: str = "api",
+    funding: bool = True,
+):
+    """Daily-PnL Pearson correlation between two agents on the same history.
+
+    A second strategy only diversifies the book if its PnL is low-correlated
+    with the first (B-EDGE2c) — this runs both agents over the same candles
+    (each arm may use its own --config/--vwap-window, e.g. breakout needs
+    window ≥ lookback+1 to carry the closes) and correlates their UTC-day PnL.
+    Same cost model for both arms; --maker for the maker arm.
+    """
+    from ..backtest.correlate import pnl_correlation
+    from ..backtest.engine import Backtester, CostModel
+
+    _, s = _conn()
+    coin_list = [c.strip() for c in coins.split(",") if c.strip()]
+    arms = []
+    for agent, config, window in (
+        (agent_a, config_a, vwap_window_a), (agent_b, config_b, vwap_window_b),
+    ):
+        try:
+            cfg = parse_agent_config(config)
+        except ValueError as e:
+            console.print(f"[red]{e}[/red]")
+            raise typer.Exit(1) from e
+        factories = _backtest_factories(cfg)
+        if agent not in factories:
+            console.print(f"[red]unknown agent {agent}; choose from {list(factories)}[/red]")
+            raise typer.Exit(1)
+        arms.append((agent, cfg, window, factories[agent]))
+
+    frames_by_window: dict[int, list] = {}
+    results = []
+    for _agent, _cfg, window, factory in arms:
+        if window not in frames_by_window:
+            frames_by_window[window] = _load_backtest_frames(
+                coin_list, source=source, interval=interval, days=days,
+                cache=cache, vwap_window=window, api_url=s.hl_api_url,
+                with_funding=funding)
+        conn = init_db(":memory:")
+        bt = Backtester(CostModel(maker=maker), conn=conn,
+                        starting_capital=starting_capital)
+        results.append(bt.run(factory(conn), frames_by_window[window]))
+
+    res_a, res_b = results
+    corr = pnl_correlation(
+        res_a.equity_curve, res_b.equity_curve,
+        starting_a=starting_capital, starting_b=starting_capital)
+
+    table = Table(title=f"Correlation [{'maker' if maker else 'taker'}] "
+                        f"({interval}, {len(corr.days)} overlapping days)")
+    for col in ("arm", "agent", "w", "cfg", "net_pnl", "edge_bps", "trades"):
+        table.add_column(col)
+    for label, (agent, cfg, window, _), res in zip("AB", arms, results, strict=True):
+        sc = res.scorecard
+        table.add_row(
+            label, agent, str(window),
+            json.dumps(cfg, separators=(",", ":")) if cfg else "—",
+            f"{sc.net_pnl:+.2f}",
+            "—" if sc.edge_bps is None else f"{sc.edge_bps:+.1f}",
+            str(sc.n_trades),
+        )
+    console.print(table)
+    console.print(corr.summary())
+
+
+@app.command()
 def ws(
     coins: str = "BTC,ETH,SOL,HYPE",
     snapshot: Path = Path("data/ws_snapshot.json"),
