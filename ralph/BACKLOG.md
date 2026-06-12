@@ -330,6 +330,23 @@ Keep it ruthlessly prioritized: the top item should always be the highest-levera
   signal the G1–G3 evidence accumulation had no detector for). Live-fired
   both directions on a real paper tick.
 
+- [x] **B-DEPLOY-EXEC — Auto-deploy was dead on every box: update.sh shipped
+  without the exec bit.** Done (Iter 79): `deploy/update.sh` was git-tracked
+  100644 from birth (Jun 8) — `hlbot-update.service` ExecStart failed
+  203/EXEC every 15 minutes on every checkout, so the live deployment froze
+  at its install-day commit (55 commits behind: B-FUNDGR/B-FUNDGR2 funding
+  guardrails, B-GR1 snapshot guardrails, B-M5 spot fix, B-HB heartbeats —
+  none protecting the live book). The operator had fought this exact issue
+  (8dad672 sets `core.fileMode false`) but the +x never landed in git, and
+  fileMode=false makes a workdir chmod invisible to `git add -A` — which is
+  also why it kept not landing. Fixed three ways: index mode → 100755 via
+  `git update-index --chmod=+x`; unit hardened to `ExecStart=/usr/bin/bash
+  …/update.sh` (a future lost bit can't re-kill auto-deploy; propagates via
+  update.sh's own unit-cp on the first successful run); CI pin
+  (`tests/test_deploy_exec_bits.py`: every deploy/*.sh + ralph/loop.sh must
+  be index-mode 100755). Box remediated (`chmod +x` on the deploy clone —
+  invisible to the merge under fileMode=false) and the first successful
+  auto-deploy observed live same-iteration.
 - [x] **B-M5 — Spot-mid normalization fixed + tested (REVIEW M5, the last
   unpicked finding).** Done (Iter 66): the basis feed was silently dead, not
   merely fragile — the inline parser zipped `universe` with the ctx array

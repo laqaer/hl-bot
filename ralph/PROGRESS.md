@@ -4286,3 +4286,75 @@ card ~Jul 12. Idle queue: B-SCALE doc on real G2 evidence; pocket-aware
 reading aid in `hlbot experiment` output if the Jun-20 read needs it.
 Operator note (non-urgent): restart `hlbot-loop.service` at convenience to
 activate loop.sh's own stale-gated top-up.
+
+## Iteration 79 — 2026-06-12 — B-DEPLOY-EXEC: auto-deploy was dead on every box (update.sh never had the exec bit); live box frozen 55 commits back
+
+**Ripeness checks** (per-iteration readout): b_edge2b NOT RIPE (15m 52.5d
+< 60d, ~Jun 20); b_g014 NOT RIPE (1m 4.1d < 14d, ~Jun 26); b_edge3 +
+b_edge2_1h NOT RIPE (1h LIT 172.0d < 200d, ~Jul 10). Store fresh (step-0
+check: worst lag 4.9m ≤ 30m, no harvest needed), zero missing bars.
+
+**Why this.** Routine box check while all four specs wait on the calendar:
+`hlbot-update.service` was in `failed` state — `status=203/EXEC`, every 15
+minutes, on the unit whose whole job is pulling the loop's improvements
+into the live deployment. Root cause: `deploy/update.sh` was git-tracked
+**100644 from birth** (added Jun 8, 365c700), so EVERY checkout produces a
+non-executable script and systemd's bare `ExecStart=` can never run it —
+auto-deploy has never executed once. Compounding trap: the operator had
+already fought this exact symptom (8dad672 "git config core.fileMode false
+so chmod's exec-bit changes don't block pull/auto-deploy") — but
+fileMode=false makes a workdir `chmod +x` INVISIBLE to `git add -A`, which
+is precisely why the +x never landed in git no matter how many times it
+was applied locally. Both clones have fileMode=false. Blast radius: the
+live box (this box — tick timer every 5m, HLBOT_AUTO_UPDATE=1, deploy
+clone deliberately tracking the loop's branch) was frozen at its
+install-day commit 8edda64, **55 commits behind** — running without
+B-FUNDGR/B-FUNDGR2 (funding in the daily-loss halt), B-GR1 (snapshot-
+consistent guardrails), B-M5 (spot-mid fix), B-HB (tick heartbeat), B-AGG
+(aggregate 5× cap)… every risk rail of the last 3 days was protecting
+nothing. Evidence this is a bug, not an operator freeze: the env gate is
+ON, the timer is enabled and firing, and the failed unit was retrying
+every 15 minutes.
+
+**Changed.**
+- `deploy/update.sh` index mode → 100755 via `git update-index --chmod=+x`
+  (the only way that sticks under fileMode=false; content untouched).
+- `deploy/systemd/hlbot-update.service`: `ExecStart=/usr/bin/bash
+  /opt/hl-bot/deploy/update.sh` + comment — a future lost exec bit can
+  never re-kill auto-deploy. Reaches the box via update.sh's own unit-cp
+  step on the first successful run (no manual unit copy needed).
+- `tests/test_deploy_exec_bits.py`: pin — every tracked `deploy/**/*.sh` +
+  `ralph/loop.sh` (all direct ExecStart/operator entry points) must be
+  index-mode 100755; checks the GIT INDEX (workdir bit is a lie under
+  fileMode=false), degrades to os.access when git is unavailable. A future
+  Write-tool rewrite of any entry-point script that drops the bit fails CI.
+- Box remediation (deploy clone, `/opt/hl-bot`): `chmod +x
+  deploy/update.sh` — invisible to the ff-only merge under fileMode=false,
+  activates the existing unit at the next timer fire.
+
+**Evidence.** 500 → **501 tests pass**; ruff clean. Live-fired: watched the
+15:19:26 UTC timer fire — first successful auto-deploy in the unit's
+history: ff-merged 8edda64 → 4d3454b (all 55 commits), box-side test gate
+green (500 passed in 10.08s), `.deployed_sha=4d3454b`, unit
+`Result=success`, hlbot-ws + hlbot-tick.timer restarted and active (next
+tick 15:21:56). The live book now runs this week's risk rails.
+
+**Found.** (a) Same class as Iter 78's loop.sh trap, one layer down: Iter 78
+fixed "edits don't reach the running loop"; this fixes "the updater that
+ships edits to the live bot never ran at all". The two failures were
+masking each other — a working updater would have surfaced loop.sh's
+staleness sooner. (b) fileMode=false is a standing trap for ANY future
+script added to deploy/: it will ship 644 unless `git update-index
+--chmod=+x` is used explicitly; the new test turns that mistake into a CI
+failure instead of a silent dead unit. (c) Operator files `_arm.py` /
+`_setlive.py` sit untracked in /opt/hl-bot — left untouched.
+
+**What's next (loop).** Per-iteration: PROMPT step 0 (store top-up), then
+the four `--check-only` readouts (b_edge2b ~Jun 20 FIRST — read
+pocket_share against the 0.69/0.87/2.20 baseline; b_g014 ~Jun 26; b_edge3
++ b_edge2_1h ~Jul 10). Next iterations should confirm hlbot-update keeps
+deploying (this iteration's own commit is the natural test case — it
+should land on the box within ~15m of push). B-EDGE2f at ≥30d paper books
+(~Jul 8); xmom paper card ~Jul 12. Idle queue: B-SCALE doc on real G2
+evidence; pocket-aware reading aid in `hlbot experiment` output if the
+Jun-20 read needs it.
