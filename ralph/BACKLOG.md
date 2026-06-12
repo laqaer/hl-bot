@@ -267,12 +267,14 @@ each on ≥90d real history (`hlbot confirm` / `hlbot backtest --config`) before
   stop verdict was conditional on w=60. Volume-weighted σ variant not explored
   (separate slice if ever needed). Live flip blocked on B-WIN2 plumbing +
   B-G014 multi-week evidence.
-- [ ] **B-WIN2 — Parameterize the live tick VWAP window.** The live `femr_tick`
-  preamble hardcodes 60×1m candles → `candles_1h` (cli/main.py ~245–279; the
-  backtest engine honors any window via `--vwap-window`). Expose the window as
-  config/env (default 60 — NOT a live change by itself) so the operator can flip
-  to 240 once B-G014's multi-week sample confirms B-WIN's 4h result. Reuse
-  `rolling_vwap_sigma` from backtest/data.py instead of the inlined copy.
+- [x] **B-WIN2 — Parameterize the live tick VWAP window.** Done (Iter 34):
+  `femr_tick --vwap-window N` + `HLBOT_VWAP_WINDOW` env (CLI > env > 60;
+  `runtime.resolve_vwap_window`, garbage falls through to default).
+  `_enrich_view` now fetches `window`×1m candles and computes VWAP/σ via the
+  backtester's `rolling_vwap_sigma`/`closes_vols` (inlined copy deleted), so
+  live math == backtest math bar-for-bar; `closes` is the window slice like
+  backtest frames. Default 60 — no live change. Operator flip documented in
+  deploy/README.md §Going-live; gated on B-G014's multi-week evidence.
 - [ ] **B-EDGE2 — hunt a second, low-correlation edge** (carry is pruned) so the
   book isn't single-strategy before raising AUM.
 

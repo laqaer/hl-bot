@@ -151,7 +151,8 @@ def fetch_funding_history(
 # ---------------------------------------------------------------------------
 
 
-def _closes_vols(candles: list[dict[str, Any]]) -> tuple[list[float], list[float], list[int]]:
+def closes_vols(candles: list[dict[str, Any]]) -> tuple[list[float], list[float], list[int]]:
+    """Parse candle dicts into (closes, vols, ts) lists, skipping bad rows."""
     closes, vols, ts = [], [], []
     for k in candles:
         try:
@@ -235,7 +236,7 @@ def build_frames(
     for coin, candles in candles_by_coin.items():
         ordered = sorted(candles, key=lambda k: int(k.get("t", 0)))
         by_ts[coin] = {int(k.get("t", 0)): k for k in ordered}
-        series[coin] = _closes_vols(ordered)
+        series[coin] = closes_vols(ordered)
         all_ts.update(by_ts[coin].keys())
         vols = series[coin][1]
         prefix = [0.0] * (len(vols) + 1)

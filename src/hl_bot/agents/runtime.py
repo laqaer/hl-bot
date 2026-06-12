@@ -13,6 +13,7 @@ import contextlib
 import logging
 import sqlite3
 import time
+from collections.abc import Mapping
 from dataclasses import dataclass
 
 import httpx
@@ -21,6 +22,29 @@ from ..agents.base import Agent, MarketView
 from ..agents.decisions import Decision, log_decision
 
 log = logging.getLogger(__name__)
+
+DEFAULT_VWAP_WINDOW = 60  # 1m bars -> 1h rolling VWAP/sigma (historical live config)
+
+
+def resolve_vwap_window(
+    cli_value: int = 0,
+    env: Mapping[str, str] | None = None,
+    default: int = DEFAULT_VWAP_WINDOW,
+) -> int:
+    """Resolve the live tick's VWAP window (in 1m bars).
+
+    Precedence: explicit CLI value (>0) > ``HLBOT_VWAP_WINDOW`` env > default.
+    Anything unparseable or < 2 (rolling_vwap_sigma's floor) falls back to the
+    next source so a typo in the env can never silence the signal entirely.
+    """
+    if cli_value >= 2:
+        return cli_value
+    raw = (env or {}).get("HLBOT_VWAP_WINDOW", "")
+    with contextlib.suppress(TypeError, ValueError):
+        v = int(raw)
+        if v >= 2:
+            return v
+    return default
 
 
 def fetch_market_view(base_url: str, coins: list[str]) -> MarketView:

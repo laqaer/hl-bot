@@ -1506,3 +1506,47 @@ flip). Then B12 remainder (femr_tick preamble harness — overlaps B-WIN2's
 touch point, consider doing together). B-G014 unblocks ~2026-06-26 with three
 arms. B-MAKER-LIVE unchanged, operator-gated — note w=240 would make even
 taker entries positive at live cadence, but maker remains ~6bps better.
+
+## Iteration 34 — 2026-06-12 — B-WIN2: live VWAP window parameterized (operator-flippable, default 60)
+
+**What.** The live `femr_tick` preamble hardcoded the mean-reversion signal's
+VWAP window (60×1m candles) with its own inlined VWAP/σ math — so B-WIN's 4h
+window (the strongest lever found: 1m maker +4.5→+7.6bps, concordant across
+all three live-like samples) was unreachable without a code edit, and the live
+math was a hand-maintained near-copy of the backtester's.
+
+**Change (no live behavior change at defaults).**
+- `runtime.resolve_vwap_window(cli, env)` — pure, tested resolver: explicit
+  `--vwap-window` > `HLBOT_VWAP_WINDOW` env > 60. Unparseable/sub-floor (<2)
+  values fall through to the next source so a typo'd env can never silence the
+  signal.
+- `femr_tick --vwap-window N` (default 0 = env/60); the dim market line now
+  prints `(vwap w=N)` so the operator can verify which window a session ran.
+- `_enrich_view(vwap_window=)` fetches `window`×1m candles and computes VWAP/σ
+  via the backtester's `rolling_vwap_sigma` + (newly public) `closes_vols` —
+  the inlined duplicate is deleted, so live and backtest agree bar-for-bar by
+  construction (this was B-WIN2's point: the backtest evidence is only valid
+  for live if both run the same math). `view.extra["closes"]` is now the
+  window slice, matching backtest `Frame.closes` semantics.
+- Operator flip documented in deploy/README.md §Going-live: append
+  `--vwap-window 240` to `HLBOT_TICK_ARGS` (or `HLBOT_VWAP_WINDOW=240`) —
+  **only after B-G014's multi-week confirm**; still a human-gated live change.
+
+**Behavior notes (intentional, small).** (1) Min-bars guard for a coin to get
+a vwap entry was len≥10; it is now `rolling_vwap_sigma`'s floor (window//2,
+i.e. 30 at w=60) — stricter, and closer to the backtest's warmup semantics;
+only affects coins with <30 1m bars in the last hour (thin/new listings the
+volume floor filters anyway). (2) `closes` passed to the regime filter is the
+window slice (was: all fetched bars — identical at default since fetch span =
+window).
+
+**Evidence.** 176 tests pass (4 new: resolver precedence + garbage fallback;
+fake-httpx `_enrich_view` test proving fetch span follows the window and
+vwap/σ/closes equal `rolling_vwap_sigma` output; too-few-bars skip). Ruff
+clean. No edge claim — this is plumbing; the numbers stay B-WIN's (Iter 33).
+
+**What's next (loop).** B12 remainder (fold the rest of the femr_tick preamble
+— clearinghouse fetch → risk-cap → view enrich — into a shared harness) or
+B-EDGE2 (second edge hunt). B-G014 unblocks ~2026-06-26 (store 1m span ≥14d;
+loop.sh tops the store up every iteration) with three arms: baseline,
+stop 0.03, w=240 — w=240 is now one config flip away if it rules.

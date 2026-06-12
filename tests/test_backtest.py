@@ -299,14 +299,14 @@ def test_parse_agent_config_and_factory_override():
 def _build_frames_naive(candles_by_coin, funding_by_coin=None, *,
                         vwap_window=60, warmup=60, bar_hours=1.0):
     """The original O(n²) build_frames logic, kept verbatim as the reference."""
-    from hl_bot.backtest.data import _closes_vols, funding_rate_at
+    from hl_bot.backtest.data import closes_vols, funding_rate_at
 
     funding_by_coin = funding_by_coin or {}
     by_ts, all_ts, series = {}, set(), {}
     for coin, candles in candles_by_coin.items():
         ordered = sorted(candles, key=lambda k: int(k.get("t", 0)))
         by_ts[coin] = {int(k.get("t", 0)): k for k in ordered}
-        series[coin] = _closes_vols(ordered)
+        series[coin] = closes_vols(ordered)
         all_ts.update(by_ts[coin].keys())
     frames = []
     for ts in sorted(all_ts):

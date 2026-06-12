@@ -234,9 +234,18 @@ def tick(coins: str = "BTC,ETH,SOL,HYPE,ZEC"):
         console.print(f"  {d.agent} {d.action} {d.coin or ''} {tag} :: {d.reasoning}")
 
 
-def _enrich_view(view, api_url: str, vol: dict[str, float]) -> None:
-    """Augment a MarketView with 1h candles (top-vol coins), spot mids, liquidations."""
+def _enrich_view(view, api_url: str, vol: dict[str, float],
+                 vwap_window: int = 60) -> None:
+    """Augment a MarketView with rolling VWAP/σ (top-vol coins), spot mids, liquidations.
+
+    ``vwap_window`` is the number of 1m candles in the rolling window (60 = the
+    historical 1h live config). VWAP/σ math is the backtester's
+    ``rolling_vwap_sigma`` so live and backtest agree bar-for-bar (B-WIN2);
+    the ``candles_1h`` key name is kept for agent compatibility.
+    """
     import httpx as _httpx
+
+    from ..backtest.data import closes_vols, rolling_vwap_sigma
 
     # ---- top-20-by-volume universe ----
     top = sorted(vol.items(), key=lambda kv: kv[1], reverse=True)[:20]
@@ -247,9 +256,9 @@ def _enrich_view(view, api_url: str, vol: dict[str, float]) -> None:
     spot_mids: dict[str, float] = {}
 
     with _httpx.Client(timeout=15) as cli:
-        # 60 × 1m candles -> vwap & sigma per top coin
+        # vwap_window × 1m candles -> vwap & sigma per top coin
         end_ms = int(time.time() * 1000)
-        start_ms = end_ms - 60 * 60_000
+        start_ms = end_ms - vwap_window * 60_000
         for coin in top_coins:
             try:
                 cs = cli.post(api_url + "/info", json={
@@ -257,27 +266,14 @@ def _enrich_view(view, api_url: str, vol: dict[str, float]) -> None:
                     "req": {"coin": coin, "interval": "1m",
                             "startTime": start_ms, "endTime": end_ms},
                 }).json() or []
-                if not isinstance(cs, list) or len(cs) < 10:
+                if not isinstance(cs, list) or not cs:
                     continue
-                pxs, vols = [], []
-                for k in cs:
-                    try:
-                        c_px = float(k.get("c", 0))
-                        c_vol = float(k.get("v", 0))
-                        if c_px > 0:
-                            pxs.append(c_px)
-                            vols.append(c_vol)
-                    except (TypeError, ValueError):
-                        continue
-                if len(pxs) < 10:
+                pxs, vols, _ts = closes_vols(cs)
+                vwap, sigma = rolling_vwap_sigma(pxs, vols, vwap_window)
+                if vwap is None or sigma is None:
                     continue
-                tot_vol = sum(vols)
-                vwap = sum(p * v for p, v in zip(pxs, vols, strict=False)) / tot_vol if tot_vol > 0 else sum(pxs) / len(pxs)
-                mean = sum(pxs) / len(pxs)
-                var = sum((p - mean) ** 2 for p in pxs) / len(pxs)
-                sigma = var ** 0.5
                 candles_1h[coin] = {"vwap": vwap, "sigma": sigma, "n": len(pxs)}
-                closes_by_coin[coin] = pxs
+                closes_by_coin[coin] = pxs[-vwap_window:]
             except Exception:  # noqa: BLE001
                 continue
 
@@ -347,12 +343,14 @@ def _enrich_view(view, api_url: str, vol: dict[str, float]) -> None:
 
 
 @app.command("femr_tick")
-def femr_tick(live: bool = False, execution: str = "taker"):
+def femr_tick(live: bool = False, execution: str = "taker", vwap_window: int = 0):
     """Run FEMR (Funding Extremes Mean Reversion) one tick.
 
     paper (default): log decisions only, no orders placed.
     live: place real orders on MAIN account, gated by guardrails.
           Bot only touches positions it itself opened (cloid-tagged).
+    vwap_window: rolling VWAP/σ window in 1m bars for the mean-reversion
+          agents (0 = HLBOT_VWAP_WINDOW env, else 60 — the historical config).
     """
     from ..agents.runtime import (
         apply_allocator_caps,
@@ -362,6 +360,7 @@ def femr_tick(live: bool = False, execution: str = "taker"):
         overlay_ws_snapshot,
         positions_from_clearinghouse,
         reconcile_agents,
+        resolve_vwap_window,
     )
     from ..exec.orders import (
         HL_TRADER_ADDRESS,
@@ -462,13 +461,15 @@ def femr_tick(live: bool = False, execution: str = "taker"):
                       for n, v in allocs.items()
                   ))
 
+    import os as _os
+
     view = fetch_market_view(s.hl_api_url, [])
-    _enrich_view(view, s.hl_api_url, view.extra.get("day_ntl_vlm", {}))
+    w = resolve_vwap_window(vwap_window, _os.environ)
+    _enrich_view(view, s.hl_api_url, view.extra.get("day_ntl_vlm", {}), vwap_window=w)
 
     # Overlay a fresh WS snapshot if available (sub-second mids, L2 book, and a
     # REAL liquidations feed for liq_cascade). Purely additive; REST is the
     # fallback when no fresh snapshot exists. Opt-in via HLBOT_WS_SNAPSHOT.
-    import os as _os
     ws_path = _os.environ.get("HLBOT_WS_SNAPSHOT")
     if ws_path:
         from ..ingest.ws import load_fresh_snapshot
@@ -498,7 +499,7 @@ def femr_tick(live: bool = False, execution: str = "taker"):
     manual_coins = ownership.manual_coins
     console.print(
         f"[dim]market: {len(view.mids)} coins, {len(view.funding)} funding · "
-        f"candles: {len(view.extra.get('candles_1h', {}))} · "
+        f"candles: {len(view.extra.get('candles_1h', {}))} (vwap w={w}) · "
         f"spot: {sorted(view.extra.get('spot_mids', {}).keys())} · "
         f"liqs: {len(view.extra.get('liquidations', []))} · "
         f"acct ${acct_val:.2f}, free ${withdrawable:.2f} · "

@@ -82,6 +82,12 @@ so the trader stays light.
 4. Set `HLBOT_TICK_ARGS="--live --execution maker"` in `/etc/hl-bot/env`, then
    `systemctl restart hlbot-tick.timer`. Watch the first ticks closely.
 
+The mean-reversion VWAP window defaults to 60×1m (the historical config). To
+flip it (e.g. to the 4h window once B-G014's multi-week evidence confirms
+B-WIN), append `--vwap-window 240` to `HLBOT_TICK_ARGS` or set
+`HLBOT_VWAP_WINDOW=240` in `/etc/hl-bot/env`. Backtest the exact window first:
+`hlbot confirm ... --vwap-window 240`.
+
 ## Kill switch
 
 ```bash

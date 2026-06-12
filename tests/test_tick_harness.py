@@ -27,6 +27,7 @@ from hl_bot.agents.runtime import (
     overlay_ws_snapshot,
     positions_from_clearinghouse,
     reconcile_agents,
+    resolve_vwap_window,
 )
 from hl_bot.db.schema import init_db
 from hl_bot.risk.scaling import NotionalCap
@@ -220,3 +221,102 @@ def test_overlay_ws_snapshot_empty_liqs_still_enables_feed():
     assert out.n_liqs == 0
     assert view.extra["liquidations"] == []
     assert view.extra["liquidations_feed"] is True
+
+
+# ---------------------------------------------------------------------------
+# resolve_vwap_window (B-WIN2): the live VWAP window is operator-flippable
+# ---------------------------------------------------------------------------
+
+
+def test_resolve_vwap_window_precedence():
+    assert resolve_vwap_window() == 60, "no inputs -> historical default"
+    assert resolve_vwap_window(0, {"HLBOT_VWAP_WINDOW": "240"}) == 240, "env used when no CLI value"
+    assert resolve_vwap_window(120, {"HLBOT_VWAP_WINDOW": "240"}) == 120, "explicit CLI wins over env"
+
+
+def test_resolve_vwap_window_rejects_garbage():
+    # A typo'd env or absurd CLI value must never silence the signal: fall
+    # through to the next source instead of propagating a broken window.
+    assert resolve_vwap_window(0, {"HLBOT_VWAP_WINDOW": "4h"}) == 60
+    assert resolve_vwap_window(0, {"HLBOT_VWAP_WINDOW": "-5"}) == 60
+    assert resolve_vwap_window(0, {"HLBOT_VWAP_WINDOW": "1"}) == 60
+    assert resolve_vwap_window(1, {"HLBOT_VWAP_WINDOW": "240"}) == 240, "sub-floor CLI falls to env"
+    assert resolve_vwap_window(-3, {}) == 60
+
+
+# ---------------------------------------------------------------------------
+# _enrich_view honors vwap_window and matches the backtester's math (B-WIN2)
+# ---------------------------------------------------------------------------
+
+
+class _Resp:
+    def __init__(self, payload):
+        self._payload = payload
+
+    def json(self):
+        return self._payload
+
+
+class _FakeHlClient:
+    """Serves canned 1m candles for any candleSnapshot; empty otherwise."""
+
+    candles: list[dict] = []
+    requests: list[dict] = []
+
+    def __init__(self, *a, **k):
+        pass
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *a):
+        return False
+
+    def post(self, url, json=None):
+        if (json or {}).get("type") == "candleSnapshot":
+            _FakeHlClient.requests.append(json["req"])
+            return _Resp(list(_FakeHlClient.candles))
+        return _Resp([])
+
+
+def _enrich_with_window(monkeypatch, candles, window):
+    import httpx
+
+    from hl_bot.cli.main import _enrich_view
+
+    _FakeHlClient.candles = candles
+    _FakeHlClient.requests = []
+    monkeypatch.setattr(httpx, "Client", _FakeHlClient)
+    view = MarketView(ts_ms=0, mids={"TST": 100.0})
+    _enrich_view(view, "http://fake", {"TST": 1e9}, vwap_window=window)
+    return view
+
+
+def test_enrich_view_window_drives_fetch_span_and_math(monkeypatch):
+    from hl_bot.backtest.data import rolling_vwap_sigma
+
+    window = 240
+    candles = [{"t": i * 60_000, "c": 100.0 + (i % 7), "v": 1.0 + i % 3}
+               for i in range(window)]
+    view = _enrich_with_window(monkeypatch, candles, window)
+
+    req = _FakeHlClient.requests[0]
+    assert req["endTime"] - req["startTime"] == window * 60_000, "fetch span follows the window"
+
+    pxs = [k["c"] for k in candles]
+    vols = [k["v"] for k in candles]
+    want_vwap, want_sigma = rolling_vwap_sigma(pxs, vols, window)
+    got = view.extra["candles_1h"]["TST"]
+    assert got["vwap"] == pytest.approx(want_vwap)
+    assert got["sigma"] == pytest.approx(want_sigma)
+    assert got["n"] == window
+    assert view.extra["closes"]["TST"] == pxs[-window:], "closes = the window slice, like backtest frames"
+
+
+def test_enrich_view_skips_coin_with_too_few_bars(monkeypatch):
+    # rolling_vwap_sigma's floor (window//2) governs, matching backtest warmup
+    # semantics: a thin/new listing yields no vwap entry rather than a noisy one.
+    candles = [{"t": i * 60_000, "c": 100.0, "v": 1.0} for i in range(10)]
+    view = _enrich_with_window(monkeypatch, candles, 60)
+    assert "TST" not in view.extra["candles_1h"]
+    assert "TST" not in view.extra["closes"]
