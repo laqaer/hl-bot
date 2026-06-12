@@ -74,7 +74,10 @@ The only way a *small* account reaches $1M fast — by accepting ~1% odds.
 - **Separate sub-account**, **hard-capped** (only money you can zero), **defined max
   loss per bet**; asymmetric/convex positions (defined-risk leverage, option-like).
 - **Negative expected value, fat right tail.** **Never** touches core/vault capital.
-- Spec it first (backlog **B17**); fund only what you can lose.
+- Spec'd in **`MOONSHOT.md`** (backlog B17): ring-fence invariants (isolated-margin
+  only, per-bet cap, kill floor, sweep ratchet, address isolation) + bet/refund
+  discipline; `hlbot sleeve-check` verifies the invariants read-only against the
+  funded account. Fund only what you can lose, only after live G1+ evidence.
 
 ## Sequencing
 

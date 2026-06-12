@@ -577,9 +577,19 @@ each on ≥90d real history (`hlbot confirm` / `hlbot backtest --config`) before
   Live-fired on real 1m store data: taker arm fails a 1%-daily eval on an
   intraday dip (987.17 vs floor 987.47) invisible to coarser sampling.
   PROP_EVAL.md Step 1 documents the screen.
-- [ ] **B17 — Moonshot sleeve spec.** Design the ring-fenced, loss-bounded sleeve
-  (separate sub-account, hard cap, defined max loss). Spec only; no live. (CAPITAL.md
-  Track D.)
+- [x] **B17 — Moonshot sleeve spec.** Done (Iter 60): `docs/MOONSHOT.md` —
+  ring-fence invariants (hard cap = one written-down tranche ≤1–2% of
+  capital, isolated-margin-only [HL's defined-max-loss primitive], per-bet
+  margin ≤25% of cap, ≤2 concurrent, kill floor 25% → DEAD + ≥90d stand-down,
+  sweep-to-core ratchet, address ∉ {trader, vault}), bet discipline
+  (pre-registered thesis/invalidation/max-loss, no averaging down, funding
+  in the budget), refund rules (fresh decision, ≤1 tranche/quarter, never
+  death-week, two dead tranches = re-evaluate the concept), measurement
+  (excluded from the public track record by construction — own address, DB
+  never ingests it). Rules-as-code: `risk/sleeve.py` `SleeveConfig`/
+  `evaluate_sleeve` + read-only `hlbot sleeve-check` (live-fired on the real
+  API). Funding stays operator-only, junior to live G1+ evidence; the bot
+  never trades the sleeve.
 
 ## Done
 

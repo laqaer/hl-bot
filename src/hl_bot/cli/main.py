@@ -1316,6 +1316,112 @@ def prop_check(
     )
 
 
+@app.command("sleeve-check")
+def sleeve_check(
+    hard_cap: float = typer.Option(
+        ..., help="The tranche $ funded into the sleeve — the most it can "
+                  "ever lose. Write it down at funding (docs/MOONSHOT.md); "
+                  "there is no sensible default."),
+    address: str = typer.Option(
+        "", help="Sleeve account address (default: HLBOT_SLEEVE_ADDRESS env)."),
+    max_bet_frac: float = typer.Option(
+        0.25, help="Per-bet isolated-margin cap as a fraction of the hard cap."),
+    max_concurrent: int = typer.Option(2, help="Max simultaneous bets."),
+    kill_floor_frac: float = typer.Option(
+        0.25, help="Equity fraction of the hard cap at/below which the "
+                   "sleeve is DEAD (flatten, stand down)."),
+):
+    """Read-only moonshot-sleeve ring-fence check (CAPITAL.md Track D,
+    docs/MOONSHOT.md).
+
+    Fetches the sleeve account's clearinghouseState and verifies the
+    loss-bound invariants: every bet isolated-margin, per-bet margin under
+    the cap, bet count under the cap, equity vs kill floor, profits above the
+    hard cap flagged for the sweep-to-core ratchet, and the sleeve address
+    not being a core (trader/vault) account. Never trades; run it before and
+    after every bet and weekly in between.
+    """
+    import os
+    import re
+
+    import httpx
+
+    from ..config import resolve_vault_address
+    from ..exec.orders import resolve_trader_address
+    from ..risk.sleeve import SleeveConfig, evaluate_sleeve
+
+    addr = (address or os.environ.get("HLBOT_SLEEVE_ADDRESS", "")).strip()
+    if not addr:
+        console.print("[red]no sleeve address[/red] — pass --address or set "
+                      "HLBOT_SLEEVE_ADDRESS")
+        raise typer.Exit(1)
+    if not re.fullmatch(r"0x[0-9a-fA-F]{40}", addr):
+        console.print(f"[red]sleeve address malformed:[/red] {addr!r} "
+                      "(want 0x + 40 hex chars)")
+        raise typer.Exit(1)
+
+    try:
+        cfg = SleeveConfig(
+            hard_cap=hard_cap, max_bet_frac=max_bet_frac,
+            max_concurrent_bets=max_concurrent,
+            kill_floor_frac=kill_floor_frac)
+    except ValueError as e:
+        raise typer.BadParameter(str(e)) from e
+
+    s = Settings.from_env()
+    try:
+        with httpx.Client(timeout=10) as cli:
+            st = cli.post(
+                s.hl_api_url + "/info",
+                json={"type": "clearinghouseState", "user": addr},
+            ).json() or {}
+    except httpx.HTTPError as e:
+        console.print(f"[red]clearinghouseState fetch failed:[/red] {e}")
+        raise typer.Exit(1) from e
+
+    report = evaluate_sleeve(
+        cfg, st, address=addr,
+        core_addresses=(resolve_trader_address(), resolve_vault_address() or ""))
+    if report.status == "NO_DATA":
+        console.print("[red]no clearinghouse data for the sleeve address[/red] "
+                      "— never funded, or wrong address?")
+        raise typer.Exit(1)
+
+    console.print(
+        f"rules: hard cap ${cfg.hard_cap:.2f}, per-bet "
+        f"${cfg.max_bet_margin:.2f} ({max_bet_frac:.0%}), "
+        f"max {max_concurrent} bets, kill floor ${cfg.kill_floor:.2f} "
+        f"({kill_floor_frac:.0%})")
+    console.print(
+        f"sleeve {addr}: equity ${report.equity:.2f}, "
+        f"committed ${report.committed_margin:.2f} across "
+        f"{len(report.bets)} bet(s), kill headroom ${report.kill_headroom:.2f}")
+    if report.bets:
+        table = Table(title="Open bets")
+        for col in ("coin", "side", "margin type", "lev", "margin $",
+                    "value $", "uPnL $"):
+            table.add_column(col)
+        for b in report.bets:
+            table.add_row(
+                b.coin, "LONG" if b.szi > 0 else "SHORT",
+                b.leverage_type or "?",
+                f"{b.leverage:.0f}x" if b.leverage else "?",
+                f"{b.margin_used:.2f}", f"{b.position_value:.2f}",
+                f"{b.unrealized_pnl:+.2f}")
+        console.print(table)
+    for v in report.violations:
+        console.print(f"[red]✗ {v}[/red]")
+    for n in report.notes:
+        console.print(f"[yellow]• {n}[/yellow]")
+    color = {"OK": "green", "DEAD": "red"}.get(report.status, "red")
+    console.print(f"status: [{color}]{report.status}[/{color}]")
+    console.print(
+        "[dim]read-only: violations are for the operator to fix by hand — "
+        "the bot never trades the sleeve. Top-ups are invisible to this "
+        "check; the hard cap only binds while funding stays one written-down "
+        "tranche (docs/MOONSHOT.md).[/dim]")
+
+
 @app.command()
 def report(send: bool = False):
     """Build daily report; optionally send to Telegram."""

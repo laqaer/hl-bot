@@ -3073,3 +3073,72 @@ pre-capital.
 maker-rest the arm to watch). B-EDGE2b three-armed reruns as the 15m store
 grows. B-EDGE2f at ≥30d paper books (~Jul 8). Idle queue: B17 moonshot
 sleeve spec, B-SCALE doc once G2 evidence is real.
+
+## Iteration 60 — 2026-06-12 — B17: moonshot sleeve spec + ring-fence as code
+
+**Why this.** Research tasks remain time-blocked (measured the store this
+iteration: 1m span 3.7d vs the ≥14d B-G014 needs, ETA ~Jun 23–26; 15m at
+52.1d with B-EDGE2b's three-armed rerun just done Iters 48–49; paper books
+accumulate on the deploy box, ~Jul 8 for B-EDGE2f). Top idle item was B17
+(CAPITAL.md Track D): spec the ring-fenced, loss-bounded moonshot sleeve.
+Same shape as Iter 58's B-PROP: the checklist gets an operational core,
+because the sleeve's one engineering property — worst case bounded and
+written down BEFORE any bet — is mechanically checkable against a real
+account, and an unenforced ring-fence is the exact failure mode the sleeve
+exists to contain (lottery impulses expressing themselves inside the core
+account that carries the track record).
+
+**Changed.** (a) `docs/MOONSHOT.md` — the B17 spec. Honest framing first:
+the sleeve is NEGATIVE-EV with a fat right tail, and its real function is
+containment (a budgeted, fenced, death-ruled outlet so the impulse never
+touches the core book). Invariants table: hard cap = one written-down
+tranche (≤1–2% of capital, top-ups invisible to code — the no-top-up
+discipline is the operator's contract), isolated-margin-only (on HL,
+isolated margin IS the defined-max-loss primitive; cross puts the whole
+sleeve behind one bet), per-bet margin ≤25% of cap, ≤2 concurrent bets,
+kill floor 25% (DEAD → flatten, sweep the stub, stand down ≥90d),
+sweep-to-core ratchet above the cap (bank the tail — it's the only reason
+the sleeve exists), sleeve address ∉ {HL_TRADER_ADDRESS, HL_ADDRESS,
+HL_VAULT_ADDRESS}. Bet discipline (3-line pre-registration: thesis/
+invalidation/max-loss; no averaging down; expected funding counts inside
+the max-loss budget), refund rules (fresh decision, ≤1/quarter, never in
+the death week — the sleeve-shaped "never chase"; two consecutive dead
+tranches = re-evaluate the concept), measurement (out of the public track
+record BY CONSTRUCTION — own wallet, bot DB never ingests it; in the
+personal P&L always). Gates: funding is operator-only and junior to live
+G1+ evidence; any future moonshot *agent* starts at G0; the loop never
+funds/wires/trades it. (b) `risk/sleeve.py`: `SleeveConfig` (validated) /
+`parse_sleeve_positions` (keeps `leverage.type`, which the tick-path parse
+drops — isolated-vs-cross is what the loss bound stands on) /
+`evaluate_sleeve` → violations + notes + status (NO_DATA / DEAD /
+VIOLATIONS / OK; DEAD outranks violations — a dead sleeve's only legal
+moves are flatten + stand down). (c) `hlbot sleeve-check`: read-only CLI
+(`--hard-cap` required — no sensible default for "the most you can lose";
+address via flag or HLBOT_SLEEVE_ADDRESS, hex-validated; core addresses
+from resolve_trader_address + resolve_vault_address), prints rules/equity/
+bets table/violations/status + the top-up honesty caveat. (d) CAPITAL.md
+Track D links the spec + tool.
+
+**Evidence.** 372 → **393 tests pass** (21 new in `tests/test_sleeve.py`:
+config rejection arms; parse keeps leverage type + skips malformed/
+coinless entries; clean-sleeve OK with committed/headroom math; cross-
+margin violation; oversized-bet violation; bet-count violation; kill floor
+→ DEAD outranking a live violation; profit-above-cap → sweep note not
+violation; case-insensitive core-address breach; empty state → NO_DATA;
+CLI arms: clean OK exit 0, violation print, missing/malformed address exit
+1, core-collision flagged, NO_DATA exit 1). `ruff check src tests scripts`
+clean. Live-fired read-only against the real API pointing at the core
+trader address as a worst-case demo: fetched the account's actual book and
+flagged BOTH expected violations — "ring-fence breach: sleeve address IS a
+core account" and "VVV: cross-margin position — loss is not bounded by the
+bet's posted margin" — status VIOLATIONS, exit clean, nothing traded.
+
+**Found.** Nothing requiring action: the live account currently holds a
+cross-margin VVV short (3x, $138 notional) — that's the bot's normal book
+(HL default margin mode), only a violation *for a sleeve account*, which
+this account is not.
+
+**What's next (loop).** B-G014 when 1m store span ≥14d (~Jun 23–26; w=240
+maker-rest the arm to watch). B-EDGE2b three-armed reruns as the 15m store
+grows. B-EDGE2f at ≥30d paper books (~Jul 8). Idle queue: B-SCALE doc once
+G2 evidence is real; P3 spec items are now all done (B15/B16/B-PROP/B17).
