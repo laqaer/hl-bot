@@ -4439,3 +4439,76 @@ queued: B-SCALE doc on real G2 evidence; consider a reversal read of
 xmom's strongly-negative IS on the 208d 1h sample (sign-flip hypothesis —
 needs cost math first; do NOT burn the pre-registered b_edge3 rerun on
 it).
+
+## Iteration 80 (part 2) — 2026-06-12 — LIVE INCIDENT: demote-with-open-inventory orphaned a $390 book on a $49 account; fixed with exit-only live management
+
+**Discovery chain.** Closing out the deploy watch found `tick_heartbeats`
+EMPTY despite 4 post-deploy tick fires (run-tick.sh masks step failures —
+unit shows SUCCESS regardless). A manual PAPER tick on the box completed
+fine (heartbeat written), so the break was live-only. agent_state showed
+twap_mr_v1 `mode=paper, notes='demoted by supervisor'`; goal_evaluations
+told the whole story: **15:07 the OLD pre-deploy code auto-promoted
+twap_mr_v1 paper→live_small off paper cards** (the path B-PAPER3c closed —
+but that fix sat undeployed for 4 days behind the dead updater, B-DEPLOY-
+EXEC), **15:12 it entered NEAR (filled) and rested TON** at ~$195 notional
+each (the old auto-tuner's $200/trade standing approval — B-AGG's 5× cap
+was also undeployed), **and the edge guardrail demoted it the same tick**
+(7d realized edge −10.4bps < −10). TON's rest filled later; with the agent
+demoted, `filter_live_agents` dropped it and femr_tick's empty-roster
+early return skipped EVERYTHING: no exits, no maker-fill reconcile (the
+DB never learned it owns TON), no stale-quote cancels, no guardrail pass,
+no heartbeat. Exchange truth at discovery: TON short $195 + NEAR short
+$195 = **$390 notional, ~8× leverage on $49.24**, +$9.6 uPnL, zero open
+orders, zero management, and both pager channels empty. The B-DEPLOY-EXEC
+incident and this one compound: every safety rail of the last 3 days
+existed in git while the live book ran a 4-day-old promotion footgun.
+
+**Changed** (second commit this iteration).
+- `runtime.exit_only_live_agents(conn, agents, live_names)`: skipped-from-
+  live agents that still have live-book ownership (`bot_owned_coins`
+  live-only) or working maker quotes re-enter the live tick EXIT-ONLY.
+  Paper-book state never qualifies (B-PAPER separation holds).
+- `runtime.execute_decisions(exit_only=)`: any `place` from an exit-only
+  agent is dropped BEFORE guardrail/cooldown checks; `flatten` executes
+  always (incl. under guardrail halt — risk reduction, unchanged).
+- `cli.femr_tick`: live mode appends exit-only managers to the tick roster
+  (prints them), so their exits, maker reconcile + stale cancels, and the
+  guardrail check all run; the empty-roster early return now records a
+  live heartbeat (alive-but-refusing ≠ dead).
+- NOT a promotion path: entries stay gated on agent_state exactly as
+  before; an exit-only agent's exposure can only shrink.
+
+**Evidence.** 504 → **506 tests pass** (+2: exit-only selection — holder
+via live book / rester via working quote / paper-only and flat books and
+live-roster agents excluded; execution gate — entry skipped with green
+guardrails + no exchange call + nothing logged, flatten executes under a
+halt); ruff clean. Verified read-only against the REAL box DB:
+`working_orders` shows the unreconciled TON rest (112.58 @ 1.7773 — the
+exchange position exactly) and `exit_only_live_agents` selects
+twap_mr_v1. Deploy verified end-to-end this iteration: the 15:49:35 cycle
+shipped d12dac2 (exec bit now from the git index, hardened
+`ExecStart=/usr/bin/bash` unit installed at /etc/systemd/system).
+
+**Expected post-deploy behavior** (operator note): within ~2 ticks of this
+commit landing, twap_mr_v1 re-enters the tick exit-only, the TON fill
+reconciles to ownership, and both positions exit via its ladder — both are
+far past the 4h max-hold, so expect two market closes (currently in
+profit, +$9.6 at discovery). The notional guardrail will print HALT (390 >
+5×49) — entries are blocked anyway; flattens proceed. If you would rather
+close manually first, do it before this commit deploys (~15m after push).
+
+**Found / filed.** (a) B-DEPLOY-HB (above): two compounding multi-day
+silent failures this week — updater dead, then live loop dead-by-refusal —
+and `hlbot health` saw neither; deploy staleness needs a check, and the
+empty pager env (HEALTHCHECK_URL/TG_CHAT_ID) deserves an operator nudge.
+(b) Policy question for the operator (in B-EXITONLY): flatten-on-demote
+would be stricter than exit-ladder unwind. (c) run-tick.sh's best-effort
+steps mask femr_tick exit codes — fine by design now that the heartbeat
+distinguishes alive/dead, but worth remembering when reading unit status.
+
+**What's next (loop).** Watch the next iterations: (1) this commit deploys
+and the orphaned book closes — verify in fills/positions and that
+heartbeats resume on live ticks; (2) per-iteration readouts unchanged
+(b_edge2b ~Jun 20, b_g014 ~Jun 26, b_edge3+b_edge2_1h ~Jul 10). Then
+B-DEPLOY-HB. Idle queue: B-SCALE doc on real G2 evidence; xmom-reversal
+cost math.

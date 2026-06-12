@@ -48,3 +48,39 @@ def test_missing_agent_state_is_paper_by_default(tmp_path):
 
     assert live_agents == []
     assert skipped == {"liq_cascade_v1": "mode=paper enabled=1"}
+
+
+def test_exit_only_agents_are_those_with_live_inventory(tmp_path):
+    """A demoted agent with open live positions or working maker quotes must
+    re-enter the live tick exit-only; paper-book state and flat books must not
+    (found live, Iter 80: demote-with-open-inventory orphaned a real book)."""
+    from hl_bot.agents.cloid import make_cloid
+    from hl_bot.agents.decisions import Decision, log_decision
+    from hl_bot.agents.runtime import exit_only_live_agents
+    from hl_bot.exec.maker import log_rest
+
+    conn = init_db(tmp_path / "state.sqlite")
+    # holder: a confirmed live entry, never flattened — owns the coin
+    log_decision(conn, Decision(agent="holder_v1", action="place", coin="TON",
+                                side="A", sz=10.0, px=1.77, reasoning="entry",
+                                is_paper=False))
+    # rester: a still-working maker quote (no fill/cancel row yet)
+    log_rest(conn, "rester_v1", "NEAR", "A", 5.0, 2.11,
+             make_cloid("rester_v1"), oid=7)
+    # paper_only: paper-book state must NOT drag an agent into live exit duty
+    log_decision(conn, Decision(agent="paper_only_v1", action="place", coin="BTC",
+                                side="B", sz=1.0, px=100.0, reasoning="entry",
+                                is_paper=True))
+    # flat: live round trip already closed — nothing left to manage
+    log_decision(conn, Decision(agent="flat_v1", action="place", coin="ETH",
+                                side="B", sz=1.0, px=100.0, reasoning="entry",
+                                is_paper=False))
+    log_decision(conn, Decision(agent="flat_v1", action="flatten", coin="ETH",
+                                reasoning="exit", is_paper=False))
+    conn.commit()
+
+    agents = [DummyAgent(n) for n in
+              ("holder_v1", "rester_v1", "paper_only_v1", "flat_v1", "live_v1")]
+    # live_v1 is already in the live roster — never exit-only
+    out = exit_only_live_agents(conn, agents, {"live_v1"})
+    assert [a.name for a in out] == ["holder_v1", "rester_v1"]

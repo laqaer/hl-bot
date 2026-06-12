@@ -398,6 +398,7 @@ def femr_tick(live: bool = False, execution: str = "taker", vwap_window: int = 0
         build_roster,
         build_tick_view,
         classify_position_ownership,
+        exit_only_live_agents,
         fetch_account_state,
         filter_live_agents,
         gather_decisions,
@@ -439,7 +440,9 @@ def femr_tick(live: bool = False, execution: str = "taker", vwap_window: int = 0
     # + auto-tuner overrides live in agents.runtime). In paper mode, evaluate
     # everything. In live mode, only agents explicitly enabled and promoted to
     # live_small/live in agent_state are allowed into the execution roster.
-    agents = build_roster(conn, load_agent_overrides())
+    roster_all = build_roster(conn, load_agent_overrides())
+    agents = roster_all
+    exit_only: set[str] = set()
     if live:
         agents, skipped_live = filter_live_agents(conn, agents)
         if skipped_live:
@@ -447,8 +450,24 @@ def femr_tick(live: bool = False, execution: str = "taker", vwap_window: int = 0
                 "[yellow]live roster skipped[/yellow]: "
                 + ", ".join(f"{name}({why})" for name, why in skipped_live.items())
             )
+        # Demoted/paused agents whose live book still holds positions or
+        # resting quotes stay in the tick EXIT-ONLY: their exits, maker-fill
+        # reconciliation, and stale-quote cancels keep running; their entries
+        # are dropped in execute_decisions. Without this, a supervisor demote
+        # orphaned its own open inventory (no exit ladder, no reconcile, no
+        # guardrail pass — the early return below skipped them all).
+        exit_managers = exit_only_live_agents(
+            conn, roster_all, {a.name for a in agents})
+        if exit_managers:
+            exit_only = {a.name for a in exit_managers}
+            console.print(
+                "[yellow]exit-only (demoted, managing open live inventory)[/yellow]: "
+                + ", ".join(sorted(exit_only))
+            )
+            agents = agents + exit_managers
         if not agents:
             console.print("[yellow]LIVE MODE but no agent_state rows are enabled in live_small/live; no orders possible[/yellow]")
+            record_tick_heartbeat(conn, mode="live", agents=0, decisions=0)
             return
 
     # Allocator: rebalance per-agent caps from rolling 7d performance.
@@ -623,6 +642,7 @@ def femr_tick(live: bool = False, execution: str = "taker", vwap_window: int = 0
     for ev in execute_decisions(
         conn, exchange, view, all_decisions,
         agent_names=agent_names, guardrails_ok=ok, execution=execution,
+        exit_only=exit_only,
     ):
         console.print(ev.message)
 

@@ -362,6 +362,27 @@ Keep it ruthlessly prioritized: the top item should always be the highest-levera
   be index-mode 100755). Box remediated (`chmod +x` on the deploy clone —
   invisible to the merge under fileMode=false) and the first successful
   auto-deploy observed live same-iteration.
+- [x] **B-EXITONLY — Demoted agents' live inventory gets exit-only management.**
+  Done (Iter 80, live incident): at 15:07 the box's OLD pre-deploy code
+  auto-promoted twap_mr_v1 paper→live_small off paper cards (the exact path
+  B-PAPER3c later closed), it entered TON+NEAR in its one live window
+  (~$195 each — the old tuner's $200/trade standing approval), and the edge
+  guardrail demoted it the same tick (7d −10.4bps < −10). Result: **$390
+  notional on a $49 account, unmanaged** — `filter_live_agents` drops a
+  demoted agent entirely, and the empty-roster early return in `femr_tick`
+  skipped exits, maker-fill reconciliation (TON's fill was never promoted to
+  ownership — the DB owned only NEAR), stale-quote cancels, guardrails, AND
+  the heartbeat (so `hlbot health` read the loop as down; no pager configured
+  either). Fix: `runtime.exit_only_live_agents` (skipped agents with live-book
+  ownership or working maker quotes — paper state never qualifies) re-enter
+  the live tick EXIT-ONLY; `execute_decisions(exit_only=)` drops their
+  entries before any other check while flattens always execute (even under a
+  guardrail halt); the empty-roster early return now records a heartbeat.
+  Exposure can only shrink — entries stay gated by promotion exactly as
+  before. NOT a promotion path. Residual policy question (operator):
+  flatten-on-demote (supervisor closes the book at demotion time) would be
+  stricter than exit-ladder unwind; today's exits are reversion/stop/4h
+  max-hold, which bounds the unwind to hours.
 - [ ] **B-DEPLOY-HB — Updater visibility in `hlbot health`.** Found (Iter 80):
   hlbot-update was dead Jun 8–12 (203/EXEC) and regressed→dead AGAIN today
   (the 15:19 ff-merge to 4d3454b rewrote update.sh at index mode 100644,

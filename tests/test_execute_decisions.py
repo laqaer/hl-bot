@@ -178,3 +178,23 @@ def test_foreign_agent_and_missing_coin_are_ignored(conn):
                                agent_names={"other_agent"}, guardrails_ok=True)
     assert events == []
     assert ex.market_calls == []
+
+
+def test_exit_only_agent_entries_blocked_but_flattens_execute(conn):
+    """A demoted agent managing open inventory: every entry is dropped before
+    touching the exchange (even with green guardrails), while its flattens
+    still execute — even under a guardrail halt. Exposure can only shrink."""
+    ex = _FakeExchange(market=_filled(100.0, 0.01), close=_filled(99.0, 0.01))
+    events = execute_decisions(conn, ex, _view(), [_place()],
+                               agent_names={AGENT}, guardrails_ok=True,
+                               exit_only={AGENT})
+    assert [e.kind for e in events] == ["skip"]
+    assert ex.market_calls == [] and ex.order_calls == []
+    assert _logged(conn, "place") == []
+
+    flat = Decision(agent=AGENT, action="flatten", coin="BTC", cloid=make_cloid(AGENT))
+    events2 = execute_decisions(conn, ex, _view(), [flat],
+                                agent_names={AGENT}, guardrails_ok=False,
+                                exit_only={AGENT})
+    assert [e.kind for e in events2] == ["closed"]
+    assert len(ex.close_calls) == 1

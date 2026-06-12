@@ -228,6 +228,35 @@ def filter_live_agents(
     return live_agents, skipped
 
 
+def exit_only_live_agents(
+    conn: sqlite3.Connection, agents: list[Agent], live_names: set[str],
+) -> list[Agent]:
+    """Agents excluded from the live roster that still have live inventory to
+    manage: open live-book ownership or a working maker quote.
+
+    A demotion (or pause) removes an agent from the live execution roster, but
+    its open positions and resting quotes don't vanish with the mode bit.
+    Without this, demote-with-open-inventory left real exposure with no exit
+    ladder, no maker-fill reconciliation, and no stale-quote cancels — found
+    live (Iter 80): a supervisor demote one tick after entry orphaned a
+    two-coin $390 book on a $49 account. These agents re-enter the live tick
+    EXIT-ONLY: ``execute_decisions(exit_only=...)`` drops their entries, so
+    their exposure can only shrink. Paper-book state never qualifies — both
+    probes read the live book only.
+    """
+    from ..exec.maker import working_orders
+    from ..exec.orders import bot_owned_coins
+
+    out: list[Agent] = []
+    for agent in agents:
+        if agent.name in live_names:
+            continue
+        if (bot_owned_coins(conn, agent=agent.name, paper=False)
+                or working_orders(conn, agent.name)):
+            out.append(agent)
+    return out
+
+
 def fetch_market_view(base_url: str, coins: list[str]) -> MarketView:
     """Fetch mids + 1h funding + 24h volume for all coins via /info.
 
@@ -957,6 +986,7 @@ def execute_decisions(
     agent_names: set[str],
     guardrails_ok: bool,
     execution: str = "taker",
+    exit_only: set[str] | frozenset[str] = frozenset(),
 ) -> list[ExecEvent]:
     """Route place/flatten decisions to the exchange. Pure of presentation.
 
@@ -964,6 +994,9 @@ def execute_decisions(
     ``cli.femr_tick``). Behavior is preserved exactly:
 
     - ``place`` is blocked when guardrails fail or the coin is in cooldown.
+    - An agent in ``exit_only`` (demoted/paused but still holding live
+      inventory) has every ``place`` dropped before any other check — its
+      exposure can only shrink. ``flatten`` is never blocked for anyone.
     - In ``maker`` mode, a coin with a resting quote is left alone; otherwise a
       post-only limit is placed at the near touch (book-aware, never crossing).
     - In ``taker`` mode, a market order is placed.
@@ -991,6 +1024,12 @@ def execute_decisions(
             continue
 
         if d.action == "place" and d.sz and d.side:
+            if d.agent in exit_only:
+                events.append(ExecEvent(
+                    "skip", d.agent, d.coin,
+                    f"[dim]SKIP {d.agent} {d.coin}: agent is exit-only "
+                    f"(demoted/paused) — entries blocked[/dim]"))
+                continue
             if not guardrails_ok:
                 events.append(ExecEvent(
                     "skip", d.agent, d.coin,
