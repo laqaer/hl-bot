@@ -53,6 +53,22 @@ hlbot prop-check --daily-loss-pct 0.04 --daily-loss-base start \
 If this fails on our own history, the eval fee is a donation. Fix the
 strategy first; do not shop for a looser firm.
 
+Before there is live history at the eval's size — or to screen a candidate
+strategy at all — replay a **backtest equity curve** through the same rules
+at bar resolution (B-PROP2; denser than live snapshots, no capital needed):
+
+```bash
+hlbot backtest --agent twap_mr_v1 --coins BTC,ETH,SOL --interval 1m \
+  --vwap-window 60 --days 0 --source store --starting-capital 10000 \
+  --prop-profile '{"max_daily_loss_pct": 0.04, "max_drawdown_pct": 0.06,
+    "profit_target_pct": 0.08, "min_trading_days": 5}'
+```
+
+Set `--starting-capital` to the eval account size — the strategy trades
+fixed dollar notionals, so the percentage rules only mean the right thing
+on the right base. The screen marks at bar closes (intrabar excursions are
+invisible), so prefer 1m bars and still treat thin headroom as a fail.
+
 ## Step 2 — map the firm's rules into the bot, tighter
 
 The bot must halt **before** the firm's line, with margin for the
@@ -99,6 +115,7 @@ realized-vs-equity gap:
   (not strategy variance), and only within the pre-set eval budget. A breach
   from variance means our size/rules mapping was wrong — fix Step 1/2 first.
 
-_Tooling: `hlbot prop-check` (read-only) + `src/hl_bot/risk/prop.py`
-(`EvalProfile`, `simulate_eval`) — also usable on any (ts_ms, equity) series,
-e.g. a backtest equity curve, to pre-screen a strategy at bar resolution._
+_Tooling: `hlbot prop-check` (read-only, live equity snapshots) and
+`hlbot backtest --prop-profile '{json}'` (simulated curve at bar resolution,
+Step 1 above) — both drive `src/hl_bot/risk/prop.py` (`EvalProfile`,
+`simulate_eval`), which accepts any (ts_ms, equity) series._

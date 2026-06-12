@@ -567,11 +567,16 @@ each on ≥90d real history (`hlbot confirm` / `hlbot backtest --config`) before
   prop-check` runs it read-only on `equity_snapshots`. Eval *run* stays
   human-gated behind live G1+ evidence per the checklist. The actual eval
   needs ≥30d clean `prop-check` on the live box first.
-- [ ] **B-PROP2 — Pre-screen backtest equity curves through `EvalProfile`.**
-  `simulate_eval` takes any (ts_ms, equity) series; the backtest engine
-  already builds per-bar equity. Wire a `--prop-profile` (or a small script)
-  so a strategy can be screened against a firm's rules at bar resolution —
-  denser than live snapshots, usable before any live capital. Small slice.
+- [x] **B-PROP2 — Pre-screen backtest equity curves through `EvalProfile`.**
+  Done (Iter 59): `hlbot backtest --prop-profile '{json}'` screens each
+  run's per-bar equity curve through `simulate_eval` (rules JSON →
+  `parse_eval_profile`, hard-error on typos like `--config`; start balance
+  = `--starting-capital` so rules and curve share a base; trading days from
+  the engine's simulated fills; per-exec-mode one-line verdicts via
+  `EvalReport.summary()`). Informational only — a FAIL prints, never gates.
+  Live-fired on real 1m store data: taker arm fails a 1%-daily eval on an
+  intraday dip (987.17 vs floor 987.47) invisible to coarser sampling.
+  PROP_EVAL.md Step 1 documents the screen.
 - [ ] **B17 — Moonshot sleeve spec.** Design the ring-fenced, loss-bounded sleeve
   (separate sub-account, hard cap, defined max loss). Spec only; no live. (CAPITAL.md
   Track D.)

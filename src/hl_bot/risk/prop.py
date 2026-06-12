@@ -17,7 +17,9 @@ This module replays an equity curve (live ``equity_snapshots``, or any
 (ts_ms, equity) series, e.g. a backtest equity curve) against an
 :class:`EvalProfile` and reports every would-be breach, the current headroom
 to each line, and a PASS/FAIL/IN-PROGRESS verdict. Pure functions, no
-network; ``hlbot prop-check`` is the read-only CLI.
+network; ``hlbot prop-check`` is the read-only CLI, and ``hlbot backtest
+--prop-profile`` pre-screens a simulated equity curve at bar resolution
+before any live capital (B-PROP2).
 
 Honesty caveats (also printed by the CLI):
 
@@ -32,7 +34,9 @@ Honesty caveats (also printed by the CLI):
 
 from __future__ import annotations
 
+import json
 import sqlite3
+import time
 from dataclasses import dataclass, field
 from typing import Literal
 
@@ -122,6 +126,33 @@ class EvalReport:
         if self.last_equity is None or self.drawdown_floor is None:
             return None
         return self.last_equity - self.drawdown_floor
+
+    def summary(self) -> str:
+        """One-line plain-text verdict for embedding in other reports (the
+        backtest prop screen). ``hlbot prop-check`` stays the detailed view."""
+        if self.n_points == 0:
+            return "NO_DATA — empty equity curve"
+        if self.breaches:
+            daily = sum(1 for b in self.breaches if b.rule == "daily_loss")
+            dd = len(self.breaches) - daily
+            parts = ([f"{daily} daily_loss day(s)"] if daily else []) + (
+                [f"{dd} max_drawdown episode(s)"] if dd else [])
+            first = self.breaches[0]
+            when = time.strftime(
+                "%Y-%m-%d %H:%M", time.gmtime(first.ts_ms / 1000))
+            return f"FAIL — {' + '.join(parts)}; first {when} UTC: {first.detail}"
+        if self.verdict == "PASS":
+            return (
+                f"PASS — no breaches; headroom daily ${self.daily_headroom:.2f}"
+                f" / drawdown ${self.drawdown_headroom:.2f}")
+        p = self.profile
+        unmet = []
+        if p.profit_target_pct > 0 and self.target_reached_ts_ms is None:
+            unmet.append(f"target +{p.profit_target_pct:.1%} not reached")
+        if p.min_trading_days > 0 and (self.trading_days or 0) < p.min_trading_days:
+            unmet.append(
+                f"trading days {self.trading_days or 0}/{p.min_trading_days}")
+        return f"IN_PROGRESS — no breaches, but {', '.join(unmet)}"
 
 
 def _day_index(ts_ms: int, boundary_hour: int) -> int:
@@ -230,6 +261,82 @@ def trading_day_index(ts_ms: int, boundary_hour: int = 0) -> int:
     """Public day-index helper so callers bucket fills the same way the
     simulator buckets equity."""
     return _day_index(ts_ms, boundary_hour)
+
+
+# Rule keys a ``--prop-profile`` JSON object may set, with their required
+# scalar type. ``start_balance``/``name`` are deliberately NOT rule keys.
+_PROFILE_RULE_FIELDS: dict[str, type] = {
+    "max_daily_loss_pct": float,
+    "daily_loss_base": str,
+    "max_drawdown_pct": float,
+    "drawdown_mode": str,
+    "profit_target_pct": float,
+    "min_trading_days": int,
+    "day_boundary_utc_hour": int,
+}
+
+
+def parse_eval_profile(
+    spec: str, *, start_balance: float, name: str = "screen"
+) -> EvalProfile:
+    """Build an :class:`EvalProfile` from a ``--prop-profile`` JSON object.
+
+    Empty/whitespace → the placeholder default rules (the same shape as
+    ``hlbot prop-check``'s flag defaults: −5% daily of start, −10% trailing
+    DD, no pass conditions). Malformed JSON, a non-object, an unknown key, a
+    wrong type, or an out-of-range value is a hard error rather than a silent
+    fall-back, so a typo can't screen a strategy against the wrong rules and
+    mislabel the result (same philosophy as ``--config``).
+
+    ``start_balance`` is a function parameter, not a JSON key: the rules must
+    share their dollar base with the equity curve being screened (the
+    backtest's ``--starting-capital``), or the percentage rules quietly mean
+    the wrong thing.
+    """
+    obj: dict = {}
+    if spec and spec.strip():
+        try:
+            obj = json.loads(spec)
+        except json.JSONDecodeError as e:
+            raise ValueError(f"--prop-profile is not valid JSON: {e}") from e
+        if not isinstance(obj, dict):
+            raise ValueError(
+                f"--prop-profile must be a JSON object, got {type(obj).__name__}")
+    if "start_balance" in obj or "name" in obj:
+        raise ValueError(
+            "start_balance/name are not rule keys — the screen's base is the "
+            "equity curve's starting capital (--starting-capital), so rules "
+            "and curve can't disagree")
+    unknown = sorted(set(obj) - set(_PROFILE_RULE_FIELDS))
+    if unknown:
+        raise ValueError(
+            f"unknown rule key(s) {unknown}; "
+            f"allowed: {sorted(_PROFILE_RULE_FIELDS)}")
+    kwargs: dict = {}
+    for key, want in _PROFILE_RULE_FIELDS.items():
+        if key not in obj:
+            continue
+        val = obj[key]
+        ok = (isinstance(val, (int, float)) if want is float
+              else isinstance(val, want))
+        if isinstance(val, bool) or not ok:
+            raise ValueError(f"{key} must be a {want.__name__}, got {val!r}")
+        kwargs[key] = want(val)
+    if kwargs.get("daily_loss_base", "start") not in ("start", "day_open"):
+        raise ValueError("daily_loss_base must be 'start' or 'day_open'")
+    if kwargs.get("drawdown_mode", "trailing") not in ("trailing", "static"):
+        raise ValueError("drawdown_mode must be 'trailing' or 'static'")
+    if not 0 <= kwargs.get("day_boundary_utc_hour", 0) <= 23:
+        raise ValueError("day_boundary_utc_hour must be in 0..23")
+    if kwargs.get("min_trading_days", 0) < 0:
+        raise ValueError("min_trading_days must be >= 0")
+    for key in ("max_daily_loss_pct", "max_drawdown_pct"):
+        if kwargs.get(key, 1.0) <= 0:
+            raise ValueError(f"{key} must be > 0 (0 would breach on a flat curve)")
+    if kwargs.get("profit_target_pct", 0.0) < 0:
+        raise ValueError("profit_target_pct must be >= 0 (0 disables it)")
+    kwargs.setdefault("max_daily_loss_pct", 0.05)
+    return EvalProfile(name=name, start_balance=start_balance, **kwargs)
 
 
 def equity_points(

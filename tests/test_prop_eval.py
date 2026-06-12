@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import sqlite3
 
+import pytest
 from pytest import approx
 
 from hl_bot.risk.prop import (
@@ -15,6 +16,7 @@ from hl_bot.risk.prop import (
     EvalProfile,
     equity_points,
     fill_trading_days,
+    parse_eval_profile,
     simulate_eval,
     trading_day_index,
 )
@@ -214,3 +216,134 @@ def test_cli_prop_check_on_scratch_db(tmp_path, monkeypatch):
     res2 = CliRunner().invoke(app, ["prop-check", "--daily-loss-pct", "0.10"])
     assert res2.exit_code == 0, res2.output
     assert "no breaches" in res2.output
+
+
+# --- B-PROP2: backtest equity-curve pre-screen ------------------------------
+
+
+def test_parse_eval_profile_defaults_and_overrides():
+    p = parse_eval_profile("", start_balance=1000.0)
+    assert (p.start_balance, p.max_daily_loss_pct, p.daily_loss_base) == (
+        1000.0, 0.05, "start")
+    assert (p.max_drawdown_pct, p.drawdown_mode) == (0.10, "trailing")
+    assert (p.profit_target_pct, p.min_trading_days) == (0.0, 0)
+
+    p2 = parse_eval_profile(
+        '{"max_daily_loss_pct": 0.03, "daily_loss_base": "day_open",'
+        ' "max_drawdown_pct": 0.06, "drawdown_mode": "static",'
+        ' "profit_target_pct": 0.08, "min_trading_days": 5,'
+        ' "day_boundary_utc_hour": 4}',
+        start_balance=500.0)
+    assert p2.start_balance == 500.0
+    assert p2.max_daily_loss_pct == approx(0.03)
+    assert p2.daily_loss_base == "day_open"
+    assert p2.max_drawdown_pct == approx(0.06)
+    assert p2.drawdown_mode == "static"
+    assert p2.profit_target_pct == approx(0.08)
+    assert (p2.min_trading_days, p2.day_boundary_utc_hour) == (5, 4)
+    # int where float expected is fine
+    assert parse_eval_profile(
+        '{"max_daily_loss_pct": 1}', start_balance=1.0).max_daily_loss_pct == 1.0
+
+
+def test_parse_eval_profile_rejects_garbage():
+    bad = [
+        "{bad",                                # malformed JSON
+        "[0.05]",                              # not an object
+        '{"nope": 1}',                         # unknown key
+        '{"daily_loss_base": "weekly"}',       # bad enum
+        '{"drawdown_mode": "rolling"}',        # bad enum
+        '{"day_boundary_utc_hour": 24}',       # out of range
+        '{"max_daily_loss_pct": 0}',           # would breach a flat curve
+        '{"max_drawdown_pct": -0.1}',
+        '{"profit_target_pct": -0.05}',
+        '{"min_trading_days": -1}',
+        '{"min_trading_days": 2.5}',           # wrong type for int field
+        '{"max_daily_loss_pct": true}',        # bool is not a number
+        '{"daily_loss_base": 1}',              # wrong type for str field
+    ]
+    for spec in bad:
+        with pytest.raises(ValueError):
+            parse_eval_profile(spec, start_balance=1000.0)
+    # start_balance is NOT a rule key — it must come from the screened curve.
+    with pytest.raises(ValueError, match="starting capital"):
+        parse_eval_profile('{"start_balance": 10000}', start_balance=1000.0)
+
+
+def test_report_summary_lines():
+    day = T0_DAY_START
+    flat = [(day + i * HOUR_MS, 1000.0) for i in range(1, 4)]
+
+    rep_fail = simulate_eval(profile(), [
+        (day + 1 * HOUR_MS, 1000.0),
+        (day + 2 * HOUR_MS, 940.0),   # daily floor 950
+        (day + 3 * HOUR_MS, 880.0),   # trailing DD floor 900
+    ])
+    s = rep_fail.summary()
+    assert s.startswith("FAIL — 1 daily_loss day(s) + 1 max_drawdown episode(s)")
+    assert "UTC" in s and "day floor 950.00" in s  # first breach detail named
+
+    assert simulate_eval(profile(), flat).summary() == (
+        "PASS — no breaches; headroom daily $50.00 / drawdown $100.00")
+
+    s3 = simulate_eval(
+        profile(profit_target_pct=0.5, min_trading_days=3), flat,
+        trading_days={1}).summary()
+    assert s3.startswith("IN_PROGRESS")
+    assert "target +50.0% not reached" in s3 and "trading days 1/3" in s3
+
+    assert simulate_eval(profile(), []).summary().startswith("NO_DATA")
+
+
+def _bt_frames(path: list[float]):
+    """Synthetic hourly frames around vwap=100 that make twap_mr_v1 trade
+    ($200 notional per entry, sigma_enter at |z|>=2)."""
+    from hl_bot.backtest.engine import Frame
+
+    return [
+        Frame(
+            ts_ms=T0_DAY_START + h * HOUR_MS,
+            mids={"TST": mid},
+            funding={"TST": 0.0},
+            day_ntl_vlm={"TST": 50_000_000.0},
+            candles_1h={"TST": {"vwap": 100.0, "sigma": 1.0, "n": 60}},
+        )
+        for h, mid in enumerate(path)
+    ]
+
+
+def test_cli_backtest_prop_screen(tmp_path, monkeypatch):
+    from typer.testing import CliRunner
+
+    from hl_bot.cli.main import app
+
+    monkeypatch.setenv("HLBOT_DB", str(tmp_path / "t.sqlite"))
+
+    # Winner arm: classic mean-reversion path, +$12ish on $1000 — no breach.
+    monkeypatch.setattr(
+        "hl_bot.cli.main._load_backtest_frames",
+        lambda *a, **k: _bt_frames([100.0, 103.0, 100.0, 97.0, 100.0]))
+    res = CliRunner().invoke(
+        app, ["backtest", "--coins", "TST", "--prop-profile", "{}"])
+    assert res.exit_code == 0, res.output
+    assert "prop screen" in res.output
+    assert "prop[taker]: PASS — no breaches" in res.output
+    assert "prop[maker]: PASS — no breaches" in res.output
+
+    # Breach arm: short at 103, mark to 135 → ~-$60 on $1000, through the
+    # -5% daily floor (the realized-only guardrail's blind spot).
+    monkeypatch.setattr(
+        "hl_bot.cli.main._load_backtest_frames",
+        lambda *a, **k: _bt_frames([100.0, 103.0, 135.0, 135.0]))
+    res2 = CliRunner().invoke(
+        app, ["backtest", "--coins", "TST", "--no-compare",
+              "--prop-profile", '{"max_daily_loss_pct": 0.05}'])
+    assert res2.exit_code == 0, res2.output  # informational — never gates
+    assert "prop[taker]: FAIL" in res2.output
+    assert "daily_loss" in res2.output
+
+    # A typo'd profile is a hard error, not a silent default screen.
+    res3 = CliRunner().invoke(
+        app, ["backtest", "--coins", "TST", "--prop-profile", "{bad"])
+    assert res3.exit_code == 1
+    assert "not valid JSON" in res3.output

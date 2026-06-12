@@ -3023,3 +3023,53 @@ maker-rest the arm to watch). B-EDGE2b three-armed reruns as the 15m store
 grows. B-EDGE2f at ≥30d paper books (~Jul 8). Idle queue: B-PROP2 (backtest
 curve pre-screen), B17 moonshot sleeve spec, B-SCALE doc once G2 evidence
 is real.
+
+## Iteration 59 — 2026-06-12 — B-PROP2: prop-eval pre-screen on backtest equity curves
+
+**Why this.** Research tasks remain time-blocked (B-G014 needs 1m store span
+≥14d, ~Jun 23–26; B-EDGE2f needs ≥30d paper books, ~Jul 8). Top idle item was
+B-PROP2, filed by Iter 58: `simulate_eval` accepts any (ts_ms, equity)
+series and the backtest engine already builds per-bar equity, but nothing
+joined them — so a strategy could only be screened against a prop firm's
+rules from live `equity_snapshots`, i.e. after risking capital, at 15-min
+sampling. Bar-resolution screening closes that gap for free.
+
+**Changed.** (a) `risk/prop.py`: `parse_eval_profile(spec, start_balance=)`
+— `--prop-profile` JSON → `EvalProfile` with parse_agent_config's
+philosophy (malformed JSON / non-object / unknown key / wrong type /
+out-of-range value = hard error, never a silent default screen;
+`start_balance` is rejected as a JSON key — the screen's base IS the
+backtest's `--starting-capital`, so percentage rules can't quietly sit on a
+different base than the curve) + `EvalReport.summary()` (one-line
+FAIL/PASS/IN_PROGRESS verdict with breach counts + first-breach detail, for
+embedding in other reports; prop-check's rich table stays the detailed
+view). (b) `hlbot backtest --prop-profile '{json}'`: each exec mode's
+equity curve replays through the profile after scoring (trading days from
+the engine's simulated fills via `fill_trading_days` on the in-memory
+conn), printing a rules line + per-mode `prop[taker]: …` verdicts
+(markup=False — rich was eating `[taker]` as a style tag) + the
+bar-close-sampling caveat. Informational only: a FAIL prints but exits 0;
+G0 stays `hlbot confirm`. (c) PROP_EVAL.md Step 1 + tooling footnote
+document the screen (set `--starting-capital` to the eval account size —
+fixed-dollar notionals mean the percentage rules only make sense on the
+right base).
+
+**Evidence.** 368 → **372 tests pass** (4 new in `tests/test_prop_eval.py`:
+profile parsing defaults/overrides incl. int-for-float coercion; 13
+rejection arms incl. bool-as-number and the start_balance key; summary
+lines for all four verdicts incl. breach counts and unmet-condition text;
+CLI smoke with `_load_backtest_frames` faked — winner path PASSes both
+exec modes, a short marked against by +31% FAILs the daily line at exit 0,
+`{bad` exits 1 with "not valid JSON"). `ruff check src tests scripts`
+clean. Live-fired offline on real store data (3 coins × 1m × 2d, 297
+trades): `--prop-profile '{"max_daily_loss_pct":0.01,…}'` → taker arm
+**FAIL — equity 987.17 ≤ day floor 987.47** on an intraday 2026-06-11
+08:28 dip (a 30-cent miss only visible at bar resolution; the maker arm
+clears it breach-free, IN_PROGRESS on target/min-days). Exactly the
+realized-vs-equity blind spot B-PROP built the module for, now measurable
+pre-capital.
+
+**What's next (loop).** B-G014 when 1m store span ≥14d (~Jun 23–26; w=240
+maker-rest the arm to watch). B-EDGE2b three-armed reruns as the 15m store
+grows. B-EDGE2f at ≥30d paper books (~Jul 8). Idle queue: B17 moonshot
+sleeve spec, B-SCALE doc once G2 evidence is real.

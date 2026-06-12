@@ -745,6 +745,7 @@ def backtest(
     source: str = "api",
     funding: bool = True,
     maker_fill: str = "optimistic",
+    prop_profile: str = "",
 ):
     """Replay an agent over real Hyperliquid history with an explicit cost model.
 
@@ -766,8 +767,17 @@ def backtest(
     truth for a live maker book lies between the two. --maker-fill
     resting-close forces close-only fill detection (the pre-B-FILL2 extra-
     pessimistic bound) to A/B the wick detection itself.
+
+    --prop-profile '{json}' additionally screens each run's per-bar equity
+    curve against prop-eval rules (B-PROP2, docs/PROP_EVAL.md) — keys as in
+    risk.prop.EvalProfile (max_daily_loss_pct, daily_loss_base,
+    max_drawdown_pct, drawdown_mode, profit_target_pct, min_trading_days,
+    day_boundary_utc_hour; '{}' = placeholder defaults). The screen's start
+    balance is --starting-capital, so size it like the eval account.
+    Informational only: a FAIL prints but does not fail the command.
     """
     from ..backtest.engine import Backtester, CostModel
+    from ..risk.prop import fill_trading_days, parse_eval_profile, simulate_eval
 
     _, s = _conn()
     coin_list = [c.strip() for c in coins.split(",") if c.strip()]
@@ -784,6 +794,13 @@ def backtest(
     if maker_fill not in ("optimistic", "resting", "resting-close"):
         console.print(f"[red]unknown maker-fill {maker_fill!r}; choose optimistic, resting or resting-close[/red]")
         raise typer.Exit(1)
+    prop = None
+    if prop_profile.strip():
+        try:
+            prop = parse_eval_profile(prop_profile, start_balance=starting_capital)
+        except ValueError as e:
+            console.print(f"[red]{e}[/red]")
+            raise typer.Exit(1) from e
 
     frames = _load_backtest_frames(
         coin_list, source=source, interval=interval, days=days, cache=cache,
@@ -803,6 +820,7 @@ def backtest(
     for col in ("exec", "net_pnl", "edge_bps", "trades", "win", "sharpe", "maxDD"):
         table.add_column(col)
     fill_notes: list[str] = []
+    prop_lines: list[str] = []
     for is_maker in modes:
         from ..db.schema import init_db as _init
         conn = _init(":memory:")
@@ -830,9 +848,34 @@ def backtest(
                 + (f", {st['filled_wick']} filled on intrabar wick only"
                    if st.get("filled_wick") else "")
             )
+        if prop is not None:
+            rep = simulate_eval(
+                prop, res.equity_curve,
+                trading_days=fill_trading_days(conn, prop.day_boundary_utc_hour))
+            prop_lines.append(f"prop[{cost.exec_label}]: {rep.summary()}")
     console.print(table)
     for note in fill_notes:
         console.print(f"[dim]{note}[/dim]")
+    if prop is not None:
+        rules = (
+            f"daily -{prop.max_daily_loss_pct:.1%} of {prop.daily_loss_base}, "
+            f"maxDD -{prop.max_drawdown_pct:.1%} {prop.drawdown_mode}")
+        if prop.profit_target_pct > 0:
+            rules += f", target +{prop.profit_target_pct:.1%}"
+        if prop.min_trading_days > 0:
+            rules += f", min {prop.min_trading_days} trading days"
+        if prop.day_boundary_utc_hour:
+            rules += f", reset {prop.day_boundary_utc_hour:02d}:00 UTC"
+        console.print(
+            f"prop screen (start ${prop.start_balance:.2f}): {rules}")
+        for line in prop_lines:
+            console.print(line, markup=False)  # exec_label sits in literal []
+        console.print(
+            "[dim]screen marks at bar closes — intrabar excursions are "
+            "invisible (a real eval marks continuously) — and the rules are "
+            "placeholders unless you passed the firm's verified terms "
+            "(docs/PROP_EVAL.md). Informational; does not gate anything.[/dim]"
+        )
     console.print("[dim]taker→maker gap ≈ the spread/fee tax this strategy is paying.[/dim]")
 
 
