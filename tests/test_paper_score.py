@@ -16,6 +16,7 @@ from hl_bot.backtest.engine import CostModel
 from hl_bot.db.schema import init_db
 from hl_bot.scoring.paper import (
     list_paper_agents,
+    mark_paper_positions,
     paper_daily_pnl,
     paper_open_positions,
     replay_paper_fills,
@@ -230,6 +231,73 @@ def test_paper_daily_pnl_gap_filled(conn):
     assert daily_b == pytest.approx([0.0, -0.01])    # day 96 entry, day 97 funding
 
     assert paper_daily_pnl(conn, "nobody", cost=FREE, now_ms=now) == []
+
+
+# ---------------------------------------------------------------------------
+# mark_paper_positions — open positions marked to market (B-PAPER3d)
+# ---------------------------------------------------------------------------
+
+
+def test_mark_long_and_short_zero_cost():
+    _, open_long = replay_paper_fills([(1000, "BTC", "place", "B", 2.0, 100.0)], FREE)
+    _, open_short = replay_paper_fills([(1000, "ETH", "place", "A", 1.0, 200.0)], FREE)
+    [ml] = mark_paper_positions(open_long, {"BTC": 110.0}, FREE)
+    [ms] = mark_paper_positions(open_short, {"ETH": 180.0}, FREE)
+    assert (ml.mark_px, ml.upnl) == (110.0, pytest.approx(20.0))   # (110-100)*2
+    assert (ms.mark_px, ms.upnl) == (180.0, pytest.approx(20.0))   # (200-180)*1
+
+
+def test_mark_matches_flatten_semantics():
+    """The no-double-count invariant: marking an open position at px must
+    equal the closed_pnl − fee a real flatten row at px would realize, so
+    card-realized + open-uPnL is the flattened-right-now book value."""
+    cost = CostModel(taker_fee_bps=10.0, slippage_bps=20.0)
+    for side, mark in (("B", 110.0), ("A", 90.0)):
+        entry_rows = [(1000, "BTC", "place", side, 2.0, 100.0)]
+        _, open_pos = replay_paper_fills(entry_rows, cost)
+        [m] = mark_paper_positions(open_pos, {"BTC": mark}, cost)
+        fills, left = replay_paper_fills(
+            entry_rows + [(2000, "BTC", "flatten", None, None, mark)], cost)
+        assert left == []
+        exit_ = fills[-1]
+        assert m.upnl == pytest.approx(exit_.closed_pnl - exit_.fee)
+
+
+def test_mark_missing_or_bad_mid_is_unmarked():
+    _, open_pos = replay_paper_fills(
+        [(1000, "SOL", "place", "B", 3.0, 50.0),
+         (1001, "DOGE", "place", "B", 10.0, 0.1)], FREE)
+    marked = mark_paper_positions(open_pos, {"DOGE": 0.0})   # SOL absent, DOGE ≤ 0
+    assert [m.coin for m in marked] == [p.coin for p in open_pos]
+    assert all(m.mark_px is None and m.upnl is None for m in marked)
+    # Entry fields survive untouched for display.
+    assert marked[0].entry_px == 50.0 and marked[0].sz == 3.0
+
+
+def test_cli_score_paper_marks_open_positions(monkeypatch):
+    from rich.console import Console
+    from typer.testing import CliRunner
+
+    from hl_bot.cli import main as cli
+
+    c = init_db(":memory:")
+    _log(c, "breakout_v1", 1000, "place", "SOL", "B", 2.0, 100.0)
+    monkeypatch.setattr(cli, "_conn", lambda: (c, None))
+    monkeypatch.setattr(cli, "console", Console(width=250))
+
+    monkeypatch.setattr(cli, "_fetch_mids", lambda s: {"SOL": 110.0})
+    res = CliRunner().invoke(cli.app, ["score", "--paper", "--no-funding"])
+    assert res.exit_code == 0, res.output
+    assert "marked at current mid" in res.output
+    assert "Open paper uPnL" in res.output and "breakout_v1 +19." in res.output
+
+    # --no-mark (and a failed fetch, which degrades to {}) stays unmarked.
+    res2 = CliRunner().invoke(
+        cli.app, ["score", "--paper", "--no-funding", "--no-mark"])
+    assert res2.exit_code == 0, res2.output
+    assert "not marked to market" in res2.output
+    assert "Open paper uPnL" not in res2.output
+    c.close()
 
 
 def test_default_cost_is_taker(conn):

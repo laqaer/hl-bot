@@ -3142,3 +3142,57 @@ this account is not.
 maker-rest the arm to watch). B-EDGE2b three-armed reruns as the 15m store
 grows. B-EDGE2f at ≥30d paper books (~Jul 8). Idle queue: B-SCALE doc once
 G2 evidence is real; P3 spec items are now all done (B15/B16/B-PROP/B17).
+
+## Iteration 61 — 2026-06-12 — B-PAPER3d: mark open paper positions to market
+
+**Why this.** Every headline item is time-blocked (1m store span ~3.7d vs
+B-G014's ≥14d, ETA ~Jun 23–26; B-EDGE2f needs ≥30d paper books, ~Jul 8), so
+the leverage available is making the evidence that IS accumulating honest.
+B-PAPER3 shipped the paper scorecard realized-only with "follow-ups below" —
+funding got fixed (B-PAPER3a) but mark-to-market never got filed. That's a
+real blind spot for exactly the agents the loop is forward-testing:
+breakout holds run 48–96h, so a position deep underwater is invisible to
+`score --paper`, the supervisor's paper guardrails, and any operator
+reading G1 evidence — the card shows only realized round trips. The
+B-EDGE2f paper A/B readout would have compared two cards that can both hide
+open losers.
+
+**Changed.** (a) `scoring/paper.py`: `MarkedPaperPosition` +
+`mark_paper_positions(positions, mids, cost)` — marks each open paper
+position at the caller-supplied mid net of modeled exit costs. Design
+invariant (pinned by test): upnl == the `closed_pnl − fee` a
+`replay_paper_fills` flatten at that mid would realize (exit crosses the
+spread + pays taker fee; the entry's fee was already charged to the card at
+place time), so card-realized + open-uPnL = the book's flattened-right-now
+value and nothing double-counts when the position later closes. Missing/
+non-positive mid → mark_px=None/upnl=None, never a guessed price. Cards
+stay realized-only BY DESIGN — marks are reported beside, never folded in
+(module docstring updated). (b) `hlbot score --paper`: fetches mids once
+(`_fetch_mids`, one allMids call; failure warns + degrades to unmarked;
+`--no-mark` opt-out), open-positions table grows mark_px/upnl columns,
+title states the mark semantics, and a per-agent "Open paper uPnL (if
+flattened now; NOT in the realized cards above)" summary line prints.
+
+**Evidence.** 393 → **397 tests pass** (4 new in `test_paper_score.py`:
+long/short zero-cost marks; the mark==flatten invariant under exaggerated
+costs, both sides; missing/bad-mid unmarked with fields preserved; CLI
+smoke — marked arm asserts the title, summary line and +19.8 uPnL against
+faked mids, `--no-mark` arm stays "not marked to market" with no summary).
+`ruff check src tests scripts` clean. Live-fired against the real allMids
+API on a seeded scratch DB (BTC long + SOL short): both marks correct sign
+and magnitude, summary line `breakout_v1 +46.40`; loop-box real DB has no
+paper book (it lives on the deploy box) so the readout there is unchanged-
+empty as expected.
+
+**Found.** Filed B-PAPER3e: the track-record paper section (the
+public-grade artifact) is still realized-only — add an open-uPnL line via
+`mark_paper_positions` (same degrade pattern as `_fetch_paper_funding`),
+keeping marks out of sharpe/DD math. Deliberately NOT folding marks into
+supervisor guardrail metrics for now: pause/demote on unrealized dips needs
+its own design (a mark is a point-in-time price, not evidence of a closed
+loss) — revisit if an open paper loser ever sits past its strategy horizon.
+
+**What's next (loop).** B-G014 when 1m store span ≥14d (~Jun 23–26; w=240
+maker-rest the arm to watch). B-EDGE2b three-armed reruns as the 15m store
+grows. B-EDGE2f at ≥30d paper books (~Jul 8). Idle queue: B-PAPER3e
+(track-record open-uPnL), B-SCALE doc once G2 evidence is real.

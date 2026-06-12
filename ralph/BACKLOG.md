@@ -157,6 +157,23 @@ Keep it ruthlessly prioritized: the top item should always be the highest-levera
   agent already promoted in agent_state can't be re-promoted off a stale
   YAML `mode:`. Live-fire verified both directions on scratch DBs.
 
+- [x] **B-PAPER3d — Mark open paper positions to market.** Done (Iter 61):
+  `mark_paper_positions` (pure, tested) marks each open paper position at the
+  current mid net of modeled exit costs — upnl is EXACTLY the `closed_pnl −
+  fee` a replay flatten at that mid would realize (invariant pinned by test),
+  so card-realized + open-uPnL = flattened-now book value with no double
+  count when the position later closes. `hlbot score --paper` fetches mids
+  (one allMids call, `--no-mark` opt-out, fetch failure degrades to unmarked)
+  and shows mark_px/upnl columns + a per-agent open-uPnL summary line. Cards
+  stay realized-only by design (marks beside, never folded in). Closes the
+  blind spot where a multi-day breakout hold deep underwater showed a clean
+  realized card.
+- [ ] **B-PAPER3e — Open-position uPnL in the track-record paper section.**
+  The public-grade artifact still shows realized-only paper cards; a reader
+  judging G1 evidence (B-EDGE2f, ~Jul 8) can't see open exposure. Add an
+  open-uPnL column/line to "Paper agents (NOT live)" using
+  `mark_paper_positions` (mids fetch beside the existing `_fetch_paper_funding`
+  pattern, offline degrade to "—"). Keep marks out of sharpe/DD math.
 - [x] **B-MAKERFILL — Honest maker-fill model in the backtester.** Done
   (Iter 50): `CostModel(maker_fill="resting")` + `--maker-fill resting` on
   backtest/confirm replay the live maker lifecycle (entries rest at the

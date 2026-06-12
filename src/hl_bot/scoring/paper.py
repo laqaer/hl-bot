@@ -20,7 +20,10 @@ Honest limits:
   funding stays 0; do not judge a funding strategy (femr) on a funding=0 card.
 - Realized-only, matching the live scorecard: an entry contributes its fee and
   notional when placed, price PnL only on flatten. Open positions are listed
-  separately (``paper_open_positions``), not marked to market.
+  separately (``paper_open_positions``) and can be marked to market via
+  ``mark_paper_positions`` (current mids supplied by the caller) — the mark is
+  reported BESIDE the card, never folded into it, so nothing double-counts
+  when the position later closes and the card realizes it.
 - Exit fidelity is the agent's own: a position the agent never flattens never
   realizes PnL here either. (femr's paper exits run since B-PAPER2 — paper
   ticks feed its exit logic a position view synthesized from the paper book,
@@ -110,6 +113,56 @@ def replay_paper_fills(
                 fee=eff * pos.sz * cost.fee_rate, closed_pnl=price_pnl,
             ))
     return fills, list(open_by_coin.values())
+
+
+@dataclass(frozen=True)
+class MarkedPaperPosition:
+    """An open paper position marked at the current mid (None = no mid)."""
+
+    coin: str
+    side: str
+    sz: float
+    entry_px: float
+    entry_ts_ms: int
+    mark_px: float | None
+    upnl: float | None   # value of flattening now: exit price PnL − exit fee
+
+
+def mark_paper_positions(
+    positions: list[PaperPosition],
+    mids: dict[str, float],
+    cost: CostModel | None = None,
+) -> list[MarkedPaperPosition]:
+    """Mark open paper positions at the current mid, net of modeled exit costs.
+
+    ``upnl`` is exactly the ``closed_pnl − fee`` a ``replay_paper_fills``
+    flatten at ``mids[coin]`` would produce (the exit crosses the spread and
+    pays the taker fee; the entry's fee was already charged to the card when
+    the entry was placed) — so card-realized + open-uPnL is the book's
+    flattened-right-now value, and when the position later closes the card
+    realizes precisely what this stops reporting. A missing or non-positive
+    mid yields ``mark_px=None, upnl=None`` — never a guessed price.
+    """
+    cost = cost or CostModel()
+    out: list[MarkedPaperPosition] = []
+    for p in positions:
+        mid = mids.get(p.coin)
+        if not mid or mid <= 0:
+            out.append(MarkedPaperPosition(
+                coin=p.coin, side=p.side, sz=p.sz, entry_px=p.entry_px,
+                entry_ts_ms=p.entry_ts_ms, mark_px=None, upnl=None))
+            continue
+        close_side = "A" if p.side == "B" else "B"
+        eff = _entry_px(mid, close_side, cost)
+        price_pnl = (
+            (eff - p.entry_px) * p.sz if p.side == "B"
+            else (p.entry_px - eff) * p.sz
+        )
+        out.append(MarkedPaperPosition(
+            coin=p.coin, side=p.side, sz=p.sz, entry_px=p.entry_px,
+            entry_ts_ms=p.entry_ts_ms, mark_px=mid,
+            upnl=price_pnl - eff * p.sz * cost.fee_rate))
+    return out
 
 
 @dataclass(frozen=True)

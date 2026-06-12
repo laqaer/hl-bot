@@ -34,7 +34,12 @@ from ..research.strategy_health import (
 )
 from ..risk.scaling import compute_notional_cap
 from ..scoring.metrics import score_all
-from ..scoring.paper import list_paper_agents, paper_open_positions, score_paper_all
+from ..scoring.paper import (
+    list_paper_agents,
+    mark_paper_positions,
+    paper_open_positions,
+    score_paper_all,
+)
 from ..scoring.positions import rebuild_positions
 from ..supervisor.loop import supervise
 
@@ -69,6 +74,31 @@ def _fetch_paper_funding(conn, s) -> dict[str, list[dict[str, Any]]]:
                 f"{coin} ({e}); its paper funding_pnl counts as 0"
             )
     return funding_by_coin
+
+
+def _fetch_mids(s) -> dict[str, float]:
+    """Current mids (one allMids call) for marking open paper positions.
+
+    Any failure warns and returns {} — the readout degrades to unmarked
+    positions, never crashes.
+    """
+    import httpx
+
+    try:
+        raw = httpx.post(
+            s.hl_api_url + "/info", json={"type": "allMids"}, timeout=15
+        ).json() or {}
+    except Exception as e:  # noqa: BLE001
+        console.print(
+            f"[yellow]warn:[/yellow] allMids fetch failed ({e}); "
+            "open paper positions not marked"
+        )
+        return {}
+    mids: dict[str, float] = {}
+    for k, v in raw.items():
+        with contextlib.suppress(TypeError, ValueError):
+            mids[k] = float(v)
+    return mids
 
 
 @app.command()
@@ -111,6 +141,12 @@ def score(
              "funding-rate history (network; a per-coin fetch failure degrades "
              "that coin to funding=0 with a warning).",
     ),
+    mark: bool = typer.Option(
+        True, "--mark/--no-mark",
+        help="--paper only: mark open paper positions at the current mid "
+             "(one allMids call; a fetch failure degrades to unmarked). "
+             "Marks are shown beside the cards, never folded into them.",
+    ),
 ):
     """Print per-agent scorecards (--paper: replayed paper book, B-PAPER3)."""
     conn, s = _conn()
@@ -143,16 +179,38 @@ def score(
             for p in paper_open_positions(conn, a)
         ]
         if open_rows:
-            pos_table = Table(title="Open paper positions (not marked to market)")
-            for col in ("agent", "coin", "side", "sz", "entry_px", "age_h"):
+            mids = _fetch_mids(s) if mark else {}
+            marked = [
+                (a, mp) for a, p in open_rows
+                for mp in mark_paper_positions([p], mids)
+            ]
+            title = (
+                "Open paper positions (marked at current mid, modeled exit costs)"
+                if mids else "Open paper positions (not marked to market)"
+            )
+            pos_table = Table(title=title)
+            for col in ("agent", "coin", "side", "sz", "entry_px", "mark_px",
+                        "upnl", "age_h"):
                 pos_table.add_column(col)
-            for a, p in open_rows:
+            upnl_by_agent: dict[str, float] = {}
+            for a, p in marked:
                 pos_table.add_row(
                     a, p.coin, "long" if p.side == "B" else "short",
                     f"{p.sz:.5f}", f"{p.entry_px:.4f}",
+                    "—" if p.mark_px is None else f"{p.mark_px:.4f}",
+                    "—" if p.upnl is None else f"{p.upnl:+.2f}",
                     f"{(now_ms - p.entry_ts_ms) / 3_600_000:.1f}",
                 )
+                if p.upnl is not None:
+                    upnl_by_agent[a] = upnl_by_agent.get(a, 0.0) + p.upnl
             console.print(pos_table)
+            if upnl_by_agent:
+                console.print(
+                    "Open paper uPnL (if flattened now; NOT in the realized "
+                    "cards above): "
+                    + ", ".join(f"{a} {v:+.2f}"
+                                for a, v in sorted(upnl_by_agent.items()))
+                )
 
 
 @app.command()
