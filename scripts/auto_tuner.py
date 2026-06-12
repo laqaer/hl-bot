@@ -4,11 +4,17 @@ Runs on demand / scheduled by Hermes cron. Reads the configured HLBOT_DB
 (synced from EC2). Writes proposed/applied tweaks to:
   ~/projects/hl-bot/data/auto_tuner_log.jsonl
   ~/projects/hl-bot/configs/agent_overrides.json   (live params, picked up by CLI)
+  ~/projects/hl-bot/configs/agent_overrides.tuner_proposed.json  (loosening, human-merge)
 
 Safety rails:
 - Param values clamped to per-key min/max
 - Reject any proposal that 2x's max_total_notional or zeros stop_loss
 - If <50 trades in past 7d for an agent, only allow tiny changes (≤20%)
+- Auto-apply is risk-TIGHTENING only (REVIEW M4): a change that loosens an
+  entry gate, widens risk, or raises notional is never written to the live
+  overrides — it goes to agent_overrides.tuner_proposed.json for human merge.
+  Set HLBOT_TUNER_APPLY_LOOSENING=1 to restore the old auto-apply-everything
+  behavior (the pre-M4 standing approval, e.g. scaling TWAP to $200/trade).
 - All changes deployable via git push; manual rollback by reverting the file
 """
 from __future__ import annotations
@@ -22,8 +28,13 @@ import time
 from pathlib import Path
 
 DB = Path(os.environ.get("HLBOT_DB", Path.home() / "projects/hl-bot/data/hlbot-aws.sqlite"))
-OVERRIDES = Path.home() / "projects/hl-bot/configs/agent_overrides.json"
-LOG_PATH = Path.home() / "projects/hl-bot/data/auto_tuner_log.jsonl"
+OVERRIDES = Path(os.environ.get(
+    "HLBOT_TUNER_OVERRIDES", Path.home() / "projects/hl-bot/configs/agent_overrides.json"))
+PROPOSED = Path(os.environ.get(
+    "HLBOT_TUNER_PROPOSED",
+    Path.home() / "projects/hl-bot/configs/agent_overrides.tuner_proposed.json"))
+LOG_PATH = Path(os.environ.get(
+    "HLBOT_TUNER_LOG", Path.home() / "projects/hl-bot/data/auto_tuner_log.jsonl"))
 
 # Per-key bounds (param: (min, max))
 BOUNDS: dict[str, tuple[float, float]] = {
@@ -42,9 +53,27 @@ BOUNDS: dict[str, tuple[float, float]] = {
     "basis_exit_bps": (1, 20),
 }
 
+# Which way does a change TIGHTEN risk? (+1: a higher value is tighter, e.g. a
+# higher entry bar means fewer entries; -1: a lower value is tighter, e.g. less
+# notional or a smaller max per-trade loss.) Keys absent here are ambiguous —
+# they reshape the strategy rather than reduce risk in one direction (exits,
+# take-profit) — and are never auto-applied.
+RISK_DIRECTION: dict[str, int] = {
+    "funding_enter_per_hr": +1,
+    "sigma_enter": +1,
+    "basis_enter_bps": +1,
+    "liq_threshold_usd": +1,
+    "min_daily_volume_usd": +1,
+    "max_notional_per_trade": -1,
+    "max_hold_hours": -1,
+    "stop_loss_pct": -1,
+}
+
 # Standing approval: scale TWAP only to $200/trade, keep FEMR small. The tuner
 # may reduce risk on any strategy, but may only increase per-trade notional for
-# TWAP, and never above this cap.
+# TWAP, and never above this cap. Since M4 a notional increase is a LOOSENING
+# change: it is proposed for human merge, not auto-applied, unless
+# HLBOT_TUNER_APPLY_LOOSENING=1 restores the old behavior.
 MAX_PER_TRADE_BY_AGENT = {
     "femr_v1": 20.0,
     "twap_mr_v1": 200.0,
@@ -266,6 +295,66 @@ def apply_overrides(changes_by_agent: dict[str, dict]) -> None:
     OVERRIDES.write_text(json.dumps(data, indent=2))
 
 
+def classify_changes(current: dict, approved: dict) -> tuple[dict, dict]:
+    """Split validated changes into (tightening, loosening).
+
+    Tightening = strictly tighter per RISK_DIRECTION. Anything else — looser,
+    or a key with no unambiguous risk direction — lands in the loosening
+    bucket. A no-op (equal value) is dropped from both.
+    """
+    tightening: dict = {}
+    loosening: dict = {}
+    for key, new_val in approved.items():
+        cur_val = current.get(key)
+        if cur_val is not None and float(new_val) == float(cur_val):
+            continue
+        direction = RISK_DIRECTION.get(key)
+        if direction is None or cur_val is None:
+            loosening[key] = new_val
+        elif direction * (float(new_val) - float(cur_val)) > 0:
+            tightening[key] = new_val
+        else:
+            loosening[key] = new_val
+    return tightening, loosening
+
+
+def propose_overrides_for_review(changes_by_agent: dict[str, dict]) -> None:
+    """Write loosening changes for human review (same mergeable shape as
+    `hlbot research-strategies`' proposal document)."""
+    PROPOSED.parent.mkdir(parents=True, exist_ok=True)
+    PROPOSED.write_text(json.dumps({
+        "generated_ms": int(time.time() * 1000),
+        "note": "Auto-tuner LOOSENING proposals — not applied. Auto-apply is "
+                "risk-tightening only (REVIEW M4); review against backtest "
+                "evidence before merging into agent_overrides.json.",
+        "overrides": changes_by_agent,
+    }, indent=2))
+
+
+def dispatch_changes(changes_by_agent: dict[str, dict],
+                     current_by_agent: dict[str, dict]) -> tuple[dict, dict]:
+    """Apply tightening changes to the live overrides; route loosening ones to
+    the proposal file. Returns (applied, proposed) by agent. With
+    HLBOT_TUNER_APPLY_LOOSENING=1 everything validated is applied (pre-M4
+    standing-approval behavior)."""
+    if os.environ.get("HLBOT_TUNER_APPLY_LOOSENING") == "1":
+        apply_overrides(changes_by_agent)
+        return {a: c for a, c in changes_by_agent.items() if c}, {}
+    applied: dict = {}
+    proposed: dict = {}
+    for agent, changes in changes_by_agent.items():
+        tightening, loosening = classify_changes(current_by_agent.get(agent, {}), changes)
+        if tightening:
+            applied[agent] = tightening
+        if loosening:
+            proposed[agent] = loosening
+    if applied:
+        apply_overrides(applied)
+    if proposed:
+        propose_overrides_for_review(proposed)
+    return applied, proposed
+
+
 def log_run(payload: dict) -> None:
     LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
     with LOG_PATH.open("a") as f:
@@ -310,15 +399,21 @@ def main() -> int:
             all_changes[agent] = approved
         all_rejections.extend(rejections)
 
-    apply_overrides(all_changes)
+    applied, proposed = dispatch_changes(all_changes, current)
 
-    if all_changes:
-        lines.append("✅ *applied*:")
-        for agent, ch in all_changes.items():
+    if applied:
+        lines.append("✅ *applied* (risk-tightening):")
+        for agent, ch in applied.items():
             for k, v in ch.items():
                 cur = current[agent].get(k, "?")
                 lines.append(f"  • {agent}.{k}: {cur} → {v}")
-    else:
+    if proposed:
+        lines.append(f"📝 *proposed for review* (loosening — see {PROPOSED.name}):")
+        for agent, ch in proposed.items():
+            for k, v in ch.items():
+                cur = current[agent].get(k, "?")
+                lines.append(f"  • {agent}.{k}: {cur} → {v}")
+    if not applied and not proposed:
         lines.append("✅ no changes (model proposed none or all rejected)")
 
     if all_rejections:
@@ -331,7 +426,8 @@ def main() -> int:
         "ts": time.time(),
         "summaries": summaries,
         "proposal": proposal,
-        "applied": all_changes,
+        "applied": applied,
+        "proposed_for_review": proposed,
         "rejected": all_rejections,
     })
 

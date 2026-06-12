@@ -15,11 +15,11 @@ Keep it ruthlessly prioritized: the top item should always be the highest-levera
 - [x] **B1a — Offline history cache.** Done: `hlbot backtest-fetch` +
   save/load/cached_or_fetch under `data/backtest_cache/` (gzipped JSON,
   gitignored); `hlbot backtest --cache` runs without network. (Iteration 2.)
-- [~] **B2 — Maker (post-only) execution.** Primitive done: `place_limit_order`
-  (post-only 'Alo'), `round_price_to`, `has_resting_order` + tests. **Remaining
-  (B2b):** async resting-order fill reconciliation across ticks, then route live
-  *entries* through maker (exits stay taker). Until then live entries are still
-  taker. Backtest passive strategies as maker once B1 unblocks.
+- [x] **B2 — Maker (post-only) execution.** Closed (audit, Iter 63): every
+  remaining piece shipped elsewhere — cross-tick fill reconciliation (B2b),
+  book-aware pricing (B-book), instant fill detection (B10b/B10c), honest
+  maker backtests (B-MAKERFILL/B-FILL2). The one open thread — actually
+  routing live entries through maker — is B-MAKER-LIVE (evidence-blocked).
 - [x] **B3 — `twap_mr_regime_v1`.** Done: new agent consults
   `regime_allows_fade`; closes plumbed through Frame + live `_enrich_view`;
   backtest tests prove it beats baseline on a trend. Thresholds need real-data
@@ -237,6 +237,20 @@ Keep it ruthlessly prioritized: the top item should always be the highest-levera
   the `positions` table from fills (net_sz, size-weighted avg_entry, accumulated
   realized_pnl/fees), surviving partial fills/flips/manual interference; wired
   into `hlbot ingest` and exposed via `hlbot positions`. (REVIEW M2. Iter 10.)
+
+- [x] **B-M4 — Auto-tuner auto-apply is risk-tightening only.** Done (Iter 63,
+  REVIEW M4): `scripts/auto_tuner.py` was the last ungated live-params writer —
+  Hermes cron auto-applied LLM tweaks to `agent_overrides.json`, including
+  LOOSENING moves (its prompt rule 5 says loosen entries when "winning but
+  trading rarely"; sigma_enter could drop 50%, twap notional rise to $200) with
+  zero backtest evidence. Now: validated changes are partitioned by a per-key
+  `RISK_DIRECTION` table — strictly-tightening changes auto-apply as before;
+  loosening/ambiguous ones (exits, take-profit, anything without a current
+  value) are written to `configs/agent_overrides.tuner_proposed.json` for
+  human merge, mirroring `hlbot research-strategies`. The pre-M4 standing
+  approval (TWAP scale-to-$200) is preserved behind explicit
+  `HLBOT_TUNER_APPLY_LOOSENING=1`. Paths env-overridable → script unit-tested
+  for the first time (5 tests, incl. pre-existing rails pinned).
 
 ## P2 — cadence, structure, devops
 

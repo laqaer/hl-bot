@@ -117,7 +117,10 @@ tolerate a 5-min loop.
 - **M4 — Auto-tuner polishes a losing system.** `scripts/auto_tuner.py` asks an
   LLM to nudge params within ±20–50%. It cannot fix taker-vs-maker, cadence, or a
   structurally wrong strategy — the things that actually matter. Keep it, but it's
-  a fine-tuner, not an edge source.
+  a fine-tuner, not an edge source. *(Hardened, Iter 63: auto-apply is now
+  risk-tightening only; loosening/scaling changes go to
+  `agent_overrides.tuner_proposed.json` for human merge against backtest
+  evidence. `HLBOT_TUNER_APPLY_LOOSENING=1` restores the old behavior.)*
 - **M5 — basis spot scaling is fragile.** The `spotMetaAndAssetCtxs` price
   normalization (wei-decimals, "U"-prefixed wrapped tokens, 5% sanity band) is
   brittle and easy to get silently wrong; basis on BTC/ETH/SOL is also tiny and

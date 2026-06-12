@@ -3247,3 +3247,57 @@ the ~Jul 8 B-EDGE2f readout.
 maker-rest the arm to watch). B-EDGE2b three-armed reruns as the 15m store
 grows. B-EDGE2f at ≥30d paper books (~Jul 8). Idle queue: B-SCALE doc once
 G2 evidence is real.
+
+## Iteration 63 — 2026-06-12 — B-M4: the auto-tuner can no longer loosen live risk on its own
+
+**Why this.** Headline items stay time-blocked (B-G014 needs ≥14d of 1m store,
+ETA ~Jun 26 — store spans verified healthy today: 3.7d@1m/17.6d@5m/52.3d@15m,
+exactly retention since the store was born this morning in Iter 28; B-EDGE2f
+needs ≥30d paper books, ~Jul 8). Sweeping REVIEW for unpicked findings, M4 was
+the live-risk hole: `scripts/auto_tuner.py` (pre-loop, Hermes cron on the
+operator box) auto-applies LLM parameter tweaks straight into
+`configs/agent_overrides.json` — the file every live tick merges over agent
+defaults. Its prompt rule 5 explicitly tells the model to LOOSEN entries when
+an agent is "winning but trading rarely", sigma_enter could drop 50%, and a
+standing approval let it raise twap_mr per-trade notional to $200 — all with
+zero backtest evidence, while everything built since (research_strategies,
+supervisor promotion, G0–G3) is propose-only/evidence-gated. An LLM hunch off
+7d of realized fills silently loosening the live book contradicts both hard
+rules ("evidence before capital", "risk changes are tightening-only").
+
+**Changed.** (a) `RISK_DIRECTION` per-key table (+1 = higher is tighter:
+entry bars, volume floor; −1 = lower is tighter: notional, hold hours, stop
+size) + `classify_changes` partitions validated changes into strictly-
+tightening vs loosening; ambiguous keys (exits, take_profit) and keys with no
+current value are NEVER auto-applied; no-ops dropped. (b) `dispatch_changes`:
+tightening → `apply_overrides` (live, as before); loosening →
+`agent_overrides.tuner_proposed.json` (same mergeable `{overrides, note}`
+shape as research_strategies' document, note says review against backtest
+evidence). The standing approval is preserved explicitly:
+`HLBOT_TUNER_APPLY_LOOSENING=1` restores pre-M4 auto-apply-everything.
+(c) Telegram/stdout output and the JSONL log now split "applied
+(risk-tightening)" from "proposed for review"; (d) tuner file targets
+(`HLBOT_TUNER_OVERRIDES/PROPOSED/LOG`) env-overridable — which is what made
+the script unit-testable at all. validate_proposal rails untouched.
+
+**Evidence.** 400 → **405 tests pass** (new `tests/test_auto_tuner.py` loads
+the standalone script by path: direction partition incl. ambiguous/no-current/
+no-op cases; dispatch writes tightening live + loosening to the proposal doc
+and never the live file; all-tightening run leaves no proposal file; env flag
+restores old behavior; and the FIRST pins on the pre-existing rails — femr
+cap breach, liq_cascade TWAP-only scale rejection, >50% swing, out-of-bounds
+stop). `ruff check src tests scripts` clean. NOT live-fired end-to-end:
+main() needs the operator-box DB + claude binary; the changed logic is fully
+covered by the dispatch/classify tests, and the validate→dispatch seam is
+exercised in test_validate_rails_unchanged_by_m4.
+
+**Found.** B2 closed by audit (all remaining pieces shipped as B2b/B-book/
+B10b/B10c/B-MAKERFILL/B-FILL2; live maker routing is B-MAKER-LIVE,
+evidence-blocked). REVIEW M5 (basis spot scaling) remains the last unpicked
+review finding — deliberately skipped: basis_v1 isn't in the live roster and
+REVIEW itself ranks it lowest priority.
+
+**What's next (loop).** B-G014 when 1m store span ≥14d (~Jun 26; judge maker
+with --prefer maker --maker-fill resting; w=240 arm the one to watch).
+B-EDGE2b three-armed reruns as the 15m store grows. B-EDGE2f at ≥30d paper
+books (~Jul 8). Idle queue: B-SCALE doc once G2 evidence is real.
