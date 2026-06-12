@@ -213,9 +213,12 @@ def build_frames(
     bar are simply absent from that frame.
 
     HL funding rates are hourly; the engine treats ``Frame.funding`` as the
-    *per-bar* rate, so we scale by ``bar_hours`` (= bar interval / 1h). 1h bars
-    are unchanged; 5m bars get 1/12 of the hourly rate per bar; 4h bars get 4×.
-    Without this, carry PnL is over/understated on any non-1h interval.
+    *per-bar* rate. Fine bars (≤1h) pro-rate the rate in effect by ``bar_hours``
+    (= bar interval / 1h): 1h bars are unchanged, 5m bars get 1/12 per bar.
+    Coarse bars (>1h) instead SUM the actual hourly settlements inside the bar —
+    extrapolating the last sampled rate ×4/×24 credits an extreme print for a
+    full bar when real funding mean-reverts within hours, which systematically
+    flatters exactly the carry strategies coarse backtests are used to test.
 
     Runs in O(total_bars × vwap_window): timestamps are visited in order, so
     per-coin cursors replace the per-frame prefix scans (bars seen so far,
@@ -291,11 +294,15 @@ def build_frames(
             vol[coin] = (prefix[cut] - prefix[max(0, cut - 1440)]) * mid
             rates = fund_rows[coin]
             fi = fund_cursor[coin]
+            fund_sum = 0.0
+            bar_start = ts - int(bar_hours * 3_600_000)
             while fi < len(rates) and rates[fi][0] <= ts:
                 fund_last[coin] = rates[fi][1]
+                if rates[fi][0] > bar_start:
+                    fund_sum += rates[fi][1]
                 fi += 1
             fund_cursor[coin] = fi
-            funding[coin] = fund_last[coin] * bar_hours
+            funding[coin] = fund_sum if bar_hours > 1.0 else fund_last[coin] * bar_hours
             funding_hourly[coin] = fund_last[coin]
         if mids:
             frames.append(Frame(

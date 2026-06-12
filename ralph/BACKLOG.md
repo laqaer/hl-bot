@@ -52,7 +52,21 @@ Keep it ruthlessly prioritized: the top item should always be the highest-levera
   "t", page_limit=CANDLE_PAGE_LIMIT)`, so fine intervals (1m/5m) over long windows
   no longer silently truncate the recent bars the way `fundingHistory` did.
   Unit-tested offline (fake httpx, shrunk cap).
-- [~] **B1c — Edge hunt on corrected funding.** Tooling done: `backtest`/`confirm`
+- [x] **B1c — Edge hunt on corrected funding. CLOSED (Iter 47): every lever
+  pruned; carry stays evidence-gated OFF.** Final two hypotheses (numbers in
+  PROGRESS): (4) *beta-neutral sizing* (`beta_neutral` lever, shipped+tested in
+  an interrupted Jun-8 session, A/B'd Iter 47) IS a real variance lever —
+  maker Sharpe +1.21→+2.01→+2.31 and maxDD halves as the shrink deepens — but
+  it cannot change the sign of the carry: walk-forward still FAILS (in-sample
+  −19bps). Keep default OFF; flip it only if xfund ever earns a book.
+  (5) *lower cadence* is WORSE at 4h (−4.3→−7.1bps maker with honest in-bar
+  funding integration; beta combo −18.6) and *unprovable* at 1d: 14 trades/90d
+  by construction (funding API retention caps the sample), and the seductive
+  "+177bps CONFIRMED" 1d print was a thin-sample gate false-positive — 2
+  in-sample trades — now structurally rejected by the confirm `min_trades`
+  floor this iteration added. Meta-finding: baseline swung −4.3 → +11.3bps
+  maker on a 4-day window roll (all profit in the June funding-dispersion
+  pocket; walk-forward IS −43.7); variance ≫ signal. Tooling done earlier: `--config '{json}'` overrides (`parse_agent_config` + `_backtest_factories`,
   now take `--config '{json}'` overrides (`parse_agent_config` + `_backtest_factories`,
   tested) so xfund params sweep without code edits. **Two hypotheses pruned (Iter 22,
   numbers in PROGRESS):** (1) *tighter entry* makes xfund WORSE not better
@@ -252,11 +266,15 @@ Keep it ruthlessly prioritized: the top item should always be the highest-levera
 - [ ] **B-SCALE — Scale twap_mr_v1 as it earns.** Let the 5×/1× risk rule +
   MetaAllocator grow size at each gate; bump caps deliberately, never to chase losses.
   This builds the track record on meaningful size.
-- [ ] **B4-RUN — Confirm carry strategies on real history.** `hlbot confirm --agent
-  xfund_carry_v1 --prefer maker` (and funding_carry_v1) on the live box; promote any
-  that pass G0 into the live roster.
-- [ ] **B-UNIV — Widen the carry universe** to 50–100 coins so cross-sectional carry
-  has more to rank (config + universe fetch).
+- [x] **B4-RUN — Confirm carry strategies on real history.** Done across Iters
+  20–23 + 47: every confirm FAILS walk-forward (latest: 1h baseline IS
+  −43.7bps, 1h beta-neutral IS −19.0bps, 1d thin-sample gated). Nothing
+  promotable; carry hunt closed under B1c.
+- [x] **B-UNIV — Widen the carry universe. PRUNED** (Iter 22): 10→20 coins made
+  xfund WORSE (−4.3→−12.1bps maker, OOS −23.6); high-|funding| alts are
+  volatile *because* funding is extreme, so more names = more price variance,
+  not more edge. 50–100 coins is more of the same direction — don't re-explore
+  without a new neutralization idea.
 - [x] **B15c — Track-record CHART export.** Done: `reports/track_record.to_html`
   emits a self-contained HTML page with an inline SVG equity curve + per-agent
   table; `hlbot track-record` → `track_record.html`. Tested. (Strategy-review iter.)
@@ -416,6 +434,15 @@ each on ≥90d real history (`hlbot confirm` / `hlbot backtest --config`) before
 
 ## Done
 
+- [x] **B-GATE — Two measurement-integrity fixes** (Iter 47, found via B1c):
+  (a) coarse bars (4h/1d) now SUM the actual hourly funding settlements inside
+  the bar instead of extrapolating the last sampled rate ×4/×24 (which paid an
+  extreme print for a whole bar — flattering exactly the carry strategies
+  coarse backtests test); ≤1h paths byte-identical. (b) `hlbot confirm` gained
+  a `--min-trades` per-split floor (default 20): a +bps edge on 2 trades can
+  no longer print "✅ CONFIRMED" (a real 1d carry run did exactly that).
+  Tightening-only; prior G0 PASSes (844-trade twap_mr 1m, 322-trade breakout)
+  clear the floor.
 - [x] **B0 — Backtest harness.** `src/hl_bot/backtest/{engine,data}.py` +
   `hlbot backtest` + tests. Replays real `decide()` with cost/funding model,
   scores via production `score_agent`, computes equity-curve Sharpe/DD, with a

@@ -48,11 +48,28 @@ def _uptrend(n: int = 40) -> list[Frame]:
 def test_confirms_profitable_mean_reversion_as_maker():
     res = confirm_strategy(
         lambda conn: TwapMrAgent(config={}, conn=conn),
-        _choppy(), prefer="maker", min_sharpe=0.5,
+        _choppy(), prefer="maker", min_sharpe=0.5, min_trades=2,
     )
     assert res.confirmed
     assert res.in_sample.edge_bps and res.in_sample.edge_bps > 0
     assert res.out_of_sample.edge_bps and res.out_of_sample.edge_bps > 0
+
+
+def test_thin_sample_not_confirmed_even_with_positive_edge():
+    """A positive edge on a handful of trades is noise, not a G0 pass.
+
+    Same profitable fixture as above, judged at the default trade floor: the
+    splits hold far fewer than 20 trades each, so the verdict must be FAIL
+    with an explicit too-thin reason (a real 1d carry run 'passed' on 2
+    in-sample trades before this floor existed).
+    """
+    res = confirm_strategy(
+        lambda conn: TwapMrAgent(config={}, conn=conn),
+        _choppy(), prefer="maker", min_sharpe=0.5,
+    )
+    assert res.in_sample.edge_bps and res.in_sample.edge_bps > 0
+    assert not res.confirmed
+    assert any("too thin" in r for r in res.reasons)
 
 
 def test_rejects_trend_fader():

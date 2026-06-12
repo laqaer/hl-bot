@@ -2244,3 +2244,103 @@ which is its safe default).
 Meanwhile: B-EDGE2b re-confirm as the 15m store grows, B1c remaining
 hypotheses (beta-neutral xfund cross-section, lower cadence), B14a deploy
 automation gaps, or B12j if idle.
+
+---
+
+## Iteration 47 — 2026-06-12 — B1c CLOSED: carry edge hunt ends; two measurement-integrity fixes it surfaced
+
+**Context.** B-G014 (top priority) still blocked on store span (1m = ~3.6d,
+needs ≥14d, ETA ~2026-06-23). Highest unblocked P0: the two remaining B1c
+hypotheses on xfund_carry — (b) beta-neutral cross-section and (c) lower
+cadence. Discovery while orienting: the `beta_neutral` lever (inverse-rolling-
+beta leg sizing, tightening-only) was ALREADY implemented + unit-tested in an
+interrupted Jun-8 session (`auto: commit changes from Claude session`,
+6a530aa) but the real-data A/B was never run or recorded. This iteration ran
+the full experiment matrix and closed B1c.
+
+**Experiment matrix (xfund_carry_v1, trailing-90d window as of 2026-06-12,
+10-coin ADA,AVAX,BTC,DOGE,ETH,HYPE,LINK,SOL,TRX,ZEC, maker numbers).**
+
+| arm | maker bps | net$ | trades | win | sharpe | maxDD |
+|---|---|---|---|---|---|---|
+| 1h baseline | +11.3 | +2.14 | 76 | 55% | +1.21 | −0.2% |
+| 1h beta_neutral (floor .5) | +12.9 | +1.56 | 72 | 56% | +2.01 | −0.1% |
+| 1h beta_neutral (floor .25) | +11.9 | +1.06 | 48 | 67% | +2.31 | −0.1% |
+| 4h baseline (honest funding) | −7.1 | −0.57 | 32 | 50% | −0.34 | −0.3% |
+| 4h beta_neutral | −18.6 | −1.14 | 32 | 50% | −1.07 | −0.2% |
+| 1d baseline (honest funding) | +177.1 | +6.26 | **14** | 67% | +2.12 | −0.1% |
+
+Walk-forward (`hlbot confirm --prefer maker`, 70/30 split):
+- 1h baseline: **FAIL** — IS −43.7bps (10 trades) / OOS +19.6bps (66).
+- 1h beta_neutral: **FAIL** — IS −19.0bps (10) / OOS +17.3bps (62).
+- 1d baseline: printed **"✅ CONFIRMED" on 2 in-sample trades** → false
+  positive, see fix (b) below; correctly FAILS under the new trade floor.
+
+**Findings.**
+1. **Meta:** the 1h baseline swung −4.3bps (Iters 20/22/23, window ending
+   ~Jun 8) → +11.3bps maker on a ~4-day window roll. ALL the profit lives in
+   the recent June funding-dispersion pocket (walk-forward IS is deeply
+   negative in every arm; eligible-leg counts collapse in the early window —
+   only 10 IS trades). Sample variance ≫ signal: no full-sample positive from
+   this family is meaningful without the walk-forward gate.
+2. **Hypothesis (b) — beta-neutral sizing: a real VARIANCE lever, not an edge
+   lever.** Monotone in shrink depth: Sharpe +1.21→+2.01→+2.31, maxDD halves,
+   win% 55→67%, exactly as the dollar-neutral≠market-neutral thesis predicts.
+   But it shrinks notional (net$ +2.14→+1.06) and cannot change the carry's
+   sign across regimes — walk-forward still FAILS. Verdict: keep default OFF
+   (evidence-before-capital); it's the right default to flip IF xfund ever
+   clears G0 on durable evidence. Lever stays in the code, tested.
+3. **Hypothesis (c) — lower cadence: PRUNED.** 4h is strictly worse than 1h
+   (−7.1 vs +11.3 same-window maker; beta combo −18.6) — consistent with
+   Iter 23: hourly rotation into the *highest*-funding names IS the carry
+   engine, and a 4h decision clock holds stale rank picks. 1d is
+   *unprovable, permanently*: 14 trades/90d by construction (top_k=2, and
+   funding-history API retention caps the sample at ~90d → years to reach
+   n≥100). The +177bps full-sample 1d print is a regime-pocket artifact on
+   nothing — 30 of 91 frames are also warmup-dead, so it trades only the
+   last ~61d.
+4. **B1c CLOSED.** All five levers explored across Iters 20–23 + 47 (tighter
+   entry, wider universe, churn cut, beta-neutral, cadence) are pruned or
+   sign-preserving. Carry stays evidence-gated OFF; the agents remain in the
+   repo for a future funding regime, with their levers tested.
+
+**Changed (code — 2 measurement-integrity fixes the experiments surfaced).**
+- **`backtest/data.py`** — coarse bars (>1h) now SUM the actual hourly funding
+  settlements inside each bar (`fund_sum` over rows in `(ts−bar, ts]`) instead
+  of extrapolating the last sampled rate ×4/×24, which paid an extreme print
+  for a full bar while real funding mean-reverts within hours — flattering
+  exactly the carry strategies coarse backtests exist to test. ≤1h paths
+  byte-identical (per-bar pro-rating unchanged); `funding_hourly` still the
+  raw last rate. 4h/1d caches refetched post-fix (4h: −6.3→−7.1 — the old
+  method WAS overstating carry; 1d: +173→+177, i.e. the 1d mirage was regime
+  concentration, not accrual error — both now honest).
+- **`backtest/confirm.py` + `cli/main.py`** — G0 verdict gained a per-split
+  trade floor: `min_trades` (default 20, `--min-trades`) on BOTH in-sample
+  and out-of-sample; failures print "sample too thin to judge". Tightening-
+  only. Prior recorded PASSes clear it (twap_mr 1m: 844 trades; breakout
+  15m: 322 — OOS ≈ 30% ≫ 20/split; B-EDGE2b's next rerun re-checks under the
+  floor regardless).
+
+**Evidence.** 276 → **278 tests pass** (new: coarse-bar settlement summation —
+in-bar sum with no pre-bar leak, zero-settlement bar accrues 0, funding_hourly
+unscaled; thin-sample confirm FAILS at the default floor on a positive-edge
+fixture with an explicit too-thin reason; existing discrimination tests pinned
+at `min_trades=2`). `ruff check src tests scripts` clean. All matrix numbers
+reproducible via `--config`/`--interval` flags on today's refreshed caches
+(4h/1d refetched after the funding fix; one HL 429 mid-refresh, retried OK).
+
+**Honest caveats.** (1) The 1h full-sample +11.3/+12.9bps maker prints are
+real numbers on real data but walk-forward shows they're one June pocket —
+do NOT read them as edge. (2) The funding-integration fix changes only
+4h/1d backtests; no published number used those intervals (the Iter-20/22/23
+carry numbers were 1h and stand). (3) `min_trades=20` is a judgment call,
+not a statistics theorem; it's deliberately below every legitimate pass on
+record and above anything noise has produced. (4) beta_neutral's Sharpe gain
+is same-window — it has NOT been tested across regimes (moot while the
+strategy itself fails the gate).
+
+**What's next (loop).** B-G014 when store 1m span ≥14d (~Jun 23–26; keep
+verifying top-ups). Meanwhile: B-EDGE2b breakout re-confirm as the 15m store
+grows (now under the trade floor), B12j vestigial `tick` unification, or B14a
+deploy-automation gaps. P0 edge hunting shifts fully to the momentum/
+mean-reversion families — carry is closed.

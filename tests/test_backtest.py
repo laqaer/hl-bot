@@ -421,6 +421,34 @@ def test_build_frames_funding_hourly_is_unscaled():
     assert abs(last.funding["TST"] - 1e-5) < 1e-15      # 6e-4 / 60
 
 
+def test_build_frames_coarse_bars_sum_hourly_settlements():
+    """Bars >1h integrate the actual hourly funding rows inside the bar.
+
+    Extrapolating the last sampled rate × bar_hours pays an extreme print for
+    a whole 4h/1d bar while real funding mean-reverts within hours — which
+    flatters exactly the carry strategies coarse backtests exist to test. The
+    pre-bar rate must not leak into the sum, and funding_hourly stays the raw
+    last-seen rate.
+    """
+    four_h = 4 * HOUR
+    candles = [{"t": i * four_h, "c": 100.0, "v": 10.0} for i in range(4)]
+    funding = [{"time": 0, "fundingRate": 9e-4}] + [
+        # second bar (4h, 8h]: settlements at 5..8h sum to 1+2+3+4 = 10e-4
+        {"time": (5 + j) * HOUR, "fundingRate": (j + 1) * 1e-4}
+        for j in range(4)
+    ]
+    frames = build_frames({"TST": candles}, funding_by_coin={"TST": funding},
+                          vwap_window=2, warmup=2, bar_hours=4.0)
+    by_ts = {f.ts_ms: f for f in frames}
+    bar2 = by_ts[2 * four_h]
+    assert abs(bar2.funding["TST"] - 10e-4) < 1e-15     # in-bar sum, no 9e-4 leak
+    assert bar2.funding_hourly["TST"] == 4e-4           # raw last rate, unscaled
+    # a coarse bar with no settlements accrues nothing (vs stale-rate × 4)
+    bar3 = by_ts[3 * four_h]
+    assert bar3.funding["TST"] == 0.0
+    assert bar3.funding_hourly["TST"] == 4e-4
+
+
 class _FundingProbe(TwapMrAgent):
     """Records the funding rates the engine shows the agent each tick."""
 

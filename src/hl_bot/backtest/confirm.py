@@ -10,7 +10,10 @@ returns an explicit PASS/FAIL:
    slippage. An edge that evaporates when costs double was never real.
 3. **Verdict.** Confirmed only if the out-of-sample net-of-cost edge clears the
    threshold under the *preferred* execution AND in-sample agrees AND Sharpe
-   clears the bar. Robustness to 2x slippage is reported separately.
+   clears the bar AND both splits have enough trades to mean anything — a
+   +10bps edge on 2 trades is noise, not evidence (a real 1d-cadence carry run
+   "passed" exactly that way before the floor existed). Robustness to 2x
+   slippage is reported separately.
 
 This is intentionally strict: it is cheaper to reject a fake edge here than to
 discover it live.
@@ -91,11 +94,15 @@ def confirm_strategy(
     oos_fraction: float = 0.3,
     min_edge_bps: float = 3.0,
     min_sharpe: float = 1.0,
+    min_trades: int = 20,
     periods_per_year: float = 8_760,
     starting_capital: float = 1_000.0,
 ) -> ConfirmationResult:
     """Run the walk-forward + cost-stress confirmation. ``prefer`` ('taker' or
-    'maker') selects the execution basis the PASS/FAIL verdict is judged on."""
+    'maker') selects the execution basis the PASS/FAIL verdict is judged on.
+    ``min_trades`` is the per-split sample floor: each of in-sample and
+    out-of-sample must contain at least this many trades or the verdict is
+    FAIL regardless of edge."""
     n = len(frames)
     reasons: list[str] = []
     pref_cost = CostModel(maker=(prefer == "maker"))
@@ -134,6 +141,8 @@ def confirm_strategy(
     ok_oos_edge = out_of_sample.edge_bps is not None and out_of_sample.edge_bps >= min_edge_bps
     ok_in_edge = in_sample.edge_bps is not None and in_sample.edge_bps >= min_edge_bps
     ok_sharpe = out_of_sample.sharpe is not None and out_of_sample.sharpe >= min_sharpe
+    ok_in_n = in_sample.n_trades >= min_trades
+    ok_oos_n = out_of_sample.n_trades >= min_trades
 
     if not ok_in_edge:
         reasons.append(f"in-sample edge {_fmt(in_sample.edge_bps)} < {min_edge_bps:+.0f}bps")
@@ -141,10 +150,14 @@ def confirm_strategy(
         reasons.append(f"out-of-sample edge {_fmt(out_of_sample.edge_bps)} < {min_edge_bps:+.0f}bps (overfit/none)")
     if not ok_sharpe:
         reasons.append(f"oos sharpe {_fmtn(out_of_sample.sharpe)} < {min_sharpe:.1f}")
+    if not ok_in_n:
+        reasons.append(f"in-sample trades {in_sample.n_trades} < {min_trades} (sample too thin to judge)")
+    if not ok_oos_n:
+        reasons.append(f"out-of-sample trades {out_of_sample.n_trades} < {min_trades} (sample too thin to judge)")
     if not robust_2x:
         reasons.append("edge does not survive 2x taker slippage (info; not required if maker-only)")
 
-    confirmed = ok_in_edge and ok_oos_edge and ok_sharpe
+    confirmed = ok_in_edge and ok_oos_edge and ok_sharpe and ok_in_n and ok_oos_n
     if confirmed and not reasons:
         reasons.append(f"clears +{min_edge_bps:.0f}bps in & out of sample with sharpe >= {min_sharpe:.1f}")
 

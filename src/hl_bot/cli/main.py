@@ -781,6 +781,7 @@ def confirm(
     prefer: str = "taker",
     min_edge_bps: float = 3.0,
     min_sharpe: float = 1.0,
+    min_trades: int = 20,
     cache: bool = True,
     config: str = "",
     vwap_window: int = 60,
@@ -792,7 +793,8 @@ def confirm(
     before it is eligible for paper→live promotion (see docs/GO_LIVE.md).
     --source store runs the gate on the harvested rolling candle store
     (--days 0 = everything stored); funding is always fetched — a G0 verdict
-    with funding stripped out would be dishonest.
+    with funding stripped out would be dishonest. --min-trades floors the
+    per-split sample size: a verdict from a handful of trades is noise.
     """
     from ..backtest.confirm import confirm_strategy
 
@@ -814,7 +816,8 @@ def confirm(
         vwap_window=vwap_window, api_url=s.hl_api_url)
     res = confirm_strategy(
         factories[agent], frames, prefer=prefer,
-        min_edge_bps=min_edge_bps, min_sharpe=min_sharpe, periods_per_year=per_year,
+        min_edge_bps=min_edge_bps, min_sharpe=min_sharpe, min_trades=min_trades,
+        periods_per_year=per_year,
     )
     console.print(res.summary())
     if not res.confirmed:
