@@ -90,7 +90,20 @@ Keep it ruthlessly prioritized: the top item should always be the highest-levera
 
 ## P1 — honest measurement (so the supervisor can trust itself)
 
-- [x] **B-PAPER — Make the paper book exist + paper/live book separation.** Done
+- [ ] **B-PNL-SPLIT — health's `pnl_24h` (and its loss floor) reads the whole
+  account, not the bot.** Found Iter 87 live: health printed pnl_24h −$325.80
+  while the bot's own 24h book was +$0.97 — the difference is `agent='manual'`
+  fills (−$326.77, mostly xyz:CL, a builder-perp the bot never trades; the
+  operator trades the same account). The `fills.agent` attribution column
+  already exists and is clean (twap_mr_v1 +0.51 / femr_v1 +0.46 / manual
+  −326.77 over the same window). Fix: `assess_health` splits bot vs manual —
+  the `daily_loss_floor` crit should key on BOT PnL (a manual loss must not
+  page the bot's dead-man switch, and a manual win must not mask a bot bleed);
+  print both numbers. Check `reports/track_record.py` uses the same split
+  (per-agent tables suggest it does; verify the headline equity curve too —
+  equity_snapshots are account-wide and CANNOT be split, so the track record
+  needs an explicit "shared account" caveat until the bot gets its own
+  address/vault).
   (Iter 37). Found while scoping B-EDGE2a: paper `femr_tick` NEVER logged
   place/flatten (gap dates to the original femr_tick — `defer_exec_logging`
   defers to an execution loop paper mode never reaches), so "paper trading"

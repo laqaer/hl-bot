@@ -4871,3 +4871,26 @@ after 19:12. Per-iteration readouts unchanged (b_edge2b ~Jun 20, b_g014
 paper timer = this same silent failure mode again — warn-only, keyed on
 the paper DB's tick_heartbeats staleness, gated to boxes where the paper
 DB exists).
+
+## Iteration 86 — 2026-06-12 — B-PAPERHB: paper-loop liveness warning in `hlbot health` (entry reconstructed)
+
+_This entry was written by Iteration 87: Iter 86 committed its work
+(a2442b1, 17:05 UTC) with the backlog ticked but never appended its
+PROGRESS entry — procedure step 5 half-skipped. Reconstructed from the
+commit so the record has no hole; details in the B-PAPERHB backlog item._
+
+**Changed (per a2442b1).** The Iter-85 idle-queue item: B-PAPERLOOP's
+failure mode (a dead paper timer silently stopping every G1 calendar
+clock) had no detector. `ops/health.py` grew `PaperSignals` +
+`read_paper_signals(db_path)` (paper DB resolved beside the live DB or
+via HLBOT_PAPER_DB — the same rule run-paper-tick.sh uses; read-only
+open; self-reference and read failures degrade safely) and a warn-only
+`paper` check in `assess_health` (stale >1h ≈ 12 missed 5-min fires, or
+present-but-never-ticked; absent paper DB stays silent so dev/live-only
+clones don't nag). CLI `hlbot health` passes the signals. Since
+run-tick.sh ends every 5-min fire with `hlbot health`, the live box now
+watches its own paper loop.
+
+**Evidence.** 534 → 541 tests (+7 in test_ops.py: stale-warn,
+never-ticked-warn, fresh-ok, absent-quiet, signal reader, CLI wiring,
+script-name pin); committed green at a2442b1.
