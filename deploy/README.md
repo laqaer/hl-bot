@@ -110,6 +110,18 @@ B-EDGE2a), which adds one 15m candleSnapshot call per top-20 coin to each
 paper tick; live ticks skip the feed entirely unless breakout is promoted in
 `agent_state`.
 
+Read the paper book with `hlbot score --paper` (B-PAPER3): it replays the
+paper place/flatten rows into scorecards under the backtester's taker cost
+model (fees + slippage), so the numbers are comparable to G0 backtests, and
+lists still-open paper positions. Caveats: `funding_pnl` is always 0 (don't
+judge a funding strategy like femr on it) and realized-only — an open
+position shows entry fees but no mark-to-market. Promotion stays human-gated;
+this is the evidence readout, not an auto-promoter.
+
+```bash
+sudo -u hlbot bash -c 'cd /opt/hl-bot && HLBOT_DB=data/hlbot_paper.sqlite uv run hlbot score --paper'
+```
+
 ## Kill switch
 
 ```bash

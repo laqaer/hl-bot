@@ -100,16 +100,26 @@ Keep it ruthlessly prioritized: the top item should always be the highest-levera
   replay (entry_px/sz known; position_value=sz·entry; liq/uPnL approximated)
   so femr's section-1 exit logic runs on the paper book too. Other agents are
   unaffected (their exits replay their own log).
-- [ ] **B-PAPER3 — paper-book scorecard.** Found during B-EDGE2a: `score_agent`
-  is fills-based, and a paper book produces no fills — every goals/promotion
-  metric for a paper-only agent is N/A, so the supervisor can't read the
-  forward-test evidence the paper book now records (breakout_v1's declared
-  promotion gates can never fire from paper). Fix: a paper-PnL scorer that
-  replays the paper decision book (entry px → exit px, modeled taker fees,
-  funding from history) into the same Scorecard shape, surfaced via `hlbot
-  score --paper` / track-record, NOT auto-promotion (promotion to live stays
-  human-gated regardless). Until then, G1 judgment on breakout is a manual
-  read of the paper decision log.
+- [x] **B-PAPER3 — paper-book scorecard.** Done (Iter 39): `scoring/paper.py`
+  replays the paper decision book (is_paper=1 place/flatten, same replay
+  semantics as the agents' own `_position_state`) into synthetic fills under
+  the backtester's `CostModel` (taker fees + slippage → comparable to G0
+  numbers) and aggregates the same `Scorecard` shape as `score_agent`
+  (windows, win stats, daily Sharpe, capital-based DD). `hlbot score --paper`
+  prints the cards + still-open paper positions. NOT auto-promotion. Limits
+  (by design, follow-ups below): funding_pnl=0, realized-only (no
+  mark-to-market on open positions).
+- [ ] **B-PAPER3a — paper funding accrual.** Paper scorecards report
+  funding_pnl=0; a funding strategy (femr) can't be judged on its paper book
+  until accrual over each hold is modeled from funding-rate history (the
+  store/API already has the rates; accrue rate×held-notional per hour like
+  the backtest engine does). Low priority until femr paper exits exist
+  (B-PAPER2 — without exits there are no holds to score anyway).
+- [ ] **B-PAPER3b — surface paper scorecards in track-record/goals.** The
+  readout exists (`hlbot score --paper`); wire it into `hlbot track-record`
+  as a clearly-labeled paper section, and consider letting goal evaluation
+  consume paper cards for paper-mode agents (pause/demote signals only —
+  promotion stays human-gated).
 
 - [x] **B6/B7 — Per-agent funding attribution + Sharpe.** Done: funding split to
   the agent holding the coin at funding time (scoring includes it in net/edge);

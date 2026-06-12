@@ -1778,3 +1778,60 @@ backtest universe; coins drift in/out with volume rank.
 **What's next (loop).** B-PAPER3 (paper scorecard — turns the accumulating
 book into readable G1 numbers), B-PAPER2 (femr paper exits), B-EDGE2b
 re-confirm as the store grows, B12 remainder. B-G014 unblocks ~2026-06-26.
+
+## Iteration 39 — 2026-06-12 — B-PAPER3: the paper book is now readable — `hlbot score --paper`
+
+**What.** The forward-test evidence the paper book records (B-PAPER/B-EDGE2a)
+was write-only: `score_agent` is fills-based and a paper book produces no
+fills, so every metric for a paper-only agent (breakout_v1) was N/A. New
+`scoring/paper.py` closes the loop:
+
+- `replay_paper_fills` — pure replay of one agent's is_paper=1 place/flatten
+  rows into synthetic fills, using the SAME book semantics as the agents' own
+  `_position_state` replays (place opens / overwrites, flatten closes the full
+  held size; unfillable rows skipped). Execution is modeled by the
+  backtester's `CostModel` (default taker: 4.5bps fee + 2bps slippage per leg,
+  slippage folded into the effective fill px exactly like the engine), so
+  paper numbers are directly comparable to G0 backtest numbers.
+- `score_paper_agent` — aggregates those fills into the SAME `Scorecard`
+  shape/semantics as `score_agent` (each leg counts in its window like a
+  fill, win stats on closes, daily-PnL Sharpe, capital-based drawdown/Calmar),
+  so everything that reads scorecards can read paper ones.
+- `hlbot score --paper` — prints the paper cards + an "open paper positions"
+  table (entry px, age; explicitly NOT marked to market).
+- Operator docs: deploy/README §Paper book — how to read the paper loop's
+  book, with the caveats spelled out.
+
+**Why.** breakout_v1's G1 evidence is accumulating on the deploy box but its
+declared promotion gates (30d edge ≥15bps, net ≥$5, ≥60 trades) could never be
+checked against anything — manual log reads don't scale and invite wishful
+interpretation. Now the gate metrics come from the same Scorecard machinery
+the supervisor already uses. Promotion stays human-gated; this is the
+evidence READOUT, not an auto-promoter.
+
+**Evidence.** 233 tests pass (13 new in tests/test_paper_score.py: round trips
+long/short at zero cost, taker fee+slippage arithmetic matches engine
+semantics hand-computed, flatten-without-open and unfillable rows skipped,
+re-place overwrites like the agent book, window filtering at fill granularity
+(entry outside / exit inside 24h counts the exit only), live rows invisible to
+the paper score, Sharpe needs ≥3 days / DD needs capital_base, roster +
+score_paper_all coverage, default-cost flat round trip loses ~6.5bps). Ruff
+clean. Smoke: scratch DB with a seeded XPL round trip + 2 open positions →
+table shows +$1.16 net (hand-checked: +$1.19 price − $0.03 modeled fees);
+open-position edge −4.5bps = exactly the one-leg taker fee. Empty real DB →
+graceful empty table. No backtest pollution risk: all backtest/confirm paths
+use `init_db(":memory:")`, so a production DB's paper rows come only from real
+paper ticks.
+
+**Honest limits (filed as backlog items).** (1) funding_pnl=0 — femr's paper
+book can't be judged until funding accrual is modeled (B-PAPER3a; moot until
+B-PAPER2 gives femr paper exits anyway). (2) Realized-only — open positions
+contribute entry fees but no mark-to-market, matching live scorecard
+semantics. (3) Cost model is assumed, not measured: paper "fills" never faced
+queue/latency reality, so treat paper edge as backtest-grade, not live-grade,
+evidence. (4) Not yet in track-record/goal evaluation (B-PAPER3b).
+
+**What's next (loop).** B-PAPER2 (femr paper exits — femr paper positions
+currently hold slots forever and show as stale opens in the new table),
+B-PAPER3b (track-record paper section), B12 remainder. B-G014 unblocks
+~2026-06-26 (store 1m span ≥14d).

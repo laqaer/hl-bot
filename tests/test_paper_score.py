@@ -1,0 +1,223 @@
+"""Paper-book scorecard (B-PAPER3).
+
+The paper book records forward-test evidence but ``score_agent`` is
+fills-based, so paper-only agents score N/A everywhere. ``scoring/paper.py``
+replays the is_paper=1 place/flatten rows into synthetic fills under the
+backtester's CostModel and aggregates them into the same Scorecard shape —
+these tests pin the replay semantics, the cost model, the window filtering,
+and the paper/live book separation.
+"""
+
+from __future__ import annotations
+
+import pytest
+
+from hl_bot.backtest.engine import CostModel
+from hl_bot.db.schema import init_db
+from hl_bot.scoring.paper import (
+    list_paper_agents,
+    paper_open_positions,
+    replay_paper_fills,
+    score_paper_agent,
+    score_paper_all,
+)
+
+FREE = CostModel(taker_fee_bps=0.0, slippage_bps=0.0)
+DAY_MS = 86_400_000
+
+
+@pytest.fixture
+def conn():
+    c = init_db(":memory:")
+    yield c
+    c.close()
+
+
+def _log(conn, agent, ts_ms, action, coin, side=None, sz=None, px=None, paper=True):
+    conn.execute(
+        """INSERT INTO agent_decisions(ts_ms, agent, action, coin, side, sz, px, is_paper)
+           VALUES(?,?,?,?,?,?,?,?)""",
+        (ts_ms, agent, action, coin, side, sz, px, 1 if paper else 0),
+    )
+
+
+# ---------------------------------------------------------------------------
+# replay_paper_fills — the pure replay
+# ---------------------------------------------------------------------------
+
+
+def test_round_trip_zero_cost_long():
+    fills, open_pos = replay_paper_fills(
+        [(1000, "BTC", "place", "B", 2.0, 100.0),
+         (2000, "BTC", "flatten", None, None, 110.0)],
+        FREE,
+    )
+    assert open_pos == []
+    assert len(fills) == 2
+    entry, exit_ = fills
+    assert entry.closed_pnl == 0.0 and entry.fee == 0.0 and entry.px == 100.0
+    assert exit_.side == "A" and exit_.sz == 2.0
+    assert exit_.closed_pnl == pytest.approx(20.0)  # (110-100)*2
+
+
+def test_round_trip_zero_cost_short():
+    fills, _ = replay_paper_fills(
+        [(1000, "ETH", "place", "A", 1.0, 200.0),
+         (2000, "ETH", "flatten", None, None, 180.0)],
+        FREE,
+    )
+    assert fills[1].side == "B"
+    assert fills[1].closed_pnl == pytest.approx(20.0)  # (200-180)*1
+
+
+def test_taker_costs_match_engine_semantics():
+    # 10 bps fee, 20 bps slippage, exaggerated for arithmetic clarity.
+    cost = CostModel(taker_fee_bps=10.0, slippage_bps=20.0)
+    fills, _ = replay_paper_fills(
+        [(1000, "BTC", "place", "B", 1.0, 100.0),
+         (2000, "BTC", "flatten", None, None, 100.0)],
+        cost,
+    )
+    entry, exit_ = fills
+    assert entry.px == pytest.approx(100.0 * 1.002)   # buy crosses up
+    assert exit_.px == pytest.approx(100.0 * 0.998)   # sell crosses down
+    assert entry.fee == pytest.approx(entry.px * 0.001)
+    assert exit_.fee == pytest.approx(exit_.px * 0.001)
+    # Flat price, round trip loses the full spread cross: 99.8 - 100.2.
+    assert exit_.closed_pnl == pytest.approx(-0.4)
+
+
+def test_flatten_without_open_is_skipped():
+    fills, open_pos = replay_paper_fills(
+        [(1000, "BTC", "flatten", None, None, 100.0)], FREE)
+    assert fills == [] and open_pos == []
+
+
+def test_unfillable_place_rows_are_skipped():
+    rows = [
+        (1000, "BTC", "place", None, 1.0, 100.0),   # no side
+        (1001, "BTC", "place", "B", None, 100.0),   # no size
+        (1002, "BTC", "place", "B", 1.0, None),     # no price
+    ]
+    fills, open_pos = replay_paper_fills(rows, FREE)
+    assert fills == [] and open_pos == []
+
+
+def test_replace_overwrites_like_agent_book():
+    # Agents' own replays overwrite on a re-place; the exit closes the LATEST entry.
+    fills, open_pos = replay_paper_fills(
+        [(1000, "BTC", "place", "B", 1.0, 100.0),
+         (2000, "BTC", "place", "B", 1.0, 200.0),
+         (3000, "BTC", "flatten", None, None, 210.0)],
+        FREE,
+    )
+    assert open_pos == []
+    assert fills[-1].closed_pnl == pytest.approx(10.0)  # vs 200, not 100
+
+
+def test_open_position_survives_replay():
+    fills, open_pos = replay_paper_fills(
+        [(1000, "SOL", "place", "B", 3.0, 50.0)], FREE)
+    assert len(fills) == 1 and fills[0].closed_pnl == 0.0
+    assert len(open_pos) == 1
+    pos = open_pos[0]
+    assert (pos.coin, pos.side, pos.sz, pos.entry_px) == ("SOL", "B", 3.0, 50.0)
+
+
+# ---------------------------------------------------------------------------
+# score_paper_agent — Scorecard aggregation
+# ---------------------------------------------------------------------------
+
+
+def test_scorecard_shape_and_stats(conn):
+    now = 100 * DAY_MS
+    # Two closed round trips (one win +20, one loss -5) and one open entry.
+    _log(conn, "a", now - 5000, "place", "BTC", "B", 2.0, 100.0)
+    _log(conn, "a", now - 4000, "flatten", "BTC", px=110.0)
+    _log(conn, "a", now - 3000, "place", "ETH", "A", 1.0, 200.0)
+    _log(conn, "a", now - 2000, "flatten", "ETH", px=205.0)
+    _log(conn, "a", now - 1000, "place", "SOL", "B", 1.0, 50.0)
+
+    sc = score_paper_agent(conn, "a", "all", cost=FREE, now_ms=now)
+    assert sc.agent == "a" and sc.window == "all"
+    assert sc.n_trades == 5                      # each leg counts, like fills
+    assert sc.realized_pnl == pytest.approx(15.0)
+    assert sc.fees_paid == 0.0 and sc.funding_pnl == 0.0
+    assert sc.net_pnl == pytest.approx(15.0)
+    assert sc.win_rate == pytest.approx(0.5)
+    assert sc.avg_win == pytest.approx(20.0)
+    assert sc.avg_loss == pytest.approx(-5.0)
+    assert sc.profit_factor == pytest.approx(4.0)
+    # 200+220 (BTC legs) + 200+205 (ETH) + 50 (open SOL entry)
+    assert sc.notional_traded == pytest.approx(875.0)
+    assert sc.edge_bps == pytest.approx(15.0 / 875.0 * 10_000)
+
+
+def test_window_filters_fills_not_pairing(conn):
+    now = 100 * DAY_MS
+    # Entry 2 days ago, exit 2 hours ago: the exit's PnL lands in the 24h
+    # window even though the entry leg is outside it (fills-based semantics).
+    _log(conn, "a", now - 2 * DAY_MS, "place", "BTC", "B", 1.0, 100.0)
+    _log(conn, "a", now - 2 * 3_600_000, "flatten", "BTC", px=120.0)
+
+    sc24 = score_paper_agent(conn, "a", "24h", cost=FREE, now_ms=now)
+    assert sc24.n_trades == 1
+    assert sc24.realized_pnl == pytest.approx(20.0)
+    sc_all = score_paper_agent(conn, "a", "all", cost=FREE, now_ms=now)
+    assert sc_all.n_trades == 2
+
+    # 1h window has neither leg.
+    sc1h = score_paper_agent(conn, "a", "1h", cost=FREE, now_ms=now)
+    assert sc1h.n_trades == 0 and sc1h.edge_bps is None
+
+
+def test_live_rows_invisible_to_paper_score(conn):
+    now = 100 * DAY_MS
+    _log(conn, "a", now - 2000, "place", "BTC", "B", 1.0, 100.0, paper=False)
+    _log(conn, "a", now - 1000, "flatten", "BTC", px=200.0, paper=False)
+    sc = score_paper_agent(conn, "a", "all", cost=FREE, now_ms=now)
+    assert sc.n_trades == 0 and sc.net_pnl == 0.0
+
+
+def test_sharpe_and_drawdown_need_days_and_capital(conn):
+    now = 100 * DAY_MS
+    # Three days of round trips: +10, -5, +10.
+    for i, (entry, exit_) in enumerate([(100.0, 110.0), (100.0, 95.0), (100.0, 110.0)]):
+        t = now - (3 - i) * DAY_MS
+        _log(conn, "a", t, "place", "BTC", "B", 1.0, entry)
+        _log(conn, "a", t + 1000, "flatten", "BTC", px=exit_)
+    sc = score_paper_agent(conn, "a", "all", cost=FREE, now_ms=now)
+    assert sc.sharpe is not None and sc.sharpe > 0
+    assert sc.max_drawdown is None              # no capital base given
+    sc_cap = score_paper_agent(conn, "a", "all", cost=FREE, capital_base=100.0, now_ms=now)
+    assert sc_cap.max_drawdown == pytest.approx(-0.05 / 1.10, rel=1e-6)
+
+
+def test_paper_open_positions_and_roster(conn):
+    now = 100 * DAY_MS
+    _log(conn, "a", now - 1000, "place", "BTC", "B", 1.0, 100.0)
+    _log(conn, "b", now - 1000, "place", "ETH", "A", 1.0, 200.0)
+    _log(conn, "b", now - 500, "flatten", "ETH", px=190.0)
+    _log(conn, "c", now - 100, "hold", None)                       # not executable
+    _log(conn, "d", now - 100, "place", "SOL", "B", 1.0, 50.0, paper=False)
+
+    assert list_paper_agents(conn) == ["a", "b"]
+    assert [p.coin for p in paper_open_positions(conn, "a", FREE)] == ["BTC"]
+    assert paper_open_positions(conn, "b", FREE) == []
+
+    cards = score_paper_all(conn)
+    assert {c.agent for c in cards} == {"a", "b"}
+    assert {c.window for c in cards} == {"24h", "7d", "30d", "all"}
+
+
+def test_default_cost_is_taker(conn):
+    # Flat round trip at default costs must lose fees + slippage, comparable
+    # to the backtester's taker arm.
+    now = 100 * DAY_MS
+    _log(conn, "a", now - 2000, "place", "BTC", "B", 1.0, 100.0)
+    _log(conn, "a", now - 1000, "flatten", "BTC", px=100.0)
+    sc = score_paper_agent(conn, "a", "all", now_ms=now)
+    assert sc.net_pnl < 0
+    # ~2*(4.5bps fee) + 2*(2bps slip) on ~$100 notional ≈ $0.13
+    assert sc.net_pnl == pytest.approx(-0.13, abs=0.01)
+    assert sc.edge_bps == pytest.approx(-6.5, abs=0.1)

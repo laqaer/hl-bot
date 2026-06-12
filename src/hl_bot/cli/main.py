@@ -36,6 +36,7 @@ from ..research.strategy_health import (
 )
 from ..risk.scaling import compute_notional_cap, spot_usdc_from_state, unified_portfolio_value
 from ..scoring.metrics import score_all
+from ..scoring.paper import list_paper_agents, paper_open_positions, score_paper_all
 from ..scoring.positions import rebuild_positions
 from ..supervisor.loop import supervise
 
@@ -96,11 +97,22 @@ def ingest(funding_days: int = 7):
 
 
 @app.command()
-def score():
-    """Print per-agent scorecards."""
+def score(
+    paper: bool = typer.Option(
+        False, "--paper",
+        help="Score the paper decision book (modeled taker costs, funding=0) "
+             "instead of exchange fills.",
+    ),
+):
+    """Print per-agent scorecards (--paper: replayed paper book, B-PAPER3)."""
     conn, _ = _conn()
-    cards = score_all(conn)
-    table = Table(title="Scorecards")
+    if paper:
+        cards = score_paper_all(conn)
+        title = "Paper scorecards (decision-book replay · modeled taker costs · funding=0)"
+    else:
+        cards = score_all(conn)
+        title = "Scorecards"
+    table = Table(title=title)
     for col in ("agent", "window", "n_trades", "net_pnl", "win_rate", "sharpe", "max_dd", "edge_bps"):
         table.add_column(col)
     for c in cards:
@@ -113,6 +125,23 @@ def score():
             "—" if c.edge_bps is None else f"{c.edge_bps:+.1f}",
         )
     console.print(table)
+    if paper:
+        now_ms = int(time.time() * 1000)
+        open_rows = [
+            (a, p) for a in list_paper_agents(conn)
+            for p in paper_open_positions(conn, a)
+        ]
+        if open_rows:
+            pos_table = Table(title="Open paper positions (not marked to market)")
+            for col in ("agent", "coin", "side", "sz", "entry_px", "age_h"):
+                pos_table.add_column(col)
+            for a, p in open_rows:
+                pos_table.add_row(
+                    a, p.coin, "long" if p.side == "B" else "short",
+                    f"{p.sz:.5f}", f"{p.entry_px:.4f}",
+                    f"{(now_ms - p.entry_ts_ms) / 3_600_000:.1f}",
+                )
+            console.print(pos_table)
 
 
 @app.command()
