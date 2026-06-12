@@ -35,6 +35,7 @@ class FundingCarryConfig:
     max_notional_per_trade: float = 25.0
     max_total_notional: float = 75.0
     max_concurrent_positions: int = 3
+    reentry_cooldown_hours: float = 4.0
 
 
 class FundingCarryAgent(Agent):
@@ -56,6 +57,7 @@ class FundingCarryAgent(Agent):
             max_hold_hours=float(c.get("max_hold_hours", 36.0)),
             max_notional_per_trade=float(c.get("max_notional_per_trade", 25.0)),
             max_total_notional=float(c.get("max_total_notional", 75.0)),
+            reentry_cooldown_hours=float(c.get("reentry_cooldown_hours", 4.0)),
             max_concurrent_positions=int(c.get("max_concurrent_positions", 3)),
         )
         self.conn = conn
@@ -81,6 +83,25 @@ class FundingCarryAgent(Agent):
                 open_by_coin.pop(coin, None)
         return open_by_coin
 
+    def _recent_forced_exits(self, view: MarketView) -> set[str]:
+        """Coins force-exited (STOP / MAX-HOLD / FLIPPED) within the re-entry
+        cooldown. Without this, a stopped coin re-qualifies immediately —
+        which made stops no-ops in backtest (same tick) and 1h-cooldown
+        churn live."""
+        if self.conn is None:
+            return set()
+        now_ms = view.ts_ms or int(time.time() * 1000)
+        cutoff = now_ms - int(self.cfg.reentry_cooldown_hours * 3_600_000)
+        rows = self.conn.execute(
+            """SELECT DISTINCT coin FROM agent_decisions
+               WHERE agent = ? AND action = 'flatten' AND ts_ms >= ?
+                 AND is_paper = ?
+                 AND (reasoning LIKE '%STOP%' OR reasoning LIKE '%MAX-HOLD%'
+                      OR reasoning LIKE '%FLIPPED%')""",
+            (self.name, cutoff, 0 if self.is_live else 1),
+        ).fetchall()
+        return {r["coin"] for r in rows if r["coin"]}
+
     def decide(self, view: MarketView) -> list[Decision]:
         out: list[Decision] = []
         funding = view.funding or {}
@@ -104,6 +125,11 @@ class FundingCarryAgent(Agent):
                 reason = f"MAX-HOLD {hold_hrs:.1f}h"
             elif f is not None and abs(f) < self.cfg.exit_funding_per_hr:
                 reason = f"FUNDING-NORMALIZED ({f*100:+.4f}%/hr)"
+            elif f is not None and (f > self.cfg.exit_funding_per_hr if is_long
+                                    else f < -self.cfg.exit_funding_per_hr):
+                # short collects positive funding; long collects negative.
+                # Past the band on the WRONG side we are paying the carry.
+                reason = f"FUNDING FLIPPED ({f*100:+.4f}%/hr) — now paying"
             if reason:
                 out.append(Decision(
                     agent=self.name, action="flatten", coin=coin, sz=pos["sz"], px=mid,
@@ -123,9 +149,11 @@ class FundingCarryAgent(Agent):
         )
         room_notional = self.cfg.max_total_notional - active_notional
 
+        cooled = self._recent_forced_exits(view)
         candidates = [
             (c, f) for c, f in funding.items()
-            if c not in active_after and abs(f) >= self.cfg.enter_funding_per_hr
+            if c not in active_after and c not in flattening and c not in cooled
+            and abs(f) >= self.cfg.enter_funding_per_hr
             and vol.get(c, 0) >= self.cfg.min_daily_volume_usd and (view.mids.get(c) or 0) > 0
         ]
         candidates.sort(key=lambda kv: abs(kv[1]), reverse=True)

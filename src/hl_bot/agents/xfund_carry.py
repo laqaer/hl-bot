@@ -3,8 +3,15 @@
 Thesis: funding is a structural, fee-independent cash flow. The coins with the
 most-positive funding pay shorts every hour; the most-negative pay longs. Hold a
 dollar-neutral book — SHORT the top-K highest-funding coins, LONG the bottom-K
-most-negative — and collect the funding spread while staying market-neutral, so
-directional moves wash out and the edge is the carry minus (maker) costs.
+most-negative — and collect the funding spread minus (maker) costs.
+
+REALITY CHECK (2026-06 audit): funding ≤ -enter_threshold is RARE on HL, so in
+most regimes the long leg is empty and this runs a one-sided SHORT book on the
+hottest coins — the carry-crash profile. Mitigations below: the one-sided book
+is capped at half the total notional, every position carries a stop-loss and
+max-hold, held coins get a real exit hysteresis band (only drop below the exit
+threshold, side flip, or hard rank eviction), and a side-flip never reverses
+in the same tick (V7 in the backlog tracks relaxing the long-leg threshold).
 
 This is the highest-conviction candidate in the review: low directional variance,
 scales cleanly with capital, and produces the kind of steady, auditable return a
@@ -35,6 +42,10 @@ class XFundCarryConfig:
     max_notional_per_trade: float = 25.0
     max_total_notional: float = 100.0
     max_concurrent_positions: int = 6
+    stop_loss_pct: float = 0.05                # per-leg hard stop on price move
+    max_hold_hours: float = 336.0              # 14d: stale carry is dead carry
+    rank_evict_buffer: int = 2                 # held coins evicted only beyond top_k*buffer
+    one_sided_cap_frac: float = 0.5            # of max_total when a side is empty
 
 
 class XFundCarryAgent(Agent):
@@ -56,6 +67,10 @@ class XFundCarryAgent(Agent):
             max_notional_per_trade=float(c.get("max_notional_per_trade", 25.0)),
             max_total_notional=float(c.get("max_total_notional", 100.0)),
             max_concurrent_positions=int(c.get("max_concurrent_positions", 6)),
+            stop_loss_pct=float(c.get("stop_loss_pct", 0.05)),
+            max_hold_hours=float(c.get("max_hold_hours", 336.0)),
+            rank_evict_buffer=int(c.get("rank_evict_buffer", 2)),
+            one_sided_cap_frac=float(c.get("one_sided_cap_frac", 0.5)),
         )
         self.conn = conn
 
@@ -95,6 +110,22 @@ class XFundCarryAgent(Agent):
         shorts = [c for c, f in reversed(ranked) if f >= self.cfg.enter_funding_per_hr][: self.cfg.top_k]
         desired: dict[str, str] = {c: "B" for c in longs}
         desired.update({c: "A" for c in shorts})
+        # Hysteresis: a HELD coin stays desired while its funding (same side)
+        # is above the EXIT threshold and it hasn't fallen out of an extended
+        # rank window — without this the exit band is dead code and rank 2<->3
+        # rotation round-trips the position every flip (churn eats the carry).
+        keep_rank = self.cfg.top_k * self.cfg.rank_evict_buffer
+        shorts_ext = {c for c, f in list(reversed(ranked))[:keep_rank]
+                      if f >= self.cfg.exit_funding_per_hr}
+        longs_ext = {c for c, f in ranked[:keep_rank]
+                     if f <= -self.cfg.exit_funding_per_hr}
+        for coin, pos in open_pos.items():
+            if coin in desired:
+                continue
+            if pos["side"] == "A" and coin in shorts_ext:
+                desired[coin] = "A"
+            elif pos["side"] == "B" and coin in longs_ext:
+                desired[coin] = "B"
 
         # ---- exits: leave the book when a coin drops out of the target set ----
         for coin, pos in list(open_pos.items()):
@@ -104,12 +135,22 @@ class XFundCarryAgent(Agent):
                 continue
             want = desired.get(coin)
             reason = None
-            if f is not None and abs(f) < self.cfg.exit_funding_per_hr:
+            entry_px = pos.get("entry_px") or 0
+            move = (mid - entry_px) / entry_px if entry_px > 0 else 0.0
+            adverse = -move if pos["side"] == "B" else move
+            held_h = (view.ts_ms - int(pos["ts_ms"])) / 3_600_000 if view.ts_ms else 0.0
+            if adverse >= self.cfg.stop_loss_pct:
+                reason = f"STOP {adverse*100:.1f}% adverse (entry {entry_px:.4f})"
+            elif held_h > self.cfg.max_hold_hours:
+                reason = f"MAX-HOLD {held_h:.0f}h"
+            elif f is not None and abs(f) < self.cfg.exit_funding_per_hr:
                 reason = f"FUNDING-NORMALIZED ({f*100:+.4f}%/hr)"
             elif want is None:
                 reason = "DROPPED from carry set (rank rotated / funding eased)"
             elif want != pos["side"]:
                 reason = "FUNDING FLIPPED — wrong side now"
+                # never reverse in the same tick: let the next cycle re-enter
+                desired.pop(coin, None)
             if reason:
                 out.append(Decision(
                     agent=self.name, action="flatten", coin=coin, sz=pos["sz"], px=mid,
@@ -127,7 +168,11 @@ class XFundCarryAgent(Agent):
             p["sz"] * (view.mids.get(c) or p["entry_px"])
             for c, p in open_pos.items() if c not in flattening
         )
-        room_notional = self.cfg.max_total_notional - active_notional
+        total_cap = self.cfg.max_total_notional
+        if not longs or not shorts:
+            # One-sided book = directional bet, not neutral carry: half cap.
+            total_cap *= self.cfg.one_sided_cap_frac
+        room_notional = total_cap - active_notional
 
         for coin, side in desired.items():
             if room <= 0 or room_notional < 5.0:

@@ -4,7 +4,7 @@ description: >-
   deviations only when the local regime is choppy/range, never against a strong
   breakout. The leading G0 candidate; baseline twap_mr bleeds by fading trends.
 mode: paper
-roster: live
+roster: paper  # 2026-06-12 audit: FROZEN from live — backtest signal window (60x1h bars) != live window (60x1m); needs re-confirmation under a unified signal (V8) before re-entering the live roster
 
 # Per-agent metrics only (sharpe/max_drawdown are account-level). Thresholds sized
 # for the small pilot notional. This agent must PROVE it beats baseline on real
