@@ -302,6 +302,11 @@ Keep it ruthlessly prioritized: the top item should always be the highest-levera
   from `HL_TRADER_ADDRESS`/`HL_ADDRESS` env, legacy default only as fallback.
 - [x] **B14 — Go-live runbook in-repo.** `docs/GO_LIVE.md`: gated checklist,
   secrets/env, promote/kill-switch/rollback, monitoring. (REVIEW D3.)
+- [ ] **B10c — `hlbot ws` never subscribes userFills.** Found in Iter 55:
+  `run_ws(user_address=)` exists since B10b, but the CLI `ws` command never
+  passes it, so the deployed WS service captures no own-fills and maker fill
+  detection falls back to next REST poll. Pass the resolved trader address
+  (vault-aware) from the `ws` command; one-line change + test.
 - [x] **B14a — Deploy automation.** Done — this entry was a stale duplicate of
   the Iter-5/6 Done item; audited (Iter 53): `deploy/` covers the whole
   description (install.sh idempotent EC2 bootstrap, test-gated auto-update.sh,
@@ -529,8 +534,17 @@ each on ≥90d real history (`hlbot confirm` / `hlbot backtest --config`) before
 - [x] **B16 — Hyperliquid vault evaluation.** Researched (docs/CAPITAL.md): ~10%
   profit share, ≥5% leader TVL, ~1d depositor lockup, API-wallet-compatible. **Verify
   creation fee in current HL docs before launch.** Gate behind G3 track record.
-- [ ] **B16b — Vault launch checklist + bot retargeting.** Steps to point
-  `HL_TRADER_ADDRESS` at a vault sub-account once G3 is met.
+- [x] **B16b — Vault launch checklist + bot retargeting.** Done (Iter 55):
+  `HL_VAULT_ADDRESS` env retargets the WHOLE bot at a vault — orders signed
+  with `vaultAddress` (build_exchange; account_address alone only redirects
+  reads) AND every account read (Settings.hl_address → ingest/equity,
+  HL_TRADER_ADDRESS → guardrails/account fetch/open orders, daily_scorecard)
+  follows the vault; malformed value refuses to run rather than fall back to
+  the personal account. `hlbot doctor` grew a `vault` check; launch checklist
+  in GO_LIVE.md §Vault retargeting (flatten-first, watched first fill,
+  rollback). Found+fixed: CAPITAL.md step 5 ("point HL_TRADER_ADDRESS at the
+  vault") would have read the vault but traded the personal account. Still
+  human-gated behind G3; env unset ⇒ behavior byte-identical.
 - [ ] **B-PROP — Prop/funded eval prep.** Checklist for Hypernova/Propr/Velotrade
   (HL-native, API-friendly); run the same guardrailed strategy through an eval for
   additive $100–200k. (docs/CAPITAL.md Track B.)

@@ -99,6 +99,44 @@ that pass `_filter_live_agents_by_state`.
   revert it in git to undo an auto-tuner change.
 - **Full stop:** disable the cron / systemd timer. No process = no orders.
 
+## Vault retargeting (CAPITAL.md Track A — human-gated, G3 first)
+
+Point the bot at a Hyperliquid vault instead of the personal account. One env
+var does it — `HL_VAULT_ADDRESS` — and it must be that var: it makes the bot
+sign every exchange action with `vaultAddress` (orders execute on the vault)
+*and* routes every account read (fills/funding/equity ingest, guardrail
+capital, open orders) to the vault. Setting only `HL_TRADER_ADDRESS` to a
+vault would read the vault while orders quietly execute on the personal
+account. A malformed value refuses to run rather than fall back.
+
+Checklist, in order:
+
+1. **Gate:** G3 PASS in `hlbot gates` + a published `hlbot track-record`
+   artifact. No vault before the record exists (CAPITAL.md Track A).
+2. **Create the vault** from the leader (master) account in the HL UI; record
+   the vault address. Verify the current creation fee/terms in HL docs first —
+   they change.
+3. **Seed** the leader's ≥5% of TVL (HL requirement).
+4. **Flatten first:** the bot must hold no open positions and no resting
+   orders before the switch. Decision-log ownership is account-agnostic, so
+   retargeting with an open book would make reconciliation read the old
+   account's positions as stale (it force-flattens state — safe direction,
+   but messy and it orphans real positions on the personal account).
+5. **API wallet:** the existing approved API wallet of the leader signs vault
+   actions — no new key. (Verify this still holds in current HL docs.)
+6. Set `HL_VAULT_ADDRESS=0x...` in `/etc/hl-bot/env`; restart the units.
+7. `hlbot doctor`: the `vault` check must read "retargeted: orders sign
+   vaultAddress=…" and `hl_address` must show the vault.
+8. **First live tick at tiny size, watched:** confirm the fill lands on the
+   *vault's* trade history in the HL UI, not the personal account's. If it
+   lands wrong, unset the var, restart, investigate — do not proceed.
+9. `hlbot ingest` + `hlbot score` now account the vault book. Note: vault
+   equity is perp-only, so the spot-USDC term of the capital guardrail reads
+   $0 — tightening-only, no action needed.
+10. **Rollback:** unset `HL_VAULT_ADDRESS`, restart. The personal account
+    resumes; any positions left on the vault must be closed from the UI or by
+    re-setting the var and letting exits run.
+
 ## What the autonomous loop may and may not do
 
 - **May:** research, backtest, write code, paper-simulate, and *propose* config

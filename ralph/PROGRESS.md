@@ -2820,3 +2820,62 @@ maker-rest the arm to watch) — `hlbot gates` + confirm judge the winner
 together, DD checks now live. B-EDGE2b three-armed reruns as the 15m store
 grows. B-EDGE2f at ≥30d paper books (~Jul 8). Idle queue: B16b/B-PROP/B17
 capital-formation specs, B-SCALE doc once G2 evidence is real.
+
+## Iteration 55 — 2026-06-12 — B16b: vault retargeting — the CAPITAL.md instruction would have traded the wrong account
+
+**Why this.** Research tasks remain time-blocked (B-G014 needs 1m store span
+≥14d, ~Jun 23–26; B-EDGE2f needs ≥30d paper books, ~Jul 8). Top idle item was
+B16b (vault launch checklist + bot retargeting, CAPITAL.md Track A — the
+destination G3 exists for). Scoping it surfaced a real latent bug, which made
+it a code task, not a doc task.
+
+**The bug.** CAPITAL.md step 5 said "point the bot's `HL_TRADER_ADDRESS` at
+the vault and let it trade." With the current code that is silently wrong:
+`build_exchange` constructs `Exchange(account_address=…)` with NO
+`vault_address`, and in SDK 0.23 the `vaultAddress` rides in the action
+signature and the /exchange payload — `account_address` only redirects reads
+(and `market_close` lookups prefer `vault_address` when set). Following the
+doc at vault launch would have sized positions off the VAULT's state while
+every order executed on the PERSONAL account. Worst-case: depositors' vault
+shows no trades, personal account accumulates unmonitored positions sized
+for someone else's equity.
+
+**Changed.** (a) `config.resolve_vault_address()` — single source of truth
+for `HL_VAULT_ADDRESS`; malformed values RAISE ("refusing to fall back to
+the personal account") instead of degrading, because the failure mode this
+guards is the operator believing the vault is live while orders land
+elsewhere. `Settings.from_env().hl_address` prefers it (→ fills/funding/
+equity ingest, reports read the vault book). (b) `exec/orders.py`:
+`HL_VAULT_ADDRESS` constant, `_resolve_trader_address()` prefers the vault
+(→ guardrail capital, account fetch, open-order/reconcile reads), and
+`build_exchange` passes `vault_address=` to the SDK Exchange + logs it.
+(c) `ops/doctor.py` grew a `vault` check (unset → "trading the personal
+account"; set → shows the retarget; malformed → crit without raising, for
+programmatic runs — the CLI fails earlier and louder via Settings).
+(d) `scripts/daily_scorecard.py` env chain prefers the vault.
+(e) Docs: CAPITAL.md step 5 corrected; GO_LIVE.md §Vault retargeting
+checklist (gate on G3 + published record, verify HL fee/API-wallet terms,
+flatten-first before the switch, watched first fill must land on the vault,
+rollback steps); deploy/env.example documents the var as human-gated.
+
+**Evidence.** 334 → **352 tests pass** (18 new in `tests/test_vault.py`:
+resolution unset/blank/valid/5 malformed shapes, trader-address precedence +
+malformed-raises-never-falls-back, Settings read-address preference,
+build_exchange passes vault_address through to a fake Exchange (and None by
+default), doctor check all three states). `ruff check src tests scripts`
+clean. Live-fired `hlbot doctor` in all three states: unset → "✓ vault: not
+set — trading the personal account"; valid → hl_address line shows the vault
++ "retargeted: orders sign vaultAddress=…"; malformed → loud ValueError, bot
+refuses to run. Env unset ⇒ behavior byte-identical (no live change; the
+var's use is human-gated behind G3 per GO_LIVE.md).
+
+**Found.** `hlbot ws` never passes `user_address` to `run_ws`, so the
+deployed WS service never subscribes userFills and B10b's instant maker-fill
+detection is dormant (falls back to REST polling). Filed as B10c (P2,
+one-liner + test; pass the vault-aware trader address).
+
+**What's next (loop).** B-G014 when 1m span ≥14d (~Jun 23–26; w=240
+maker-rest the arm to watch). B-EDGE2b three-armed reruns as the 15m store
+grows. B-EDGE2f at ≥30d paper books (~Jul 8). Idle queue: B10c (ws
+userFills), B-PROP / B17 capital-formation specs, B-SCALE doc once G2
+evidence is real.

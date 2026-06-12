@@ -51,6 +51,27 @@ def _check_api_wallet(env_path: Path) -> Check:
     return Check("api_wallet", "ok", f"present, perms {oct(mode)}")
 
 
+def _check_vault() -> Check:
+    """Report vault-retargeting state (HL_VAULT_ADDRESS, CAPITAL.md Track A).
+
+    Defensive: reports crit on a malformed value instead of raising, so a
+    programmatic doctor run always yields a full check list. (The CLI itself
+    fails earlier and louder — Settings.from_env refuses malformed values.)
+    """
+    import os
+
+    raw = (os.getenv("HL_VAULT_ADDRESS") or "").strip()
+    if not raw:
+        return Check("vault", "ok", "not set — trading the personal account")
+    try:
+        from ..config import resolve_vault_address
+        addr = resolve_vault_address()
+        return Check("vault", "ok",
+                     f"retargeted: orders sign vaultAddress={addr}; all reads follow it")
+    except ValueError as e:
+        return Check("vault", "crit", str(e))
+
+
 def _check_hl_reachable(api_url: str) -> Check:
     try:
         import httpx
@@ -76,6 +97,7 @@ def run_doctor(
     checks = [
         Check("hl_address", "ok" if hl_address else "crit",
               hl_address or "HL_ADDRESS not set"),
+        _check_vault(),
         _check_configs(config_dir),
         _check_db(db_path),
         _check_api_wallet(api_wallet_path),

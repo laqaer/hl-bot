@@ -31,22 +31,29 @@ from hyperliquid.info import Info
 from hyperliquid.utils import constants
 from hyperliquid.utils.signing import Cloid
 
+from ..config import resolve_vault_address
+
 log = logging.getLogger(__name__)
 
 def _resolve_trader_address() -> str:
     """The funded account the bot trades on.
 
-    Prefer ``HL_TRADER_ADDRESS``, then ``HL_ADDRESS``, then the legacy default so
-    existing deployments keep working. Set HL_TRADER_ADDRESS in /etc/hl-bot/env to
-    point the bot at your own account.
+    ``HL_VAULT_ADDRESS`` takes precedence (trading on behalf of a vault: every
+    account read must target the vault, and build_exchange signs actions with
+    vaultAddress so orders land there too — setting only HL_TRADER_ADDRESS to
+    a vault would read the vault but trade the personal account). Then
+    ``HL_TRADER_ADDRESS``, then ``HL_ADDRESS``, then the legacy default so
+    existing deployments keep working.
     """
     return (
-        os.environ.get("HL_TRADER_ADDRESS")
+        resolve_vault_address()
+        or os.environ.get("HL_TRADER_ADDRESS")
         or os.environ.get("HL_ADDRESS")
         or "0x5C3a67932Ca4026A6ABC18822Dc601BeD44f45a3"
     )
 
 
+HL_VAULT_ADDRESS = resolve_vault_address()
 HL_TRADER_ADDRESS = _resolve_trader_address()
 DEFAULT_API_WALLET_ENV = Path.home() / ".config" / "hermes" / "hl-bot-api-wallet.env"
 COOLDOWN_S = 3600  # 1h cooldown per coin between attempts
@@ -102,11 +109,15 @@ def build_exchange(env_path: Path | None = None) -> tuple[Exchange, Info, LocalA
     if wallet.address.lower() != expected_addr.lower():
         raise ValueError(f"derived API wallet {wallet.address} != env {expected_addr}")
     info = Info(constants.MAINNET_API_URL, skip_ws=True)
+    # vault_address rides in the signature AND the /exchange payload, so the
+    # order executes on the vault; account_address alone only redirects reads.
     exchange = Exchange(
         wallet=wallet, base_url=constants.MAINNET_API_URL,
         account_address=HL_TRADER_ADDRESS,
+        vault_address=HL_VAULT_ADDRESS,
     )
-    log.info("HL exchange ready: signer=%s trader=%s", wallet.address, exchange.account_address)
+    log.info("HL exchange ready: signer=%s trader=%s vault=%s",
+             wallet.address, exchange.account_address, HL_VAULT_ADDRESS or "—")
     return exchange, info, wallet
 
 

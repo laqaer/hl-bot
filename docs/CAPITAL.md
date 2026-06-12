@@ -39,8 +39,11 @@ share of profits. Best fit: durable, compounding, auditable, and **our bot can r
   returns. The leaderboard is how depositors discover you.
 - **Steps:** (1) prove edge to G3 on the isolated bot account; (2) `hlbot track-record`
   → publishable artifact; (3) create the vault, seed with personal capital (your ≥5%);
-  (4) publish the record; (5) point the bot's `HL_TRADER_ADDRESS` at the vault and let
-  it trade; (6) grow TVL as the public record compounds.
+  (4) publish the record; (5) set **`HL_VAULT_ADDRESS`** so the bot signs orders *for
+  the vault* and reads its state — pointing `HL_TRADER_ADDRESS` at the vault is NOT
+  enough (reads would follow the vault while orders quietly execute on the personal
+  account); full checklist in `GO_LIVE.md` §Vault retargeting; (6) grow TVL as the
+  public record compounds.
 
 ## Track B — Prop / funded account (parallel; fast additive capital)
 
