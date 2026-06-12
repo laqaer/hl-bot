@@ -36,6 +36,7 @@ from hl_bot.agents.runtime import (
     build_roster,
     build_tick_view,
     classify_position_ownership,
+    closes_1h_bars,
     closes_15m_bars,
     enrich_view,
     fetch_account_state,
@@ -470,15 +471,19 @@ def test_closes_15m_bars_roster_scan():
 
 
 class _FakeHlClient15m(_FakeHlClient):
-    """Serves 1m and 15m candleSnapshots from separate canned sets."""
+    """Serves 1m, 15m and 1h candleSnapshots from separate canned sets."""
 
     candles_15m: list[dict] = []
+    candles_1h: list[dict] = []
 
     def post(self, url, json=None):
         req = (json or {}).get("req") or {}
         if (json or {}).get("type") == "candleSnapshot" and req.get("interval") == "15m":
             _FakeHlClient.requests.append(req)
             return _Resp(list(_FakeHlClient15m.candles_15m))
+        if (json or {}).get("type") == "candleSnapshot" and req.get("interval") == "1h":
+            _FakeHlClient.requests.append(req)
+            return _Resp(list(_FakeHlClient15m.candles_1h))
         return super().post(url, json=json)
 
 
@@ -506,6 +511,54 @@ def test_enrich_view_fetches_15m_closes_only_when_asked(monkeypatch):
     enrich_view(view2, "http://fake", {"TST": 1e9}, vwap_window=60)
     assert all(r["interval"] == "1m" for r in _FakeHlClient.requests)
     assert view2.extra["closes_15m"] == {}
+
+
+# ---------------------------------------------------------------------------
+# 1h closes feed for multi-day ranking agents (B-EDGE3a)
+# ---------------------------------------------------------------------------
+
+
+def test_closes_1h_bars_roster_scan():
+    from hl_bot.agents.xmom import XMomAgent
+
+    on = XMomAgent(config={"lookback_bars": 336, "closes_key": "closes_1h"})
+    off = XMomAgent(config={"lookback_bars": 999})  # default key: not a consumer
+    assert closes_1h_bars([]) == 0
+    assert closes_1h_bars([off, SimpleNamespace(name="no_cfg")]) == 0
+    assert closes_1h_bars([off, on]) == 337, "lookback + in-progress bar"
+    # skip_bars pushes the signal window further back; the feed must cover it
+    skid = XMomAgent(config={"lookback_bars": 336, "skip_bars": 24,
+                             "closes_key": "closes_1h"})
+    assert closes_1h_bars([on, skid]) == 361
+    # the two feeds are sized independently — a 1h consumer is not a 15m one
+    assert closes_15m_bars([on, skid]) == 0
+
+
+def test_enrich_view_fetches_1h_closes_only_when_asked(monkeypatch):
+    import httpx
+
+    _FakeHlClient.candles = [{"t": i * 60_000, "c": 100.0, "v": 1.0} for i in range(60)]
+    _FakeHlClient15m.candles_15m = []
+    _FakeHlClient15m.candles_1h = [{"t": i * 3_600_000, "c": 300.0 + i, "v": 1.0}
+                                   for i in range(400)]
+    _FakeHlClient.requests = []
+    monkeypatch.setattr(httpx, "Client", _FakeHlClient15m)
+
+    view = MarketView(ts_ms=0, mids={"TST": 100.0})
+    enrich_view(view, "http://fake", {"TST": 1e9}, vwap_window=60, closes_1h_bars=337)
+    reqs_1h = [r for r in _FakeHlClient.requests if r["interval"] == "1h"]
+    assert len(reqs_1h) == 1
+    assert reqs_1h[0]["endTime"] - reqs_1h[0]["startTime"] == 337 * 3_600_000
+    assert view.extra["closes_1h"]["TST"] == [300.0 + i for i in range(63, 400)], \
+        "trailing closes_1h_bars closes, in-progress bar last"
+    assert view.extra["closes"]["TST"], "1m feed unaffected"
+
+    # default bars=0: no 1h traffic at all (live ticks without xmom pay nothing)
+    _FakeHlClient.requests = []
+    view2 = MarketView(ts_ms=0, mids={"TST": 100.0})
+    enrich_view(view2, "http://fake", {"TST": 1e9}, vwap_window=60)
+    assert all(r["interval"] == "1m" for r in _FakeHlClient.requests)
+    assert view2.extra["closes_1h"] == {}
 
 
 # ---------------------------------------------------------------------------
@@ -648,6 +701,13 @@ def _breakout_15m_consumer():
                                  "closes_key": "closes_15m"})
 
 
+def _xmom_1h_consumer():
+    # 1 + lookback = 25 bars of 1h feed
+    from hl_bot.agents.xmom import XMomAgent
+
+    return XMomAgent(config={"lookback_bars": 24, "closes_key": "closes_1h"})
+
+
 def test_build_tick_view_composes_fetch_enrich_and_window(monkeypatch):
     import httpx
 
@@ -655,14 +715,18 @@ def test_build_tick_view_composes_fetch_enrich_and_window(monkeypatch):
                              for i in range(240)]
     _FakeHlClient15m.candles_15m = [{"t": i * 900_000, "c": 200.0 + i, "v": 1.0}
                                     for i in range(40)]
+    _FakeHlClient15m.candles_1h = [{"t": i * 3_600_000, "c": 300.0 + i, "v": 1.0}
+                                   for i in range(30)]
     _FakeHlClient.requests = []
     monkeypatch.setattr(httpx, "Client", _FakeUniverseClient)
 
-    tv = build_tick_view("http://fake", [_breakout_15m_consumer()],
+    tv = build_tick_view("http://fake",
+                         [_breakout_15m_consumer(), _xmom_1h_consumer()],
                          env={"HLBOT_VWAP_WINDOW": "240"})
 
     assert tv.vwap_window == 240, "env window resolved (CLI value 0)"
     assert tv.bars_15m == 33, "15m feed sized by the roster's longest channel"
+    assert tv.bars_1h == 25, "1h feed sized by the roster's longest lookback"
     assert tv.ws is None, "no HLBOT_WS_SNAPSHOT -> no overlay attempted"
     assert tv.view.mids == {"TST": 100.0}
     assert tv.view.funding == {"TST": 0.0001}
@@ -671,6 +735,7 @@ def test_build_tick_view_composes_fetch_enrich_and_window(monkeypatch):
         "enrichment fetch span follows the resolved window"
     assert tv.view.extra["candles_1h"]["TST"]["n"] == 240
     assert len(tv.view.extra["closes_15m"]["TST"]) == 33
+    assert len(tv.view.extra["closes_1h"]["TST"]) == 25
     assert tv.view.extra["liquidations_feed"] is False, "REST-only: no real liq feed"
 
 
@@ -755,24 +820,35 @@ def test_build_roster_names_and_validated_defaults(conn):
     assert [a.name for a in agents] == [
         "femr_v1", "twap_mr_v1", "twap_mr_regime_v1",
         "liq_cascade_v1", "basis_v1", "breakout_v1", "breakout_er_v1",
+        "xmom_v1",
     ]
     femr = agents[0]
     assert femr.cfg.funding_enter_per_hr == 0.00015
     assert femr.cfg.max_notional_per_trade == 20.0
-    breakout = agents[-2]
+    breakout = agents[-3]
     assert breakout.cfg.lookback_bars == 384
     assert breakout.cfg.exit_lookback_bars == 96
     assert breakout.cfg.closes_key == "closes_15m"
     assert breakout.cfg.max_total_notional == 60.0
     assert breakout.cfg.min_efficiency_ratio == 0.0, "baseline arm stays unfiltered"
     # B-EDGE2e paper A/B arm: same channel, trend-quality gate ON
-    er_arm = agents[-1]
+    er_arm = agents[-2]
     assert er_arm.cfg.lookback_bars == 384
     assert er_arm.cfg.min_efficiency_ratio == 0.1
     assert er_arm.cfg.er_lookback_bars == 96
     assert er_arm.cfg.closes_key == "closes_15m"
-    # the roster's breakout entries must keep driving the 15m feed sizing
+    # B-EDGE3a: the G0-passing 14d cross-sectional momentum config
+    xmom = agents[-1]
+    assert xmom.cfg.lookback_bars == 336
+    assert xmom.cfg.skip_bars == 0, "skip HURT in the A/B (Iter 72); stays 0"
+    assert xmom.cfg.top_k == 2
+    assert xmom.cfg.closes_key == "closes_1h"
+    assert xmom.cfg.max_notional_per_trade == 20.0
+    assert xmom.cfg.max_total_notional == 80.0
+    assert xmom.cfg.max_concurrent_positions == 4
+    # the roster's consumers must keep driving both feed sizings
     assert closes_15m_bars(agents) == 385
+    assert closes_1h_bars(agents) == 337
 
 
 def test_build_roster_overrides_merge_without_bleed(conn):

@@ -476,6 +476,7 @@ def femr_tick(live: bool = False, execution: str = "taker", vwap_window: int = 0
     view = tick_view.view
     w = tick_view.vwap_window
     bars_15m = tick_view.bars_15m
+    bars_1h = tick_view.bars_1h
     if tick_view.ws and tick_view.ws.applied:
         console.print(f"[dim]ws snapshot overlaid: {tick_view.ws.n_mids} mids, "
                       f"{tick_view.ws.n_liqs} liqs[/dim]")
@@ -514,10 +515,15 @@ def femr_tick(live: bool = False, execution: str = "taker", vwap_window: int = 0
         f"closes15m: {len(view.extra.get('closes_15m', {}))} coins (≤{bars_15m} bars) · "
         if bars_15m else ""
     )
+    feed_1h = (
+        f"closes1h: {len(view.extra.get('closes_1h', {}))} coins (≤{bars_1h} bars) · "
+        if bars_1h else ""
+    )
     console.print(
         f"[dim]market: {len(view.mids)} coins, {len(view.funding)} funding · "
         f"candles: {len(view.extra.get('candles_1h', {}))} (vwap w={w}) · "
         f"{feed_15m}"
+        f"{feed_1h}"
         f"spot: {sorted(view.extra.get('spot_mids', {}).keys())} · "
         f"liqs: {len(view.extra.get('liquidations', []))} · "
         f"acct ${acct_val:.2f}, free ${withdrawable:.2f} · "

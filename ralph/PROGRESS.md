@@ -3903,3 +3903,66 @@ paper roster wiring) and B-EDGE3b (freeze b_edge3.json; decide 1h-harvest
 vs 15m-bar-scaling for store-sourced reruns). B-EDGE2f at ≥30d paper books
 (~Jul 8). Idle queue unchanged (B-SCALE doc on real G2 evidence; per-agent
 funding clamp if mixed funding-sign agents ever share the live book).
+
+## Iteration 73 — 2026-06-12 — B-EDGE3a: xmom_v1 paper wiring (1h closes feed + roster + goals YAML)
+
+**Ripeness checks** (per-iteration readout): b_edge2b NOT RIPE (15m span
+52.3d < 60d, ETA ~Jun 20); b_g014 NOT RIPE (1m span 3.9d < 14d, ETA
+~Jun 26). Store healthy (0 missing bars on both spec universes).
+
+**Why this.** Both headline experiments time-blocked; Iter 72's named next
+step. xmom_v1 passed G0 on 90d×1h (taker +67bps, OOS +131.7) but with
+same-window-selection caveats — the honest promotion path is a paper
+forward test, and until this iteration the agent had no live-tick data
+feed, no roster entry, and no goals config, so zero G1 evidence could
+accumulate. Mirrors B-EDGE2a (breakout's paper wiring) exactly.
+
+**Changed.**
+- `agents/runtime.py`: `closes_1h_bars()` roster sizer — refactored the 15m
+  sizer into a shared `_closes_feed_bars(agents, key)` (need = 1 +
+  max(lookback+skip, exit_lookback), so it covers breakout's exit channel
+  AND xmom's skip_bars with absent knobs reading 0); `enrich_view(...,
+  closes_1h_bars=)` fetches genuinely-1h candles per top coin into
+  `view.extra["closes_1h"]` (one call/coin, 337 rows ≪ 5000 cap; 0 = no
+  traffic — live mode today, where the live filter drops unpromoted
+  agents); `TickView.bars_1h`; `build_tick_view` sizes both feeds off the
+  roster.
+- Roster: `xmom_v1` entry with the validated config — lookback_bars 336,
+  closes_key closes_1h, $20/leg, max_total $80, max_concurrent 4 (top_k=2
+  ⇒ at most 4 legs, so the cap is real). skip_bars stays 0 (the A/B said
+  it hurts), pinned by test.
+- `configs/xmom_v1.yaml`: paper mode, capital 80 (= roster book cap, pinned
+  by test_capital_bases_match_roster_book_caps), guardrails (24h −$15
+  pause / 7d −20bps demote / 24h −60bps alert), promotion paper→live_small
+  ONLY behind 30d gates set ≈ half backtest edge (edge ≥30bps, net ≥$5,
+  ≥40 trades). The same-window-selection caveat is written into the YAML
+  comment so the bar is on record.
+- `cli/main.py`: tick summary prints the 1h feed (`closes1h: N coins (≤B
+  bars)`).
+- Bundled nit: xmom's idle hold message said "no xmom book" even while
+  holding a fully-aligned book; now "book steady (N legs)" vs "no xmom
+  book" (paper logs get read for weeks; no test pinned the old string).
+
+**Evidence.** 477 → **480 tests pass**; ruff clean. New/extended:
+closes_1h_bars roster scan (lookback+1, skip extends, 15m/1h sized
+independently), enrich_view 1h fetch span + trailing-slice + zero-traffic
+default, build_tick_view composes both feeds, roster pins (names order,
+xmom knobs, both feed sizings), YAML loads paper-only + capital pin.
+**Live-fired on the real API (scratch DB, 3 paper ticks):** summary shows
+`closes1h: 20 coins (≤337 bars)`; xmom_v1 entered the full dollar-neutral
+book — WLD +63.3%/LIT +42.7% long (ranks 1–2/16), SOL −17.9%/ZEC −17.9%
+short (ranks 15–16/16), $20 each = $80 cap; next tick's replay showed all
+four legs bot-owned and held (`book steady`), no duplicate entries.
+
+**Found.** Nothing new beyond the hold-message nit (fixed above). Harvest
+log situation unchanged from Iter 72 (store fresh, mechanism unlogged).
+
+**What's next (loop).** Per-iteration: the two `--check-only` readouts
+(b_edge2b ~Jun 20 FIRST — after it runs, commit the auto-written record +
+bump min_span_days; b_g014 ~Jun 26). Then B-EDGE3b: freeze b_edge3.json
+(decide 1h-harvest vs 15m-bar-scaling for store-sourced reruns — adding
+1h to harvest-candles lets reruns outgrow API retention like breakout's
+breadth fix did). B-EDGE2f at ≥30d paper books (~Jul 8); xmom's paper
+card hits 30d ~Jul 12. Idle queue unchanged (B-SCALE doc on real G2
+evidence; per-agent funding clamp if mixed funding-sign agents ever share
+the live book).

@@ -710,10 +710,17 @@ each on ≥90d real history (`hlbot confirm` / `hlbot backtest --config`) before
   on the same window (same-window selection); one 90d sample whose OOS is a
   momentum-friendly pocket; skip_bars=24 HURTS (−14.3) so the lever stays 0.
   Numbers in PROGRESS Iter 72.
-  - [ ] **B-EDGE3a — paper wiring.** `closes_1h` feed in `runtime.enrich_view`
-    (sized by roster like `closes_15m_bars`), roster entry + YAML (paper,
-    promotion human-gated), mirroring B-EDGE2a. Only after this does G1 paper
-    evidence accumulate.
+  - [x] **B-EDGE3a — paper wiring.** Done (Iter 73): `closes_1h` feed in
+    `enrich_view` (sized by `runtime.closes_1h_bars` — shared
+    `_closes_feed_bars` helper with the 15m feed; covers `skip_bars`; 0 ⇒
+    zero extra API calls in live mode since the live filter drops unpromoted
+    agents), `TickView.bars_1h` + CLI summary line, roster entry with the
+    G0-passing config (lb=336, top_k=2, $20/leg × 4 = $80 book) +
+    `configs/xmom_v1.yaml` (paper, capital 80, promotion→live_small only,
+    gates ≈ half the backtest edge). Live-fire verified: tick entered the
+    full dollar-neutral book (WLD+LIT long / SOL+ZEC short, ranks 1/2/15/16
+    of 16), next tick replayed and held it. G1 paper evidence accumulates
+    wherever paper ticks run (~30d sample ≈ mid-July).
   - [ ] **B-EDGE3b — pre-registered rerun spec.** Freeze `b_edge3.json`
     (arms: 20-coin lb336, original-10 lb336, breadth-10 lb336, all taker)
     so reruns are tamper-evident like b_edge2b. Blocker: the experiment

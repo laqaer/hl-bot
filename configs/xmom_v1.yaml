@@ -1,0 +1,48 @@
+agent: xmom_v1
+description: Cross-sectional momentum — long top-2 / short bottom-2 by 14d trailing return on 1h bars, rank-hysteresis exits (B-EDGE3).
+mode: paper
+
+# Capital base (B-GATES2) = the $80 book cap in the roster entry
+# (agents/runtime.py build_roster: min($80 total, $20/trade × 4 concurrent);
+# top_k=2 ⇒ at most 4 legs). Keep in sync with the roster — pinned by
+# tests/test_supervisor_configs.py.
+capital: 80
+
+# Numbers are sized for the roster's paper config ($20/leg, $80 book).
+# Backtest basis (90d × 1h × 20 coins, lookback 336, Iter 72): taker +67.0bps,
+# 194 trades, sharpe +1.80, maxDD -2.1%, robust to taker-3×; walk-forward
+# IS +19.5 / OOS +131.7. Caveat on record: the 14d lookback was selected after
+# 7d/3d failed the same window — the paper forward test this config exists for
+# is the out-of-window check. NOTE: while the agent is paper-mode the
+# supervisor scores it from the paper-book replay (modeled costs + funding,
+# B-PAPER3c): the pause/demote guardrails below CAN fire on paper evidence,
+# but promotion from paper cards is informational only ("promotion-ready",
+# human-gated). The gates are pre-declared so the promotion bar is on record
+# before any size is at stake.
+goals:
+  primary:
+    metric: edge_bps
+    window: 7d
+    op: ">="
+    threshold: 0
+  secondary:
+    - {metric: net_pnl, window: 30d, op: ">=", threshold: 0}
+    - {metric: win_rate, window: 30d, op: ">=", threshold: 0.40}
+
+guardrails:
+  - {metric: net_pnl,  window: 24h, op: ">=", threshold: -15,
+     action: pause,  reason: "24h realized loss > $15 on an $80 book"}
+  - {metric: edge_bps, window: 7d,  op: ">=", threshold: -20,
+     action: demote, reason: "7d realized edge < -20 bps — momentum regime broke"}
+  - {metric: edge_bps, window: 24h, op: ">=", threshold: -60,
+     action: alert,  reason: "24h edge < -60 bps"}
+
+# Promotion is paper -> live_small ONLY, behind sample + edge gates set at
+# roughly half the backtest edge. It can never auto-promote to full live.
+promotion:
+  from: paper
+  to: live_small
+  conditions:
+    - {metric: edge_bps, window: 30d, op: ">=", threshold: 30}
+    - {metric: net_pnl,  window: 30d, op: ">=", threshold: 5}
+    - {metric: n_trades, window: 30d, op: ">=", threshold: 40}

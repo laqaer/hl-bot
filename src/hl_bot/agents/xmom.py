@@ -237,10 +237,13 @@ class XMomAgent(Agent):
             room_notional -= notional
 
         if not out:
+            state = (
+                f"book steady ({len(open_pos)} legs)" if open_pos else "no xmom book"
+            )
             out.append(Decision(
                 agent=self.name, action="hold",
                 reasoning=(
-                    f"no xmom book: {len(ranked)} ranked coins "
+                    f"{state}: {len(ranked)} ranked coins "
                     f"(need ≥{2*cfg.top_k}), {len(longs)}L/{len(shorts)}S desired"
                 ),
                 market_snapshot={"n_ranked": len(ranked),

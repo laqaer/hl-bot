@@ -56,27 +56,38 @@ def resolve_vwap_window(
     return default
 
 
-def closes_15m_bars(agents: list[Agent]) -> int:
-    """Bars of 15m closes this roster needs (0 = no agent consumes the feed).
+def _closes_feed_bars(agents: list[Agent], closes_key: str) -> int:
+    """Bars of trailing closes the roster needs on ``closes_key`` (0 = no consumer).
 
-    An agent opts in by exposing ``cfg.closes_key == "closes_15m"`` (e.g. the
-    breakout roster entry); the feed must carry its longest channel plus the
-    in-progress bar, so the requirement is ``max(lookback, exit_lookback) + 1``.
-    Returns the max across such agents so one fetch serves them all, and 0 when
-    none ask — the tick then pays zero extra API calls (live mode today, where
-    breakout isn't promoted into the roster).
+    An agent opts in by exposing ``cfg.closes_key == closes_key``; the feed must
+    carry its longest signal window plus the in-progress bar, so the requirement
+    is ``max(lookback + skip, exit_lookback) + 1`` (breakout has no ``skip_bars``
+    and xmom no ``exit_lookback_bars`` — absent knobs read as 0). Returns the max
+    across such agents so one fetch serves them all, and 0 when none ask — the
+    tick then pays zero extra API calls (live mode today, where neither breakout
+    nor xmom is promoted into the roster).
     """
     bars = 0
     for a in agents:
         cfg = getattr(a, "cfg", None)
-        if getattr(cfg, "closes_key", None) != "closes_15m":
+        if getattr(cfg, "closes_key", None) != closes_key:
             continue
         need = 1 + max(
-            int(getattr(cfg, "lookback_bars", 0)),
+            int(getattr(cfg, "lookback_bars", 0)) + int(getattr(cfg, "skip_bars", 0)),
             int(getattr(cfg, "exit_lookback_bars", 0)),
         )
         bars = max(bars, need)
     return bars
+
+
+def closes_15m_bars(agents: list[Agent]) -> int:
+    """15m-feed sizing for long-horizon channel agents (B-EDGE2a: breakout)."""
+    return _closes_feed_bars(agents, "closes_15m")
+
+
+def closes_1h_bars(agents: list[Agent]) -> int:
+    """1h-feed sizing for multi-day ranking agents (B-EDGE3a: xmom)."""
+    return _closes_feed_bars(agents, "closes_1h")
 
 
 def load_agent_overrides(path: Path | None = None) -> dict[str, dict]:
@@ -139,6 +150,7 @@ def build_roster(
     from .liq_cascade import LiqCascadeAgent
     from .twap_mr import TwapMrAgent
     from .twap_mr_regime import TwapMrRegimeAgent
+    from .xmom import XMomAgent
 
     ov = overrides or {}
 
@@ -179,6 +191,18 @@ def build_roster(
             "closes_key": "closes_15m",
             "max_notional_per_trade": 20.0,
             "max_total_notional": 60.0,
+        }), conn=conn),
+        # B-EDGE3a: the G0-passing 14d cross-sectional momentum config
+        # (1h bars, lookback 336; top_k=2 ⇒ at most 4 legs, so the
+        # concurrency cap of 4 makes the $80 book cap real). Paper-only
+        # until promoted in agent_state — the live filter drops it, which
+        # also zeroes the 1h feed in live mode.
+        XMomAgent(config=cfg("xmom_v1", {
+            "lookback_bars": 336,
+            "closes_key": "closes_1h",
+            "max_notional_per_trade": 20.0,
+            "max_total_notional": 80.0,
+            "max_concurrent_positions": 4,
         }), conn=conn),
     ]
 
@@ -310,7 +334,8 @@ def normalize_spot_mids(payload: object, perp_mids: dict[str, float],
 
 def enrich_view(view: MarketView, api_url: str, vol: dict[str, float],
                 vwap_window: int = DEFAULT_VWAP_WINDOW,
-                closes_15m_bars: int = 0) -> None:
+                closes_15m_bars: int = 0,
+                closes_1h_bars: int = 0) -> None:
     """Augment a MarketView with rolling VWAP/σ (top-vol coins), spot mids, liquidations.
 
     ``vwap_window`` is the number of 1m candles in the rolling window (60 = the
@@ -323,6 +348,10 @@ def enrich_view(view: MarketView, api_url: str, vol: dict[str, float],
     backtest frames) for channel agents whose horizon outruns the 1m window
     (B-EDGE2a: breakout's 96h channel = 385×15m bars, one API call per coin,
     well under the ~5000-row cap). 0 = skip, no extra API traffic.
+
+    ``closes_1h_bars`` works the same for genuinely-1h bars into
+    ``view.extra["closes_1h"]`` (B-EDGE3a: xmom's 14d lookback = 337×1h bars;
+    unlike the legacy ``candles_1h`` key, which is 1m-derived VWAP/σ).
     """
     from ..backtest.data import closes_vols, rolling_vwap_sigma
 
@@ -333,6 +362,7 @@ def enrich_view(view: MarketView, api_url: str, vol: dict[str, float],
     candles_1h: dict[str, dict] = {}
     closes_by_coin: dict[str, list[float]] = {}
     closes_15m_by_coin: dict[str, list[float]] = {}
+    closes_1h_by_coin: dict[str, list[float]] = {}
     spot_mids: dict[str, float] = {}
 
     with httpx.Client(timeout=15) as cli:
@@ -376,6 +406,24 @@ def enrich_view(view: MarketView, api_url: str, vol: dict[str, float],
                 except Exception:  # noqa: BLE001
                     continue
 
+        # 1h closes feed for multi-day ranking agents (B-EDGE3a: xmom's 14d
+        # lookback = 337 bars, one call per coin under the ~5000-row cap).
+        if closes_1h_bars > 0:
+            start_1h = end_ms - closes_1h_bars * 3_600_000
+            for coin in top_coins:
+                try:
+                    cs = cli.post(api_url + "/info", json={
+                        "type": "candleSnapshot",
+                        "req": {"coin": coin, "interval": "1h",
+                                "startTime": start_1h, "endTime": end_ms},
+                    }).json() or []
+                    if not isinstance(cs, list) or not cs:
+                        continue
+                    pxs, _vols, _ts = closes_vols(cs)
+                    closes_1h_by_coin[coin] = pxs[-closes_1h_bars:]
+                except Exception:  # noqa: BLE001
+                    continue
+
         # Spot mids for BTC/ETH/SOL (basis agent input). All parsing, the
         # by-name ctx join, and the ±5%-of-perp sanity band live in
         # normalize_spot_mids (REVIEW M5); a fetch failure degrades to {}.
@@ -394,6 +442,7 @@ def enrich_view(view: MarketView, api_url: str, vol: dict[str, float],
     view.extra["candles_1h"] = candles_1h
     view.extra["closes"] = closes_by_coin
     view.extra["closes_15m"] = closes_15m_by_coin
+    view.extra["closes_1h"] = closes_1h_by_coin
     view.extra["spot_mids"] = spot_mids
     view.extra["liquidations"] = []
     view.extra["liquidations_feed"] = False
@@ -403,16 +452,18 @@ def enrich_view(view: MarketView, api_url: str, vol: dict[str, float],
 class TickView:
     """A fully built tick MarketView plus the resolved feed parameters.
 
-    ``vwap_window`` / ``bars_15m`` are returned so the CLI summary can print
-    what was actually fetched; ``ws`` is the overlay result (None when no
-    ``HLBOT_WS_SNAPSHOT`` is configured, ``applied=False`` when the snapshot
-    file is missing or stale — REST stays the source of truth either way).
+    ``vwap_window`` / ``bars_15m`` / ``bars_1h`` are returned so the CLI
+    summary can print what was actually fetched; ``ws`` is the overlay result
+    (None when no ``HLBOT_WS_SNAPSHOT`` is configured, ``applied=False`` when
+    the snapshot file is missing or stale — REST stays the source of truth
+    either way).
     """
 
     view: MarketView
     vwap_window: int
     bars_15m: int
     ws: WsOverlay | None
+    bars_1h: int = 0
 
 
 def build_tick_view(
@@ -437,15 +488,18 @@ def build_tick_view(
     view = fetch_market_view(base_url, [])
     w = resolve_vwap_window(vwap_window, env)
     bars_15m = closes_15m_bars(agents)
+    bars_1h = closes_1h_bars(agents)
     enrich_view(view, base_url, view.extra.get("day_ntl_vlm", {}),
-                vwap_window=w, closes_15m_bars=bars_15m)
+                vwap_window=w, closes_15m_bars=bars_15m,
+                closes_1h_bars=bars_1h)
     ws = None
     ws_path = env.get("HLBOT_WS_SNAPSHOT")
     if ws_path:
         from ..ingest.ws import load_fresh_snapshot
         snap = load_fresh_snapshot(ws_path, max_age_s=30.0)
         ws = overlay_ws_snapshot(view, snap)
-    return TickView(view=view, vwap_window=w, bars_15m=bars_15m, ws=ws)
+    return TickView(view=view, vwap_window=w, bars_15m=bars_15m, ws=ws,
+                    bars_1h=bars_1h)
 
 
 @dataclass

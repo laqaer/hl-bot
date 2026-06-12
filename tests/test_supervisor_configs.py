@@ -63,6 +63,14 @@ def test_breakout_er_config_loads_paper_only():
     assert goals[0].promotion.to_mode == "live_small"
 
 
+def test_xmom_config_loads_paper_only():
+    goals = load_goals(CONFIG_DIR / "xmom_v1.yaml")
+    assert goals[0].agent == "xmom_v1"
+    assert goals[0].mode == "paper"
+    assert goals[0].promotion is not None
+    assert goals[0].promotion.to_mode == "live_small"
+
+
 def _effective_book_cap(cfg) -> float:
     """Max deployable notional: the total cap or per-trade × concurrency."""
     return min(
@@ -76,6 +84,7 @@ def test_capital_bases_set_for_evidence_bearing_agents():
     assert load_goals(CONFIG_DIR / "twap_mr_v1.yaml")[0].capital == 600
     assert load_goals(CONFIG_DIR / "breakout_v1.yaml")[0].capital == 60
     assert load_goals(CONFIG_DIR / "breakout_er_v1.yaml")[0].capital == 60
+    assert load_goals(CONFIG_DIR / "xmom_v1.yaml")[0].capital == 80
 
 
 def test_capital_bases_match_roster_book_caps(conn):
@@ -98,7 +107,7 @@ def test_capital_bases_match_roster_book_caps(conn):
         cap = _effective_book_cap(roster[g.agent].cfg)
         assert g.capital == cap, f"{g.agent}: capital {g.capital} != book cap {cap}"
         checked.append(g.agent)
-    assert set(checked) >= {"twap_mr_v1", "breakout_v1", "breakout_er_v1"}
+    assert set(checked) >= {"twap_mr_v1", "breakout_v1", "breakout_er_v1", "xmom_v1"}
 
 
 def test_bleeding_twap_is_paused_by_supervisor(conn):
