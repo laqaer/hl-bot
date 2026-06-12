@@ -11,3 +11,12 @@ dbs:
         # AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY from the environment.
         retention: 168h          # keep 7d of restore points
         snapshot-interval: 1h
+  # Moonshot sleeve DB (profile isolation). Litestream skips missing files at
+  # startup only if the parent dir exists; install.sh creates data/moonshot/.
+  - path: /opt/hl-bot/data/moonshot/hlbot.sqlite
+    replicas:
+      - type: s3
+        bucket: ${LITESTREAM_S3_BUCKET}
+        path: ${LITESTREAM_S3_PATH}-moonshot
+        retention: 168h
+        snapshot-interval: 1h

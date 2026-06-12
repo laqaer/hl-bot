@@ -1,0 +1,11 @@
+# Nightly sweep: single-name funding carry (hold-to-collect, maker entries).
+agent: funding_carry_v1
+interval: 1h
+days: 180
+prefer: maker
+universes:
+  - [BTC, ETH, SOL, HYPE]
+  - [BTC, ETH, SOL, HYPE, DOGE, XRP]
+grid:
+  funding_enter_per_hr: [0.0001, 0.00015, 0.0002]
+  funding_exit_per_hr: [0.00003, 0.00005]

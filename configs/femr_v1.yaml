@@ -1,6 +1,7 @@
 agent: femr_v1
 description: Funding Extremes Mean Reversion — fade extreme 1h funding.
 mode: paper
+roster: live
 
 # Per-agent metrics only (net_pnl / edge_bps / n_trades); FEMR runs at very small
 # notional ($20/trade), so loss limits are tight.
@@ -21,12 +22,27 @@ guardrails:
   - {metric: edge_bps, window: 24h, op: ">=", threshold: -50,
      action: alert,  reason: "24h edge < -50 bps"}
 
-# paper -> live_small only, behind strong gates. FEMR is all-time negative, so
-# this will not fire until it shows durable positive edge on real sample size.
-promotion:
-  from: paper
-  to: live_small
-  conditions:
-    - {metric: edge_bps, window: 30d, op: ">=", threshold: 5}
-    - {metric: net_pnl,  window: 30d, op: ">=", threshold: 25}
-    - {metric: n_trades, window: 30d, op: ">=", threshold: 150}
+# Auto-promotion ladder: paper -> live_small on simulated (paper-source)
+# evidence + a fresh G0 confirmation on real history; live_small -> live ONLY
+# on real-fill evidence. The supervisor flips agent_state automatically; the
+# kill switch (`hlbot kill`) suppresses all promotions.
+sizing:
+  live_small_max_total: 75
+  live_small_max_per_trade: 25
+
+promotion_ladder:
+  - from: paper
+    to: live_small
+    min_days_in_mode: 5
+    require_g0: true
+    conditions:
+      - {metric: edge_bps, window: 30d, op: ">=", threshold: 3, source: paper}
+      - {metric: n_trades, window: 30d, op: ">=", threshold: 100, source: paper}
+  - from: live_small
+    to: live
+    min_days_in_mode: 14
+    conditions:
+      - {metric: edge_bps, window: 30d, op: ">=", threshold: 3}
+      - {metric: net_pnl,  window: 30d, op: ">=", threshold: 0}
+      - {metric: sharpe,   window: 30d, op: ">=", threshold: 1.0}
+      - {metric: n_trades, window: 30d, op: ">=", threshold: 40}

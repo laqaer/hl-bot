@@ -144,6 +144,29 @@ def write_snapshot(state: MarketState, path: str | Path) -> None:
     tmp.replace(p)  # atomic
 
 
+def append_liq_events(
+    liqs: list[dict], log_path: str | Path, seen: set[tuple]
+) -> int:
+    """Append unseen liquidation events to a JSONL log. The accumulating
+    dataset is what calibrates liq_cascade thresholds (min notional, cooldown)
+    and is the only way to backtest the strategy — candle history has no
+    liquidation flags. Returns rows written."""
+    if not liqs:
+        return 0
+    p = Path(log_path)
+    p.parent.mkdir(parents=True, exist_ok=True)
+    n = 0
+    with p.open("a") as f:
+        for t in liqs:
+            key = (t.get("ts_ms"), t.get("coin"), t.get("sz"), t.get("px"))
+            if key in seen:
+                continue
+            seen.add(key)
+            f.write(json.dumps(t, separators=(",", ":")) + "\n")
+            n += 1
+    return n
+
+
 def load_fresh_snapshot(path: str | Path, *, max_age_s: float = 30.0) -> MarketView | None:
     """Load a WS snapshot into a MarketView if it's fresh; else None (use REST)."""
     p = Path(path)
@@ -197,8 +220,11 @@ def run_ws(
         info.subscribe({"type": "trades", "coin": coin}, lambda m: state.apply_message(m))
         info.subscribe({"type": "activeAssetCtx", "coin": coin}, lambda m: state.apply_message(m))
 
+    liq_log = Path(snapshot_path).parent / "liq_log.jsonl"
+    seen_liqs: set[tuple] = set()
     start = time.time()
     while duration_s is None or time.time() - start < duration_s:
         time.sleep(write_interval_s)
         if state.updated_ms:
             write_snapshot(state, snapshot_path)
+            append_liq_events(state.recent_liquidations(), liq_log, seen_liqs)

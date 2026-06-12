@@ -1,6 +1,7 @@
 agent: funding_arb_v1
 description: Collect funding when 1h rate exits the band.
 mode: paper
+roster: paper  # reference skeleton — never wired live
 
 goals:
   primary:

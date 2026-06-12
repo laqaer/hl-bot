@@ -7,6 +7,7 @@ import sqlite3
 import time
 from pathlib import Path
 
+from ..ops.kill import kill_active
 from .goals import AgentGoals, evaluate, load_goals, persist
 
 log = logging.getLogger(__name__)
@@ -51,11 +52,31 @@ def _demote(conn: sqlite3.Connection, agent: str) -> None:
     _set_mode(conn, agent, new, reason="demoted by supervisor")
 
 
-def run_once(conn: sqlite3.Connection, configs: list[AgentGoals]) -> dict[str, list[str]]:
-    """Evaluate all agent configs once. Returns map of agent -> actions taken."""
+def run_once(
+    conn: sqlite3.Connection,
+    configs: list[AgentGoals],
+    *,
+    data_dir: str | Path | None = None,
+) -> dict[str, list[str]]:
+    """Evaluate all agent configs once. Returns map of agent -> actions taken.
+
+    While the kill switch is active, promotions are suppressed; pause/demote
+    (risk-reducing actions) are always processed.
+    """
+    kill_reason = kill_active(data_dir) if data_dir is not None else None
+    state = {
+        r["agent"]: r for r in conn.execute(
+            "SELECT agent, mode, enabled, last_promoted_ms FROM agent_state"
+        ).fetchall()
+    }
     actions_taken: dict[str, list[str]] = {}
     for g in configs:
-        evals = evaluate(conn, g)
+        st = state.get(g.agent)
+        evals = evaluate(
+            conn, g,
+            current_mode=st["mode"] if st else None,
+            last_promoted_ms=st["last_promoted_ms"] if st else None,
+        )
         persist(conn, evals)
         acts: list[str] = []
         for e in evals:
@@ -65,19 +86,36 @@ def run_once(conn: sqlite3.Connection, configs: list[AgentGoals]) -> dict[str, l
             elif e.action == "demote":
                 _demote(conn, g.agent)
                 acts.append(f"DEMOTE: {e.detail}")
-            elif e.action == "promote" and g.promotion:
-                _set_mode(conn, g.agent, g.promotion.to_mode,
+            elif e.action == "promote" and e.to_mode:
+                if kill_reason:
+                    acts.append(f"PROMOTE-SUPPRESSED (kill active: {kill_reason}): {e.detail}")
+                    continue
+                _set_mode(conn, g.agent, e.to_mode,
                           reason=f"promoted via {e.detail}")
                 acts.append(f"PROMOTE: {e.detail}")
         if acts:
             actions_taken[g.agent] = acts
             log.info("supervisor actions for %s: %s", g.agent, acts)
+            _alert(f"🤖 supervisor — {g.agent}: " + " | ".join(acts))
     return actions_taken
 
 
-def supervise(conn: sqlite3.Connection, configs_dir: str | Path) -> dict[str, list[str]]:
+def _alert(message: str) -> None:
+    try:
+        from ..exec.orders import telegram_alert
+        telegram_alert(message)
+    except Exception:  # noqa: BLE001
+        log.debug("supervisor alert not sent")
+
+
+def supervise(
+    conn: sqlite3.Connection,
+    configs_dir: str | Path,
+    *,
+    data_dir: str | Path | None = None,
+) -> dict[str, list[str]]:
     """Load every *.yaml in configs_dir and evaluate."""
     configs: list[AgentGoals] = []
     for p in sorted(Path(configs_dir).glob("*.yaml")):
         configs.extend(load_goals(p))
-    return run_once(conn, configs)
+    return run_once(conn, configs, data_dir=data_dir)

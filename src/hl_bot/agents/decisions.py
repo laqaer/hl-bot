@@ -14,7 +14,7 @@ from typing import Any, Literal
 
 Action = Literal[
     "place", "cancel", "hold", "flatten", "error", "rest",
-    "rejected",      # taker order rejected by HL -> counts toward cooldown
+    "rejected",      # order rejected by HL -> counts toward cooldown
     "maker_reject",  # post-only would have crossed (touch moved) -> audited, NO cooldown
 ]
 
@@ -32,6 +32,10 @@ class Decision:
     market_snapshot: dict[str, Any] = field(default_factory=dict)
     is_paper: bool = True
     error: str | None = None
+    # Execution urgency (in-flight only, not persisted): 'normal' entries may
+    # rest as patient maker quotes; 'exit'/'stop' must escalate to taker if a
+    # passive fill doesn't come quickly — an unfilled exit is unmanaged risk.
+    urgency: Literal["normal", "exit", "stop"] = "normal"
 
 
 def log_decision(conn: sqlite3.Connection, d: Decision) -> int:

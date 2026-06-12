@@ -1,12 +1,16 @@
 # hl-bot
 
-Multi-agent trading harness for [Hyperliquid](https://hyperliquid.xyz) with a built-in
-**goal-tracking and promotion system** for evaluating whether agents are actually making money.
+Multi-agent trading harness for [Hyperliquid](https://hyperliquid.xyz) with
+**auto-promotion**: agents earn their way from paper → live_small → live by
+passing evidence gates (real-history confirmation, paper soak, real-fill
+track record), and the supervisor flips the modes itself.
 
-> 🛡️ **Default mode is paper trading.** Live order placement is wired through a single
-> audited router ([`exec/router.py`](src/hl_bot/exec/router.py)) but **double-gated**:
-> `femr_tick --live` plus a per-agent `live_small`/`live` promotion in `agent_state`.
-> The runbook is [`docs/GO_LIVE.md`](docs/GO_LIVE.md) — go live only via its checklist.
+> 🛡️ **Default mode is paper trading.** The engine (`hlbot run`) simulates
+> every paper agent continuously; real orders require the deliberate
+> `--live` switch (`HLBOT_RUN_ARGS` on a deployed host) — see
+> [`docs/GO_LIVE.md`](docs/GO_LIVE.md). A sticky kill switch
+> (`hlbot kill` / `data/KILL`) halts entries and promotions instantly and
+> trips itself on account-level loss or equity-floor breaches.
 
 ## Architecture
 
@@ -40,12 +44,12 @@ Multi-agent trading harness for [Hyperliquid](https://hyperliquid.xyz) with a bu
 uv sync
 cp .env.example .env  # fill in HL_ADDRESS
 uv run hlbot init
-uv run hlbot tick                  # paper run, 1 tick, all agents
-uv run hlbot ingest                # pull fills + equity from HL
-uv run hlbot score                 # show scorecards
-uv run hlbot supervisor            # evaluate goals/guardrails
-uv run hlbot report                # markdown daily report
-uv run hlbot report --send         # also push to Telegram
+uv run hlbot run                   # the engine: paper sim + supervisor, forever
+uv run hlbot ingest                # pull fills/funding/equity + attribution
+uv run hlbot score                 # per-agent scorecards (incl. paper source)
+uv run hlbot supervisor            # evaluate goals/guardrails/auto-promotion
+uv run hlbot report                # markdown daily report (+ exec quality)
+uv run hlbot kill "reason"         # sticky emergency brake; hlbot resume clears
 ```
 
 ## Adding an agent
@@ -134,14 +138,19 @@ End-to-end runbook: [`docs/HOST_QUICKSTART.md`](docs/HOST_QUICKSTART.md). AWS:
 ## Roadmap
 
 - [x] Backtest harness re-using the same scoring code.
-- [x] Strategy confirmation gate (`hlbot confirm` — walk-forward + cost stress).
-- [x] Maker (post-only) execution + cross-tick fill lifecycle (`--execution maker`).
-- [x] WebSocket market view + live liquidations feed (`hlbot ws`).
+- [x] Strategy confirmation gate (`hlbot confirm --record` — walk-forward + cost stress, stamps G0).
+- [x] Maker lifecycle v2: book-aware quoting at the touch, repricing, partials, exit escalation.
+- [x] WebSocket market view + live liquidations feed (`hlbot ws`, logs `data/liq_log.jsonl`).
 - [x] 24/7 deployment automation + health/heartbeat + preflight.
-- [x] Carry strategies: `xfund_carry_v1` (market-neutral), `funding_carry_v1` —
-  now on the tick roster, maker-by-default.
-- [x] Per-agent funding attribution + equity-curve Sharpe/DD + positions replay
-  (B6/B7/B9 — `scoring/attribution.py`).
+- [x] Carry strategies: `xfund_carry_v1` (market-neutral), `funding_carry_v1`.
+- [x] Honest measurement: per-agent funding attribution, equity/Sharpe, simulated paper fills.
+- [x] Consolidated engine (`hlbot run`) — one cycle path for paper sim + live execution.
+- [x] Auto-promotion ladders + safeguards (kill switch, order-rate limits, equity-floor kill).
+- [x] Moonshot sleeve profile (`--profile moonshot`, ring-fenced sub-account) — `docs/MOONSHOT.md`.
+- [x] Research pipeline: nightly G0 sweeps + spec workflow — `docs/STRATEGY_PIPELINE.md`.
+- [ ] Host: first real-history carry confirmation + paper soak → first auto-promotion (`docs/GO_LIVE.md`).
+- [ ] Maker fill telemetry-driven MakerConfig tuning (backlog E1/E2).
+- [ ] liq_cascade calibration from the accumulating liquidation log (backlog S2).
 - [x] Book-aware maker pricing (post at the touch from the WS L2 book) +
   per-agent execution routing through one audited path (`exec/router.py`).
 - [x] Track-record chart export (`track_record.svg` + shareable `.html`).

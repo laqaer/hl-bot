@@ -16,6 +16,9 @@ from __future__ import annotations
 import sqlite3
 import time
 from dataclasses import dataclass, field
+from pathlib import Path
+
+from .kill import kill_active
 
 Level = str  # "ok" | "warn" | "crit"
 
@@ -54,10 +57,59 @@ def assess_health(
     max_tick_age_s: int = 900,        # 15 min: ticks should be far more frequent
     max_ingest_age_s: int = 3600,     # 1 h
     daily_loss_floor: float = -1e9,   # set to a negative $ to flag bleeding
+    data_dir: str | Path | None = None,
 ) -> HealthReport:
     now_ms = now_ms or int(time.time() * 1000)
     checks: list[tuple[str, Level, str]] = []
     metrics: dict[str, float | None] = {}
+
+    # --- kill switch (sticky emergency brake) ---
+    if data_dir is not None:
+        kill_reason = kill_active(data_dir)
+        if kill_reason:
+            checks.append(("kill", "crit", f"KILL ACTIVE: {kill_reason}"))
+        else:
+            checks.append(("kill", "ok", "not tripped"))
+
+        # --- run-engine heartbeat (hlbot run touches this every cycle) ---
+        hb = Path(data_dir) / "run_heartbeat"
+        if hb.exists():
+            age = now_ms / 1000 - hb.stat().st_mtime
+            metrics["run_heartbeat_age_s"] = age
+            level = "crit" if age > max_tick_age_s else "ok"
+            checks.append(("run-engine", level, f"heartbeat {age/60:.1f} min ago"))
+
+    # --- WS snapshot freshness (book-aware quoting depends on it) ---
+    import os
+    ws_path = os.environ.get("HLBOT_WS_SNAPSHOT")
+    if ws_path and Path(ws_path).exists():
+        age = now_ms / 1000 - Path(ws_path).stat().st_mtime
+        metrics["ws_snapshot_age_s"] = age
+        level = "warn" if age > 120 else "ok"
+        checks.append(("ws-feed", level, f"snapshot {age:.0f}s old"))
+
+    # --- mode changes in the last 24h (auto-promotion visibility) ---
+    try:
+        moves = conn.execute(
+            """SELECT agent, action_taken, COUNT(*) FROM goal_evaluations
+               WHERE ts_ms >= ? AND action_taken IN ('promote','demote','pause')
+               GROUP BY agent, action_taken""",
+            (now_ms - 86_400_000,),
+        ).fetchall()
+        if moves:
+            digest = ", ".join(f"{m[0]}:{m[1]}x{m[2]}" for m in moves)
+            checks.append(("mode-changes", "warn", digest))   # warn = "look at me"
+    except sqlite3.OperationalError:
+        pass
+
+    # --- maker execution quality (silent regression catcher) ---
+    try:
+        from ..scoring.exec_quality import exec_quality
+        eq_alerts = exec_quality(conn, now_ms=now_ms).alerts()
+        for a in eq_alerts:
+            checks.append(("exec-quality", "warn", a))
+    except Exception:  # noqa: BLE001
+        pass
 
     # --- tick freshness (is the bot alive?) ---
     last_tick = _max_ts(conn, "agent_decisions", "ts_ms")

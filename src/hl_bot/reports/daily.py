@@ -41,7 +41,19 @@ def render_markdown(cards: Iterable[Scorecard]) -> str:
 
 def build(conn: sqlite3.Connection) -> str:
     cards = score_all(conn, windows=["24h", "7d", "30d", "all"])
-    return render_markdown(cards)
+    out = render_markdown(cards)
+    try:
+        from ..scoring.exec_quality import exec_quality
+        eq = exec_quality(conn)
+        if eq.per_agent:
+            out += "\n*Maker execution (24h)*\n```\n"
+            out += "\n".join(q.row() for q in eq.per_agent)
+            out += "\n```"
+            for alert in eq.alerts():
+                out += f"\n⚠ {alert}"
+    except Exception:  # noqa: BLE001
+        pass
+    return out
 
 
 def send_telegram(text: str, bot_token: str, chat_id: str) -> None:

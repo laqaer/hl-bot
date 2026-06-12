@@ -1,0 +1,24 @@
+[Unit]
+Description=hl-bot consolidated engine (event-paced cycles: paper sim + live execution + supervisor)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=hlbot
+WorkingDirectory=/opt/hl-bot
+EnvironmentFile=/etc/hl-bot/env
+# HLBOT_RUN_ARGS controls posture, e.g. "--live --execution maker".
+# Default (empty) is paper-only — safe. Going live: docs/GO_LIVE.md.
+ExecStart=/usr/bin/env bash -lc 'uv run hlbot run $${HLBOT_RUN_ARGS:-}'
+Restart=always
+RestartSec=15
+# Hardening (matches hlbot-ws.service)
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/opt/hl-bot/data
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

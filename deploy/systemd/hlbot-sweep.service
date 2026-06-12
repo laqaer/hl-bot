@@ -1,0 +1,17 @@
+[Unit]
+Description=hl-bot nightly research sweep (history refresh + G0 parameter sweeps + results commit)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=hlbot
+WorkingDirectory=/opt/hl-bot
+EnvironmentFile=/etc/hl-bot/env
+ExecStart=/opt/hl-bot/deploy/run-sweep.sh
+TimeoutStartSec=7200
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/opt/hl-bot
+PrivateTmp=true

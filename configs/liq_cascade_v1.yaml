@@ -1,0 +1,39 @@
+agent: liq_cascade_v1
+description: >-
+  Liquidation-cascade momentum — when forced liquidations cluster on a high-
+  volume coin, ride the cascade direction briefly with tight stops. Dead until
+  B10 wired the real WS liquidation feed; now incubating in paper to calibrate
+  thresholds from live feed data. Designated moonshot-sleeve strategy (P5):
+  high leverage only ever in the ring-fenced sub-account profile.
+mode: paper
+roster: live
+cooldown_s: 60          # event-driven: must be able to act on the next cascade
+
+goals:
+  primary:
+    metric: edge_bps
+    window: 7d
+    op: ">="
+    threshold: 0
+
+guardrails:
+  - {metric: net_pnl,  window: 24h, op: ">=", threshold: -20,
+     action: pause,  reason: "24h realized loss > $20"}
+  - {metric: edge_bps, window: 7d,  op: ">=", threshold: -15,
+     action: demote, reason: "7d realized edge < -15 bps after costs"}
+
+# No require_g0: the candle-replay confirm harness can't reproduce the WS
+# liquidation feed yet (sweeps on recorded liq logs are the P5/P6 follow-up),
+# so this agent earns live_small purely on a longer paper soak. Core-account
+# live_small only — high leverage stays in the moonshot sub-account profile.
+sizing:
+  live_small_max_total: 50
+  live_small_max_per_trade: 15
+
+promotion_ladder:
+  - from: paper
+    to: live_small
+    min_days_in_mode: 10
+    conditions:
+      - {metric: edge_bps, window: 30d, op: ">=", threshold: 5, source: paper}
+      - {metric: n_trades, window: 30d, op: ">=", threshold: 40, source: paper}

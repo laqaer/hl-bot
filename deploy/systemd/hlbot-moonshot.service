@@ -1,0 +1,26 @@
+[Unit]
+Description=hl-bot MOONSHOT sleeve (ring-fenced sub-account profile; disabled by default)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=hlbot
+WorkingDirectory=/opt/hl-bot
+EnvironmentFile=/etc/hl-bot/env
+# Sleeve overrides LAST so they win: HL_TRADER_ADDRESS=<subaccount>,
+# HL_BOT_API_WALLET_ENV=<sleeve wallet env>, HLBOT_MOONSHOT_ARGS.
+EnvironmentFile=-/etc/hl-bot/moonshot.env
+Environment=HLBOT_PROFILE=moonshot
+Environment=HLBOT_DB=/opt/hl-bot/data/moonshot/hlbot.sqlite
+ExecStart=/usr/bin/env bash -lc 'uv run hlbot run --profile moonshot $${HLBOT_MOONSHOT_ARGS:-}'
+Restart=always
+RestartSec=15
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/opt/hl-bot/data
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

@@ -85,3 +85,24 @@ def resolve_agent_caps(
         out[name] = AgentCap(max_total_notional=total, max_notional_per_trade=per_trade)
 
     return out
+
+
+def apply_mode_sizing(cap: AgentCap, mode: str, sizing) -> AgentCap:
+    """Clamp an agent's resolved caps by its promotion mode.
+
+    live_small runs deliberately tiny no matter what the allocator grants — it
+    exists to prove real-fill edge, not to make money yet. Full 'live' uses the
+    resolved caps unchanged. ``sizing`` is supervisor.goals.Sizing.
+    """
+    if mode != "live_small":
+        return cap
+    total = cap.max_total_notional
+    per_trade = cap.max_notional_per_trade
+    if sizing.live_small_fraction is not None:
+        total = min(total, cap.max_total_notional * float(sizing.live_small_fraction))
+    if sizing.live_small_max_total is not None:
+        total = min(total, float(sizing.live_small_max_total))
+    if sizing.live_small_max_per_trade is not None:
+        per_trade = min(per_trade, float(sizing.live_small_max_per_trade))
+    per_trade = min(per_trade, total)
+    return AgentCap(max_total_notional=total, max_notional_per_trade=per_trade)
