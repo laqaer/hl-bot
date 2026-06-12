@@ -707,6 +707,7 @@ def harvest_candles(
     intervals: str = "1m,5m,15m,1h",
     breadth_coins: str = "CRV,ENA,LIT,NEAR,SUI,TON,WLD,XMR,XPL,XRP",
     breadth_intervals: str = "15m,1h",
+    if_stale_minutes: float = 0.0,
 ):
     """Append the latest fine-interval candles to the rolling local store (B-HIST).
 
@@ -722,8 +723,15 @@ def harvest_candles(
     only at --breadth-intervals (default 15m) so breadth re-tests of the
     momentum family outgrow the API's rolling retention without doubling the
     1m/5m load. --breadth-coins "" disables it.
+
+    --if-stale-minutes N skips the network entirely when every pair's last
+    stored bar lags fresh by ≤N minutes (lag beyond one full interval, so the
+    threshold works across 1m and 1h pairs). Lets overlapping backstops — the
+    ralph loop's per-iteration step, an agent's in-session top-up, the systemd
+    timer — all run unconditionally without re-fetching a store another
+    mechanism just filled. 0 (default) always harvests.
     """
-    from ..backtest.store import harvest
+    from ..backtest.store import harvest, harvest_pairs, worst_store_lag
 
     _, s = _conn()
     coin_list = [c.strip() for c in coins.split(",") if c.strip()]
@@ -733,6 +741,14 @@ def harvest_candles(
         for c in breadth_coins.split(",") if c.strip()
         for i in breadth_intervals.split(",") if i.strip()
     ]
+    if if_stale_minutes > 0:
+        label, lag = worst_store_lag(harvest_pairs(coin_list, interval_list, extra))
+        if lag is not None and lag <= if_stale_minutes:
+            console.print(
+                f"store fresh (worst lag {lag:.1f}m at {label} ≤ "
+                f"{if_stale_minutes:g}m) — skipping harvest"
+            )
+            return
     results = harvest(coin_list, interval_list, extra_pairs=extra, base_url=s.hl_api_url)
     table = Table(title="Candle harvest")
     for col in ("coin", "interval", "added", "total", "span", "status"):

@@ -4215,3 +4215,74 @@ baseline; b_g014 ~Jun 26; b_edge3 + b_edge2_1h ~Jul 10). B-EDGE2f at ≥30d
 paper books (~Jul 8); xmom paper card ~Jul 12. Idle queue: B-SCALE doc on
 real G2 evidence; possible pocket-aware reading aid in `hlbot experiment`
 output if the Jun-20 read needs it.
+
+## Iteration 78 — 2026-06-12 — store-continuity guard was dead in the running loop; fixed via PROMPT step 0 + `--if-stale-minutes`
+
+**Ripeness checks** (per-iteration readout): b_edge2b NOT RIPE (15m 52.5d
+< 60d, ~Jun 20); b_g014 NOT RIPE (1m 4.1d < 14d, ~Jun 26); b_edge3 +
+b_edge2_1h NOT RIPE (1h LIT 172.0d < 200d, ~Jul 10). Store topped up this
+iteration (all 60 pairs ok), zero missing bars.
+
+**Why this.** All four pre-registered specs wait on the calendar — and the
+thing they wait on is an UNBROKEN candle store. Iters 71/72 both flagged the
+same mystery ("/tmp/ralph_harvest.log absent, yet the store is fresh; we
+can't tell which mechanism is keeping it alive") and took no action.
+Diagnosed it this iteration: **loop.sh's per-iteration top-up (Iter 33) has
+NEVER executed in the running loop.** The loop process (PID 4224,
+hlbot-loop.service) started 00:03 Jun 12; the harvest step landed in
+loop.sh at 02:08 (commit 36742e7). Bash parses the whole `for` body at
+startup, so the running loop's in-memory body predates the step — editing
+loop.sh can never reach an already-running loop. ralph_pytest.log/
+ralph_ruff.log (also written per-iteration, by code present at startup) ARE
+in /tmp; ralph_harvest.log isn't. The store survived on agents' INCIDENTAL
+in-session harvests (latest: Iter 74's 1h harvest at 12:34) — nothing
+guaranteed one per iteration. 1m retention is ~3.5d; a weekend of
+iterations that happen not to harvest would permanently gap B-G014's 14d
+sample and push its ETA out by weeks — while BACKLOG explicitly claimed
+"store continuity now guarded by loop.sh per-iteration top-up" (false;
+claim now corrected).
+
+**Changed.**
+- `backtest/store.py`: `harvest_pairs` (the swept grid, extras deduped —
+  now shared by `harvest` and the CLI) + `worst_store_lag(pairs)` → the
+  most-lagging pair's `(label, lag_minutes)`, measured in DATA terms (time
+  beyond one full interval since the pair's last stored bar opened — a
+  just-harvested store reads ~0 at every interval, so one threshold works
+  across 1m and 1h pairs; no stored bars / empty pair list → None =
+  maximally stale, fail toward harvesting). File mtimes deliberately not
+  used: data-truth, pure, offline-testable.
+- `hlbot harvest-candles --if-stale-minutes N`: skips the network entirely
+  when worst lag ≤ N (default 0 = always harvest, byte-identical to
+  before). Lets overlapping backstops all run unconditionally without
+  double-fetching.
+- `ralph/PROMPT.md` **step 0**: every iteration runs `uv run hlbot
+  harvest-candles --if-stale-minutes 30` (no-op when fresh; network failure
+  must not block the iteration). The prompt is the ONE per-iteration input
+  the running loop re-reads from disk (`$(cat "$PROMPT_FILE")` executes
+  each pass), so this reaches the live process — unlike loop.sh edits.
+- `ralph/loop.sh`: harvest line gains `--if-stale-minutes 30` + a comment
+  documenting the parse-at-startup trap; activates on the next
+  `hlbot-loop.service` restart (operator's call, no urgency — PROMPT step 0
+  is the active guard either way).
+
+**Evidence.** 494 → **500 tests pass** (+6: lag≈0 across intervals right
+after harvest / worst-pair selection with per-interval step / missing store
++ empty pairs → None / harvest_pairs dedup / CLI skip-when-fresh wiring
+[harvest must not run] / CLI runs-when-stale-or-missing); ruff clean.
+Live-fired: real harvest this iteration (60/60 pairs ok), then
+`--if-stale-minutes 30` → "store fresh (worst lag 2.5m at ADA_1m ≤ 30m) —
+skipping harvest", <1s, zero API calls.
+
+**Found.** (a) The Iter-71/72 harvest-log mystery is fully explained (no
+PrivateTmp involved; the code simply never ran). (b) Meta-lesson for any
+future loop.sh change: it only takes effect on service restart — anything
+that must reach the RUNNING loop goes in PROMPT.md.
+
+**What's next (loop).** Per-iteration: PROMPT step 0 (store top-up), then
+the four `--check-only` readouts (b_edge2b ~Jun 20 FIRST — read
+pocket_share against the 0.69/0.87/2.20 baseline; b_g014 ~Jun 26; b_edge3
++ b_edge2_1h ~Jul 10). B-EDGE2f at ≥30d paper books (~Jul 8); xmom paper
+card ~Jul 12. Idle queue: B-SCALE doc on real G2 evidence; pocket-aware
+reading aid in `hlbot experiment` output if the Jun-20 read needs it.
+Operator note (non-urgent): restart `hlbot-loop.service` at convenience to
+activate loop.sh's own stale-gated top-up.

@@ -7,6 +7,14 @@ You run repeatedly. Each run, make **one** real, tested increment of progress.
 
 ## Iteration procedure (do this, in order)
 
+0. **Keep the evidence store alive.** Run
+   `uv run hlbot harvest-candles --if-stale-minutes 30` (no-op when fresh; a
+   network failure must not block the iteration — note it and continue).
+   This step lives in the PROMPT because loop.sh's own top-up only exists in
+   loop processes started after 2026-06-12 02:08 — bash parses the loop body
+   at startup, so editing loop.sh never reaches an already-running loop. 1m
+   API retention is ~3.5d; one longer gap permanently invalidates B-G014's
+   multi-week 1m sample (found Iter 78).
 1. **Orient.** Read `ralph/BACKLOG.md`, `ralph/PROGRESS.md` (tail), and
    `docs/REVIEW.md`. Pick the **highest-priority unblocked** task. If a task is
    blocked (e.g. needs network/secrets unavailable here), skip to the next.

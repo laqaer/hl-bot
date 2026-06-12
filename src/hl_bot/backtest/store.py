@@ -274,6 +274,48 @@ def frames_from_store(
     return frames, coverage
 
 
+def harvest_pairs(
+    coins: list[str],
+    intervals: tuple[str, ...] | list[str] = DEFAULT_INTERVALS,
+    extra_pairs: tuple[tuple[str, str], ...] | list[tuple[str, str]] = (),
+) -> list[tuple[str, str]]:
+    """The (coin, interval) grid one harvest run sweeps, extras deduped."""
+    pairs = [(coin, interval) for coin in coins for interval in intervals]
+    for pair in extra_pairs:
+        if tuple(pair) not in pairs:
+            pairs.append(tuple(pair))
+    return pairs
+
+
+def worst_store_lag(
+    pairs: list[tuple[str, str]],
+    *,
+    root: str | Path | None = None,
+    now_ms: int | None = None,
+) -> tuple[str, float | None]:
+    """``(pair_label, lag_minutes)`` for the most-lagging pair in ``pairs``.
+
+    Lag is measured in DATA terms, not file mtimes: minutes beyond one full
+    interval since the pair's last stored bar opened. A just-harvested store
+    reads ~0 at every interval (the forming bar is captured, then finalized
+    by the next run), so one threshold works across 1m and 1h pairs. A pair
+    with no stored bars at all returns ``lag_minutes=None`` — maximally
+    stale, as is an empty ``pairs`` list (fail toward harvesting).
+    """
+    now = int(time.time() * 1000) if now_ms is None else now_ms
+    worst: tuple[str, float | None] = ("", None)
+    for coin, interval in pairs:
+        label = f"{coin}_{interval}"
+        ts = [t for row in load_store(store_path(coin, interval, root)) if (t := _t(row)) is not None]
+        if not ts:
+            return (label, None)
+        step = INTERVAL_MS.get(interval, 60_000)
+        lag = max(0, now - max(ts) - step) / 60_000
+        if worst[1] is None or lag > worst[1]:
+            worst = (label, lag)
+    return worst
+
+
 def harvest(
     coins: list[str],
     intervals: tuple[str, ...] | list[str] = DEFAULT_INTERVALS,
@@ -289,11 +331,7 @@ def harvest(
     ``extra_pairs`` appends individual (coin, interval) pairs outside the
     cross-product (e.g. the breadth universe at 15m only), deduped against it.
     """
-    pairs = [(coin, interval) for coin in coins for interval in intervals]
-    for pair in extra_pairs:
-        if pair not in pairs:
-            pairs.append(pair)
     return [
         harvest_one(coin, interval, base_url=base_url, root=root, now_ms=now_ms, fetch=fetch)
-        for coin, interval in pairs
+        for coin, interval in harvest_pairs(coins, intervals, extra_pairs)
     ]

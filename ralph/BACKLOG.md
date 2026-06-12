@@ -571,9 +571,13 @@ each on ≥90d real history (`hlbot confirm` / `hlbot backtest --config`) before
   the decision rule are pre-registered; run `uv run hlbot experiment
   configs/experiments/b_g014.json` (refuses to run until every 1m span ≥14d;
   `--check-only` is the per-iteration span readout, exit 3 = not ripe).
-  _Store continuity now guarded by loop.sh per-iteration top-up (Iter 33: the
-  systemd harvest timer was found NOT running on the loop box — no root; a
-  >3.5d gap would have silently invalidated this sample)._
+  _Store continuity guard: PROMPT.md step 0 (`harvest-candles
+  --if-stale-minutes 30`, every iteration — Iter 78). The Iter-33 loop.sh
+  top-up never ran in the long-lived loop process: bash parses the loop body
+  at startup, so a loop started before the step was added (00:03 vs 02:08 on
+  Jun 12) executes without it — the store survived on agents' incidental
+  in-session harvests. loop.sh's step (now stale-gated too) activates when
+  the operator next restarts `hlbot-loop.service`._
 - [x] **B-CAD — A/B levers at live-like cadence.** Done (Iter 29, numbers in
   PROGRESS): `--vwap-window` exposed in backtest/confirm/backtest-fetch (window
   keys the cache when ≠60). Cadence explains the backtest/live divergence: maker

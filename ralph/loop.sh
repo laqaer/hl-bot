@@ -57,8 +57,12 @@ for i in $(seq 1 "$ITERS"); do
   # this box (no root), and 1m API retention is only ~3.5d — letting more than
   # that pass between harvests gaps the store and silently invalidates B-G014's
   # multi-week sample. Best-effort: a network blip must not block the iteration.
-  uv run hlbot harvest-candles >/tmp/ralph_harvest.log 2>&1 \
-    && log "candle store topped up" \
+  # NOTE: bash parses this loop body at startup, so edits here never reach an
+  # already-running loop (Iter 78: a loop started 00:03 ran for hours without
+  # this step, added 02:08). PROMPT.md step 0 is the in-iteration backstop;
+  # --if-stale-minutes makes the overlap a no-op instead of a double fetch.
+  uv run hlbot harvest-candles --if-stale-minutes 30 >/tmp/ralph_harvest.log 2>&1 \
+    && log "candle store topped up (or fresh)" \
     || log "harvest-candles failed (continuing; see /tmp/ralph_harvest.log)"
 
   before="$(git rev-parse HEAD)"

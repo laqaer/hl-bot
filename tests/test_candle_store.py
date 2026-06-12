@@ -21,10 +21,12 @@ from hl_bot.backtest.store import (
     frames_from_store,
     harvest,
     harvest_one,
+    harvest_pairs,
     load_store,
     merge_candles,
     save_store,
     store_path,
+    worst_store_lag,
 )
 
 MIN = 60_000
@@ -162,6 +164,75 @@ def test_noop_harvest_adds_nothing(tmp_path):
                       fetch=lambda *a, **k: [_bar(0)])
     assert (res.added, res.total) == (0, 1)
     assert load_store(path) == [_bar(0)]
+
+
+# ---------------------------------------------------------------------------
+# worst_store_lag — the data-freshness gate behind --if-stale-minutes
+# ---------------------------------------------------------------------------
+
+
+def test_worst_store_lag_just_harvested_reads_zero_across_intervals(tmp_path):
+    # Forming bars captured at now: last 1m bar opened 30s ago, last 1h bar
+    # opened 10min ago — both within one interval, so lag is 0 for both.
+    now = 1_000 * HOUR
+    save_store(store_path("BTC", "1m", tmp_path), [_bar(now - 30_000)])
+    save_store(store_path("BTC", "1h", tmp_path), [_bar(now - 10 * MIN)])
+    label, lag = worst_store_lag([("BTC", "1m"), ("BTC", "1h")],
+                                 root=tmp_path, now_ms=now)
+    assert lag == 0.0
+
+
+def test_worst_store_lag_picks_the_most_lagging_pair(tmp_path):
+    now = 1_000 * HOUR
+    # 1m pair: last bar opened 31min ago → lag 30min beyond the interval.
+    save_store(store_path("BTC", "1m", tmp_path), [_bar(now - 31 * MIN)])
+    # 1h pair: last bar opened 90min ago → lag 30min too, but check a worse one:
+    save_store(store_path("ETH", "1h", tmp_path), [_bar(now - 3 * HOUR)])
+    label, lag = worst_store_lag([("BTC", "1m"), ("ETH", "1h")],
+                                 root=tmp_path, now_ms=now)
+    assert (label, lag) == ("ETH_1h", 120.0)
+
+
+def test_worst_store_lag_missing_store_is_maximally_stale(tmp_path):
+    save_store(store_path("BTC", "1m", tmp_path), [_bar(0)])
+    label, lag = worst_store_lag([("BTC", "1m"), ("ZEC", "1m")],
+                                 root=tmp_path, now_ms=MIN)
+    assert (label, lag) == ("ZEC_1m", None)
+    # empty pair list also fails toward harvesting
+    assert worst_store_lag([], root=tmp_path, now_ms=MIN) == ("", None)
+
+
+def test_harvest_pairs_dedups_extras():
+    assert harvest_pairs(["BTC"], ("1m", "15m"),
+                         [("XRP", "15m"), ("BTC", "1m")]) == [
+        ("BTC", "1m"), ("BTC", "15m"), ("XRP", "15m")]
+
+
+def test_harvest_candles_if_stale_skips_fresh_store(monkeypatch, tmp_path):
+    # CLI wiring: a fresh store must short-circuit before any network harvest.
+    import hl_bot.backtest.store as store_mod
+    from hl_bot.cli.main import harvest_candles
+
+    monkeypatch.setenv("HLBOT_DB", str(tmp_path / "t.sqlite"))
+    monkeypatch.setattr(store_mod, "worst_store_lag", lambda pairs, **k: ("BTC_1m", 3.0))
+    monkeypatch.setattr(store_mod, "harvest",
+                        lambda *a, **k: pytest.fail("harvest must not run on a fresh store"))
+    harvest_candles(if_stale_minutes=30.0)
+
+
+def test_harvest_candles_if_stale_runs_when_stale_or_missing(monkeypatch, tmp_path):
+    import hl_bot.backtest.store as store_mod
+    from hl_bot.cli.main import harvest_candles
+
+    monkeypatch.setenv("HLBOT_DB", str(tmp_path / "t.sqlite"))
+    for lag in (45.0, None):  # beyond threshold / no stored bars at all
+        calls: list[bool] = []
+        monkeypatch.setattr(store_mod, "worst_store_lag",
+                            lambda pairs, _lag=lag, **k: ("BTC_1m", _lag))
+        monkeypatch.setattr(store_mod, "harvest",
+                            lambda *a, _calls=calls, **k: _calls.append(True) or [])
+        harvest_candles(if_stale_minutes=30.0)
+        assert calls == [True]
 
 
 # ---------------------------------------------------------------------------
