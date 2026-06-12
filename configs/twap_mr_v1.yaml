@@ -2,9 +2,14 @@ agent: twap_mr_v1
 description: TWAP mean-reversion — fade >2-sigma deviations from 1h VWAP.
 mode: paper
 
-# NOTE: per-agent sharpe is computed from daily PnL; max_drawdown/Calmar need a
-# `capital:` base (see funding_arb_v1.yaml). This config uses net_pnl / edge_bps /
-# n_trades guardrails, sized for the small live notional in use.
+# Capital base (B-GATES2) = the max deployable book: $200/trade × 3 concurrent
+# positions from configs/agent_overrides.json (max_total_notional is unset
+# there, so concurrency binds). DD/Calmar and the G2/G3 gate checks read
+# "fraction of the book at risk". Keep in sync with the overrides — pinned by
+# tests/test_supervisor_configs.py. Guardrails below stay net_pnl / edge_bps /
+# n_trades, sized for the small live notional in use.
+capital: 600
+
 goals:
   primary:
     metric: edge_bps

@@ -2777,3 +2777,46 @@ gates` + confirm together. B-EDGE2b three-armed reruns as the 15m store
 grows. B-EDGE2f at ≥30d paper books (~Jul 8) — `hlbot gates` now shows the
 countdown blockers directly. Idle queue: B-GATES2 (capital bases),
 B16b/B-PROP/B17 capital-formation specs.
+
+## Iteration 54 — 2026-06-12 — B-GATES2: capital bases unblock the G2/G3 drawdown checks
+
+**Why this.** Research tasks still time-blocked (B-G014 needs 1m store span
+≥14d, ~Jun 23–26; B-EDGE2b reran Iters 48–49; B-EDGE2f needs ≥30d paper
+books, ~Jul 8). Top idle item was B-GATES2, filed by Iter 53's own live-fire:
+`hlbot gates` showed twap_mr_v1's G2/G3 maxDD check unknown-blocked because
+no evidence-bearing config sets `capital:` — fractional DD is N/A without a
+base, and an unknown blocks the gate (correctly, but forever).
+
+**Decision — bases = the agent's max deployable book, derived not guessed:**
+- `twap_mr_v1: capital: 600` — $200/trade × 3 max_concurrent_positions from
+  configs/agent_overrides.json (max_total_notional unset there, so
+  concurrency binds).
+- `breakout_v1` / `breakout_er_v1: capital: 60` — the $60 max_total_notional
+  in their build_roster entries.
+Each YAML carries the derivation as a comment. femr_v1 deliberately skipped:
+all-time negative, no active promotion path; its base would be $20
+(min($40 total, $20×1 concurrent) — concurrency binds, not the $40), worth
+adding only if it ever earns re-evaluation.
+
+**Guarding the "wrong base = misleading DD%" risk.** New
+`test_capital_bases_match_roster_book_caps`: builds the real roster with the
+committed agent_overrides.json and asserts every YAML `capital:` whose agent
+is in the roster equals min(max_total_notional, per_trade × concurrency) —
+so a future cap bump that forgets the YAML fails CI instead of silently
+shrinking reported DD%. Plus an explicit-values test so *removing* a
+`capital:` line also fails (the derivation test skips absent ones).
+
+**Evidence.** 332 → **334 tests pass**, ruff clean. Live-fired on scratch
+DBs (40d seeded twap_mr_v1 live book, agent_state live_small): with a −$20
+dip the G2 DD check resolves to 3.3% of the $600 base → **G2 PASS** (was
+unknown-blocked), G3 blocks only on span (39d < 60d); with a −$70 dip the
+gate blocks with the named number "maxDD −11.1% (need better than −10%)" —
+11.1% not 11.7% because DD is measured from the equity *peak* (+$30 accrued
+pre-dip), the correct semantics. Both directions work; no state mutated
+(`gates` is read-only).
+
+**What's next (loop).** B-G014 when 1m span ≥14d (~Jun 23–26; w=240
+maker-rest the arm to watch) — `hlbot gates` + confirm judge the winner
+together, DD checks now live. B-EDGE2b three-armed reruns as the 15m store
+grows. B-EDGE2f at ≥30d paper books (~Jul 8). Idle queue: B16b/B-PROP/B17
+capital-formation specs, B-SCALE doc once G2 evidence is real.

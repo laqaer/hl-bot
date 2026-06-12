@@ -187,12 +187,17 @@ Keep it ruthlessly prioritized: the top item should always be the highest-levera
   30d-*window* checks, breach *history* being invisible (only currently-
   failing guardrails blocked promotion), and G2/G3 having no code at all.
   Informational only; promotion stays human-gated. G0 stays `hlbot confirm`.
-- [ ] **B-GATES2 — `capital:` bases for evidence-bearing agents.** `hlbot
-  gates` shows twap_mr_v1's G2/G3 maxDD as unknown-blocked: its YAML has no
-  `capital:` so fractional DD is N/A (same for the breakout configs). Pick
-  bases matching the actual book caps (e.g. breakout's $60) — operator-
-  checkable one-liners; a wrong base makes DD% misleading, so don't guess
-  silently.
+- [x] **B-GATES2 — `capital:` bases for evidence-bearing agents.** Done
+  (Iter 54): twap_mr_v1 `capital: 600` ($200/trade × 3 concurrent from
+  agent_overrides.json), breakout_v1/breakout_er_v1 `capital: 60` (roster
+  max_total_notional) — each with a derivation comment. Pinned by
+  `test_capital_bases_match_roster_book_caps`: every YAML `capital:` whose
+  agent is in the roster must equal min(max_total_notional, per_trade ×
+  concurrency), so a cap change that forgets the YAML fails CI. Live-fired:
+  G2/G3 DD checks now evaluate (3.3% dip → G2 PASS; 11.1% dip → named
+  blocker). femr_v1 deliberately left without one — all-time negative, no
+  promotion path active; add (cap $20 = $20×1 concurrent) if it ever earns
+  re-evaluation.
 - [x] **B6/B7 — Per-agent funding attribution + Sharpe.** Done: funding split to
   the agent holding the coin at funding time (scoring includes it in net/edge);
   per-agent Sharpe from daily PnL so sharpe-gates evaluate. Tested. (Iteration 7.)

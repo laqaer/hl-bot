@@ -2,6 +2,11 @@ agent: breakout_v1
 description: Donchian close-channel momentum — 96h entry / 24h exit channel on 15m bars (B-EDGE2).
 mode: paper
 
+# Capital base (B-GATES2) = the $60 max_total_notional book cap in the roster
+# entry (agents/runtime.py build_roster), so DD% reads "fraction of the $60
+# book". Keep in sync with the roster — pinned by tests/test_supervisor_configs.py.
+capital: 60
+
 # Numbers are sized for the roster's paper config ($20/trade, $60 book).
 # Backtest basis (15m × 52d store, 10 coins): taker +36.4bps, win 53-55%,
 # maxDD -9.1%. NOTE: while the agent is paper-mode the supervisor scores it

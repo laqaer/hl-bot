@@ -63,6 +63,44 @@ def test_breakout_er_config_loads_paper_only():
     assert goals[0].promotion.to_mode == "live_small"
 
 
+def _effective_book_cap(cfg) -> float:
+    """Max deployable notional: the total cap or per-trade × concurrency."""
+    return min(
+        cfg.max_total_notional,
+        cfg.max_notional_per_trade * cfg.max_concurrent_positions,
+    )
+
+
+def test_capital_bases_set_for_evidence_bearing_agents():
+    # B-GATES2: without `capital:` the G2/G3 drawdown checks are unknown-blocked.
+    assert load_goals(CONFIG_DIR / "twap_mr_v1.yaml")[0].capital == 600
+    assert load_goals(CONFIG_DIR / "breakout_v1.yaml")[0].capital == 60
+    assert load_goals(CONFIG_DIR / "breakout_er_v1.yaml")[0].capital == 60
+
+
+def test_capital_bases_match_roster_book_caps(conn):
+    """Every YAML `capital:` whose agent is in the roster equals its book cap.
+
+    A wrong base makes DD% misleading (B-GATES2): if a notional cap changes in
+    the roster defaults or agent_overrides.json without the YAML following,
+    this fails. YAMLs without `capital:` and agents outside the roster (e.g.
+    the funding_arb_v1 reference skeleton) are skipped.
+    """
+    from hl_bot.agents.runtime import build_roster, load_agent_overrides
+
+    overrides = load_agent_overrides(CONFIG_DIR / "agent_overrides.json")
+    roster = {a.name: a for a in build_roster(conn, overrides)}
+    checked = []
+    for path in sorted(CONFIG_DIR.glob("*.yaml")):
+        g = load_goals(path)[0]
+        if g.capital is None or g.agent not in roster:
+            continue
+        cap = _effective_book_cap(roster[g.agent].cfg)
+        assert g.capital == cap, f"{g.agent}: capital {g.capital} != book cap {cap}"
+        checked.append(g.agent)
+    assert set(checked) >= {"twap_mr_v1", "breakout_v1", "breakout_er_v1"}
+
+
 def test_bleeding_twap_is_paused_by_supervisor(conn):
     now = int(time.time() * 1000)
     # Simulate a previously promoted agent: pause must force it back to paper,

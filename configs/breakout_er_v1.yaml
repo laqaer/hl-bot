@@ -2,6 +2,11 @@ agent: breakout_er_v1
 description: Donchian 96h/24h channel on 15m bars + efficiency-ratio trend-quality entry gate (B-EDGE2e).
 mode: paper
 
+# Capital base (B-GATES2) = the $60 max_total_notional book cap in the roster
+# entry (agents/runtime.py build_roster), so DD% reads "fraction of the $60
+# book". Keep in sync with the roster — pinned by tests/test_supervisor_configs.py.
+capital: 60
+
 # Paper A/B arm beside breakout_v1: identical channel, plus min_efficiency_ratio
 # 0.1 over 96 bars (24h) at entry. Backtest basis (15m × 52.3d store, combined
 # 20-coin universe, taker): +43.9bps / OOS +36.1bps sharpe +3.96 — the unfiltered
