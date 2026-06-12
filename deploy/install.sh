@@ -40,6 +40,9 @@ log "4/8 fetch repo into ${HLBOT_HOME} (branch ${BRANCH})"
 if [ -d "${HLBOT_HOME}/.git" ]; then
   git -C "$HLBOT_HOME" fetch --depth 1 origin "$BRANCH"
   git -C "$HLBOT_HOME" checkout -q "$BRANCH"
+  # The repo is owned by the hlbot service user but the installer's git runs
+  # as root: declare the exception or git refuses ("dubious ownership").
+  git config --global --add safe.directory "$HLBOT_HOME" 2>/dev/null || true
   if [ -n "$(git -C "$HLBOT_HOME" log --oneline "origin/${BRANCH}..HEAD" 2>/dev/null)" ] && [ "${FORCE_RESET:-0}" != "1" ]; then
     log "REFUSED: unpushed local commits on $(git -C "$HLBOT_HOME" rev-parse --abbrev-ref HEAD) — push them or rerun with FORCE_RESET=1"
     exit 1
