@@ -390,7 +390,9 @@ def test_experiment_record_is_self_contained_and_serializable(tmp_path):
     _write_store(tmp_path, "ETH", "1m", 3 * DAY_BARS + 1)
     rep = check_ripeness(spec, root=tmp_path)
     # one result carries a cost ladder + a None sharpe to pin serialization
-    s = ScenarioResult("base", 0.0, 1.0, 1.0, 30)
+    s = ScenarioResult("base", 0.0, 1.0, 1.0, 30, pocket_share=1.04,
+                       pocket_window="2026-04-21..2026-06-03",
+                       pocket_window_frac=0.25)
     full = ConfirmationResult(
         agent="base", confirmed=True, reasons=["ok"], in_sample=s, out_of_sample=s,
         cost_ladder=[ScenarioResult("taker-2x", -1.0, -2.0, None, 10)],
@@ -421,9 +423,13 @@ def test_experiment_record_is_self_contained_and_serializable(tmp_path):
     assert base["confirmed"] is True and base["reasons"] == ["ok"]
     assert base["robust_to_2x_slippage"] is True and base["n_frames"] == 2
     assert base["in_sample"]["n_trades"] == 30
+    # the pocket diagnostic persists in the record (asdict carries it)
+    assert base["in_sample"]["pocket_share"] == 1.04
+    assert base["in_sample"]["pocket_window"] == "2026-04-21..2026-06-03"
     assert base["cost_ladder"][0] == {
         "name": "taker-2x", "net_pnl": -1.0, "edge_bps": -2.0,
-        "sharpe": None, "n_trades": 10}
+        "sharpe": None, "n_trades": 10, "pocket_share": None,
+        "pocket_window": None, "pocket_window_frac": None}
     assert w240["vwap_window"] == 240 and w240["maker_fill"] == "resting"
     assert w240["config"] == {"stop_loss_pct": 0.03}
 

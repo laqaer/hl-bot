@@ -4111,3 +4111,61 @@ b_edge2_1h ~Jul 10). B-EDGE2f at ≥30d paper books (~Jul 8); xmom paper card
 funding clamp if mixed funding-sign agents ever share the live book). Edge
 hunt status: twap_mr (proven, live) + breakout-ER (paper, now under a
 regime-fragility cloud pending b_edge2b).
+
+## Iteration 76 — 2026-06-12 — B-POCKET: profit time-concentration is now a number in every confirm
+
+**Ripeness checks** (per-iteration readout): b_edge2b NOT RIPE (15m 52.4d
+< 60d, ~Jun 20); b_g014 NOT RIPE (1m 4.0d < 14d, ~Jun 26); b_edge3 +
+b_edge2_1h NOT RIPE (1h LIT 171.9d < 200d, ~Jul 10). Store healthy, zero
+missing bars across all universes.
+
+**Why this.** Iters 74–75 ended on the same warning: the Jun-20 b_edge2b
+verdict must be read against the possibility that a 15m PASS's profit
+"still lives entirely in the Apr–Jun pocket" — but the harness had no
+number for that shape, so the most important read of the month was going
+to be an eyeball call. Two strategy families died of exactly this in two
+days. Making the pocket a first-class, automatically-recorded metric is
+the highest-leverage unblocked move while all four specs wait on the
+calendar.
+
+**Changed.**
+- `confirm.max_window_pnl_share(equity_curve, window_frac=0.25)` — pure,
+  O(n) (sliding-window minimum over the per-bar equity curve): largest
+  share of total net PnL earned in any contiguous window spanning 25% of
+  the sample's calendar time, plus that window's timestamps. Reads:
+  ~0.25 = diffuse edge, ~1.0 = one pocket, >1.0 = the rest of the sample
+  LOSES. None for losing/too-short runs (concentration of a loss is not
+  the diagnostic).
+- `ScenarioResult` grows `pocket_share` / `pocket_window` (UTC dates) /
+  `pocket_window_frac` (frac recorded per-field so a future constant
+  change can't silently redefine old records). Computed uniformly in
+  `_run` for IS, OOS, and every cost-ladder rung; shown in `row()` +
+  a legend line in `summary()`; flows into `hlbot confirm`,
+  `hlbot experiment`, and persisted verdict records via the existing
+  `asdict` serialization — zero changes to experiments.py.
+- **Verdict logic untouched** (confirmed-bit identical by construction;
+  pinned by test) and **frozen specs unmodified** — informational only,
+  the decision rules stay as pre-registered.
+
+**Evidence.** 482 → **488 tests pass** (+6: diffuse≈0.25 / pocket≈1.0 with
+correct dates / >1 when rest loses / None on losing+thin curves / confirm
+wiring incl. frac pin / no pocket noise on losing summaries; record test
+extended to pin persistence); ruff clean. Live-fired on the real 15m
+store — the combined-ER breakout arm (b_edge2b's promotion-relevant
+config, re-read on the ALREADY-SEEN 52.4d sample, so not a peek: the
+spec's gate waits on post-Jun-12 data): still ✅ CONFIRMED (taker IS
++47.7 / OOS +35.6bps — window rolled a few hours vs Iter 49), and the
+new diagnostic says the quiet part out loud: **taker-1x pocket 0.69
+(May 25–Jun 5), in-sample 0.87 (May 19–26 — one week is 87% of IS
+profit), OOS 2.20 (Jun 2–5 — outside one 4-day burst the OOS tail
+loses money)**. The current G0 PASS is the pocket, quantified — the
+Jun-20 rerun now has a baseline to beat instead of an adjective.
+
+**What's next (loop).** Per-iteration: the four `--check-only` readouts
+(b_edge2b ~Jun 20 FIRST — read pocket_share against today's 0.69/0.87/
+2.20 baseline; b_g014 ~Jun 26; b_edge3 + b_edge2_1h ~Jul 10). B-EDGE2f at
+≥30d paper books (~Jul 8); xmom paper card ~Jul 12. Idle queue: B-SCALE
+doc on real G2 evidence; per-agent funding clamp if mixed funding-sign
+agents ever share the live book. Possible follow-up if Jun-20 needs it:
+a pocket-aware reading aid in `hlbot experiment` output (the records
+already carry the numbers).

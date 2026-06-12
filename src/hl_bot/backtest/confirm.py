@@ -13,7 +13,11 @@ returns an explicit PASS/FAIL:
    clears the bar AND both splits have enough trades to mean anything — a
    +10bps edge on 2 trades is noise, not evidence (a real 1d-cadence carry run
    "passed" exactly that way before the floor existed). Robustness to 2x
-   slippage is reported separately.
+   slippage is reported separately, and so is profit time-concentration
+   (``pocket_share`` — see ``max_window_pnl_share``): a PASS whose net lives
+   in one quarter-of-sample window is a regime pocket wearing a G0 badge,
+   the exact shape that killed xmom and the 1h breakout read (Iters 74–75).
+   Informational only; the verdict logic does not consume it.
 
 This is intentionally strict: it is cheaper to reject a fake edge here than to
 discover it live.
@@ -21,14 +25,69 @@ discover it live.
 
 from __future__ import annotations
 
+from collections import deque
 from collections.abc import Callable
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
 
 from ..agents.base import Agent
 from ..db.schema import init_db
 from .engine import Backtester, CostModel, Frame, _curve_stats
 
 AgentFactory = Callable[[object], Agent]   # conn -> Agent
+
+# Window length for the profit-concentration diagnostic, as a fraction of the
+# scenario's calendar span. 0.25 makes the reading self-normalizing: a diffuse
+# edge earns ~0.25 of its net in its best quarter-of-sample window; an edge
+# that is one regime pocket earns ~1.0 there (and >1.0 when the rest of the
+# sample loses). Two strategy families (xmom Iter 74, Donchian Iter 75) passed
+# G0 on samples whose entire profit later proved to be one Apr–Jun pocket —
+# this metric makes that shape a number instead of an eyeball call.
+POCKET_WINDOW_FRAC = 0.25
+
+
+def max_window_pnl_share(
+    equity_curve: list[tuple[int, float]],
+    *,
+    window_frac: float = POCKET_WINDOW_FRAC,
+) -> tuple[float, int, int] | None:
+    """Largest share of total net PnL earned in any contiguous window spanning
+    ``window_frac`` of the curve's calendar time.
+
+    Returns ``(share, start_ts_ms, end_ts_ms)`` for the best window, or
+    ``None`` when the run is too short to judge (<3 points) or lost money
+    overall (concentration of a loss is not the diagnostic this exists for).
+    O(n) via a sliding-window minimum over the equity series.
+    """
+    if len(equity_curve) < 3:
+        return None
+    t_first, e_first = equity_curve[0]
+    t_last, e_last = equity_curve[-1]
+    total, span_ms = e_last - e_first, t_last - t_first
+    if total <= 0 or span_ms <= 0:
+        return None
+    window_ms = span_ms * window_frac
+    mins: deque[int] = deque()   # candidate start indices, equity strictly increasing
+    best: tuple[float, int, int] | None = None
+    for j, (tj, ej) in enumerate(equity_curve):
+        while mins and tj - equity_curve[mins[0]][0] > window_ms:
+            mins.popleft()
+        if mins:
+            gain = ej - equity_curve[mins[0]][1]
+            if best is None or gain > best[0]:
+                best = (gain, equity_curve[mins[0]][0], tj)
+        # Pop equal equities too: the surviving (later) index gives the
+        # tighter window for the same gain.
+        while mins and equity_curve[mins[-1]][1] >= ej:
+            mins.pop()
+        mins.append(j)
+    if best is None or best[0] <= 0:
+        return None
+    return best[0] / total, best[1], best[2]
+
+
+def _utc_date(ts_ms: int) -> str:
+    return datetime.fromtimestamp(ts_ms / 1000, tz=UTC).strftime("%Y-%m-%d")
 
 
 @dataclass
@@ -38,11 +97,21 @@ class ScenarioResult:
     edge_bps: float | None
     sharpe: float | None
     n_trades: int
+    # Profit-concentration diagnostic (informational, never gates the verdict):
+    # share of net PnL earned in the best pocket_window_frac-of-sample window,
+    # the window's UTC dates, and the fraction the share was computed at —
+    # recorded so a future frac change can't silently re-define old records.
+    pocket_share: float | None = None
+    pocket_window: str | None = None
+    pocket_window_frac: float | None = None
 
     def row(self) -> str:
         edge = "—" if self.edge_bps is None else f"{self.edge_bps:+.1f}bps"
         sh = "—" if self.sharpe is None else f"{self.sharpe:+.2f}"
-        return f"{self.name:14s} net ${self.net_pnl:+8.2f}  edge {edge:>10s}  sharpe {sh:>7s}  trades {self.n_trades}"
+        base = f"{self.name:14s} net ${self.net_pnl:+8.2f}  edge {edge:>10s}  sharpe {sh:>7s}  trades {self.n_trades}"
+        if self.pocket_share is not None:
+            base += f"  pocket {self.pocket_share:.2f} ({self.pocket_window})"
+        return base
 
 
 @dataclass
@@ -67,6 +136,13 @@ class ConfirmationResult:
             "  cost stress (full sample):",
         ]
         lines += [f"    {s.row()}" for s in self.cost_ladder]
+        scenarios = [self.in_sample, self.out_of_sample, *self.cost_ladder]
+        if any(s.pocket_share is not None for s in scenarios):
+            frac = next(s.pocket_window_frac for s in scenarios if s.pocket_share is not None)
+            lines.append(
+                f"  pocket = share of net PnL in the best {frac:.0%}-of-sample window"
+                f" (~{frac:.2f} diffuse, ~1 one pocket, >1 rest of sample loses)"
+            )
         lines.append(f"  robust to 2x slippage: {self.robust_to_2x_slippage}")
         for r in self.reasons:
             lines.append(f"  - {r}")
@@ -82,8 +158,16 @@ def _run(
     res = bt.run(factory(conn), frames)
     sharpe, _, _ = _curve_stats(res.equity_curve, periods_per_year=periods_per_year)
     sc = res.scorecard
+    pocket = max_window_pnl_share(res.equity_curve)
+    share = window = frac = None
+    if pocket is not None:
+        share = pocket[0]
+        window = f"{_utc_date(pocket[1])}..{_utc_date(pocket[2])}"
+        frac = POCKET_WINDOW_FRAC
     return ScenarioResult(name=name, net_pnl=sc.net_pnl, edge_bps=sc.edge_bps,
-                          sharpe=sharpe, n_trades=sc.n_trades)
+                          sharpe=sharpe, n_trades=sc.n_trades,
+                          pocket_share=share, pocket_window=window,
+                          pocket_window_frac=frac)
 
 
 def confirm_strategy(

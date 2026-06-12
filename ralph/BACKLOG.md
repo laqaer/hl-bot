@@ -270,6 +270,24 @@ Keep it ruthlessly prioritized: the top item should always be the highest-levera
   clobber; `--no-record` opts out. Builder/writer pure + tested; CLI wiring
   pinned by tests (recorded verdict, peek flagging, opt-out, sha match,
   git-rev degrade path).
+- [x] **B-POCKET — Profit time-concentration diagnostic in the confirm
+  harness.** Done (Iter 76): two strategy families in two days (xmom Iter 74,
+  1h breakout Iter 75) turned out to be one Apr–Jun pocket wearing a G0
+  badge, and the Jun-20 b_edge2b verdict was due to be judged for exactly
+  that shape — by eyeball. Now `confirm.max_window_pnl_share` (O(n) sliding-
+  window min over the per-bar equity curve) reports the share of net PnL
+  earned in the best 25%-of-sample contiguous window (~0.25 diffuse, ~1.0
+  one pocket, >1 = rest of sample loses) per scenario — IS/OOS and every
+  cost-ladder rung — with the window's UTC dates; fields ride
+  `ScenarioResult` so `hlbot confirm`, `hlbot experiment`, and the persisted
+  verdict records all carry it automatically (frac recorded per-field so a
+  future change can't redefine old records). Informational ONLY — verdict
+  logic untouched, frozen specs unmodified. First real reading (already-seen
+  52.4d 15m sample, NOT a peek — b_edge2b's gate waits on post-Jun-12 data):
+  the breakout-ER combined-arm G0 PASS has **taker-1x pocket 0.69
+  (May 25–Jun 5), IS 0.87, OOS 2.20 (Jun 2–5: the OOS tail outside one
+  4-day burst LOSES)** — the PASS is the pocket, quantified. Jun-20 baseline
+  for comparison.
 - [x] **B-RIPE — Gap-aware experiment ripeness.** Done (Iter 70): `check_ripeness`
   judged spans only — `coverage_of` computes interval-aligned holes but the
   ripeness gate discarded them, so a harvester outage >3.5d (permanent 1m data
@@ -660,6 +678,11 @@ each on ≥90d real history (`hlbot confirm` / `hlbot backtest --config`) before
     Jun-20 verdict against B-EDGE2g below: the same time-horizons at 1h on
     208d FAIL all three arms (IS strongly negative); a 15m PASS whose gain
     still lives entirely in the Apr–Jun pocket is the warned-about shape.**
+    The pocket question is now a number (B-POCKET, Iter 76): the verdict
+    record will carry `pocket_share` per scenario; today's already-seen-
+    sample baseline for the combined-ER arm is taker-1x 0.69 / IS 0.87 /
+    OOS 2.20 — a PASS whose pocket numbers don't fall on new data is the
+    pocket renewing its badge, not a durable edge.
   - [x] **B-EDGE2g — extended-history read at 1h cadence (span-for-cadence).**
     Done (Iter 75): the Iter-74 1h harvest made ~208d available NOW vs
     ~Sep for 90d of 15m, so the xmom-killer test was pointed at breakout
