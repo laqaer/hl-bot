@@ -124,6 +124,113 @@ CREATE TABLE IF NOT EXISTS goal_evaluations (
 CREATE INDEX IF NOT EXISTS idx_goal_eval_agent ON goal_evaluations(agent, ts_ms);
 """
 
+# Versioned migrations, applied in order under PRAGMA user_version. Append-only:
+# never edit or reorder an entry that has shipped — existing DBs track how many
+# they have applied by index. Each entry must be idempotent-safe on a fresh DB
+# (fresh DBs run the base SCHEMA and then every migration).
+MIGRATIONS: list[str] = [
+    # 1: per-agent funding attribution (B6). Each exchange funding payment is
+    # prorated across the agents holding that coin at payment time; any
+    # unattributable remainder lands on the '_account' residual row so the
+    # per-agent totals always reconcile to the exchange.
+    """
+    CREATE TABLE IF NOT EXISTS funding_attribution (
+        time_ms         INTEGER NOT NULL,
+        coin            TEXT NOT NULL,
+        agent           TEXT NOT NULL,
+        usdc            REAL NOT NULL,
+        PRIMARY KEY (time_ms, coin, agent)
+    );
+    CREATE INDEX IF NOT EXISTS idx_funding_attr_agent
+        ON funding_attribution(agent, time_ms);
+    """,
+    # 2: simulated paper trading (promotion gates need scoreable paper
+    # performance — real `fills` only exist for live orders).
+    """
+    CREATE TABLE IF NOT EXISTS paper_fills (
+        id              INTEGER PRIMARY KEY AUTOINCREMENT,
+        time_ms         INTEGER NOT NULL,
+        agent           TEXT NOT NULL,
+        coin            TEXT NOT NULL,
+        side            TEXT NOT NULL,            -- 'B' buy / 'A' sell
+        px              REAL NOT NULL,
+        sz              REAL NOT NULL,
+        closed_pnl      REAL NOT NULL DEFAULT 0,
+        fee             REAL NOT NULL DEFAULT 0,
+        cloid           TEXT,
+        reasoning       TEXT
+    );
+    CREATE INDEX IF NOT EXISTS idx_paper_fills_agent ON paper_fills(agent, time_ms);
+
+    CREATE TABLE IF NOT EXISTS paper_orders (
+        -- Resting simulated maker orders, filled only when price CROSSES the
+        -- limit (conservative: touch is not enough).
+        cloid           TEXT PRIMARY KEY,
+        agent           TEXT NOT NULL,
+        coin            TEXT NOT NULL,
+        side            TEXT NOT NULL,
+        sz              REAL NOT NULL,
+        limit_px        REAL NOT NULL,
+        created_ms      INTEGER NOT NULL,
+        reasoning       TEXT
+    );
+
+    CREATE TABLE IF NOT EXISTS paper_funding (
+        -- Simulated hourly funding accrual on open paper positions; the whole
+        -- edge of the carry strategies, so paper scorecards must include it.
+        time_ms         INTEGER NOT NULL,
+        agent           TEXT NOT NULL,
+        coin            TEXT NOT NULL,
+        usdc            REAL NOT NULL,
+        PRIMARY KEY (time_ms, agent, coin)
+    );
+    """,
+    # 3: maker order lifecycle state machine (replaces replaying the whole
+    # decision audit log to find working orders).
+    """
+    CREATE TABLE IF NOT EXISTS maker_orders (
+        cloid           TEXT PRIMARY KEY,
+        agent           TEXT NOT NULL,
+        coin            TEXT NOT NULL,
+        side            TEXT NOT NULL,            -- 'B' / 'A'
+        sz              REAL NOT NULL,
+        filled_sz       REAL NOT NULL DEFAULT 0,
+        limit_px        REAL NOT NULL,
+        oid             INTEGER,
+        state           TEXT NOT NULL,            -- quoted/partial/filled/cancelled/expired/taker_fallback
+        urgency         TEXT NOT NULL DEFAULT 'normal',  -- normal/exit/stop
+        reduce_only     INTEGER NOT NULL DEFAULT 0,
+        created_ms      INTEGER NOT NULL,
+        updated_ms      INTEGER NOT NULL,
+        reprice_count   INTEGER NOT NULL DEFAULT 0,
+        parent_cloid    TEXT                      -- set when this quote replaced another
+    );
+    CREATE INDEX IF NOT EXISTS idx_maker_orders_agent ON maker_orders(agent, state);
+    """,
+    # 4: G0 confirmation stamps — `hlbot confirm --record` writes one row per
+    # run; promotion stages with require_g0 demand a fresh confirmed=1 row.
+    """
+    CREATE TABLE IF NOT EXISTS confirmations (
+        id              INTEGER PRIMARY KEY AUTOINCREMENT,
+        agent           TEXT NOT NULL,
+        ts_ms           INTEGER NOT NULL,
+        dataset         TEXT,                     -- coins/interval/days fingerprint
+        prefer          TEXT,                     -- taker / maker
+        confirmed       INTEGER NOT NULL,
+        oos_edge_bps    REAL,
+        summary         TEXT
+    );
+    CREATE INDEX IF NOT EXISTS idx_confirmations_agent ON confirmations(agent, ts_ms);
+    """,
+]
+
+
+def _apply_migrations(conn: sqlite3.Connection) -> None:
+    current = int(conn.execute("PRAGMA user_version").fetchone()[0])
+    for version, script in enumerate(MIGRATIONS[current:], start=current + 1):
+        conn.executescript(script)
+        conn.execute(f"PRAGMA user_version = {version}")
+
 
 def connect(db_path: str | Path) -> sqlite3.Connection:
     """Open a SQLite connection with sane defaults."""
@@ -138,7 +245,8 @@ def connect(db_path: str | Path) -> sqlite3.Connection:
 
 
 def init_db(db_path: str | Path) -> sqlite3.Connection:
-    """Initialize the schema. Idempotent."""
+    """Initialize the schema and apply any pending migrations. Idempotent."""
     conn = connect(db_path)
     conn.executescript(SCHEMA)
+    _apply_migrations(conn)
     return conn

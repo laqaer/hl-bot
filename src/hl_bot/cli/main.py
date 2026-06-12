@@ -25,6 +25,7 @@ from ..agents.veto import VetoAgent
 from ..agents.xfund_carry import XFundCarryAgent
 from ..config import CONFIG_DIR, Settings
 from ..db.schema import init_db
+from ..engine.views import enrich_view as _enrich_view
 from ..ingest.hyperliquid import ingest_fills, ingest_funding, snapshot_equity
 from ..reports.daily import build as build_report
 from ..reports.daily import send_telegram
@@ -118,9 +119,33 @@ def score():
 @app.command()
 def supervisor(configs: Path = CONFIG_DIR):
     """Evaluate goals/guardrails for every agent config in ./configs."""
-    conn, _ = _conn()
-    actions = supervise(conn, configs)
+    conn, s = _conn()
+    actions = supervise(conn, configs, data_dir=s.db_path.parent)
     console.print(json.dumps(actions, indent=2) if actions else "[dim]no actions taken[/dim]")
+
+
+@app.command()
+def kill(reason: str = typer.Argument("manual kill")):
+    """Trip the kill switch: halt all NEW orders and promotions until `hlbot resume`.
+
+    Flatten/cancel (risk reduction) stays allowed. Sticky across restarts."""
+    from ..ops.kill import trip_kill
+
+    _, s = _conn()
+    line = trip_kill(s.db_path.parent, reason)
+    console.print(f"[red]KILL tripped[/red]: {line}")
+
+
+@app.command()
+def resume():
+    """Clear the kill switch and allow trading again."""
+    from ..ops.kill import clear_kill
+
+    _, s = _conn()
+    if clear_kill(s.db_path.parent):
+        console.print("[green]kill cleared — trading may resume[/green]")
+    else:
+        console.print("[dim]kill switch was not active[/dim]")
 
 
 @app.command()
@@ -215,137 +240,127 @@ def tick(coins: str = "BTC,ETH,SOL,HYPE,ZEC"):
         console.print(f"  {d.agent} {d.action} {d.coin or ''} {tag} :: {d.reasoning}")
 
 
-def _enrich_view(view, api_url: str, vol: dict[str, float]) -> None:
-    """Augment a MarketView with 1h candles (top-vol coins), spot mids, liquidations."""
-    import httpx as _httpx
+@app.command()
+def run(
+    live: bool = False,
+    execution: str = "maker",
+    interval: int = 20,
+    ingest_every_s: int = 300,
+    supervise_every_s: int = 900,
+    enrich_every_s: int = 300,
+    max_cycles: int = 0,
+    profile: str = "",
+):
+    """Long-running event-paced engine — replaces the 5-min cron tick.
 
-    # ---- top-20-by-volume universe ----
-    top = sorted(vol.items(), key=lambda kv: kv[1], reverse=True)[:20]
-    top_coins = [c for c, _ in top]
+    Every ``interval`` seconds: build a market view (WS snapshot preferred,
+    REST fallback) and run one consolidated cycle (paper sim + live execution).
+    Every ``ingest_every_s``: ingest fills/funding/equity and refresh
+    attribution; trips the kill switch on an equity-floor breach.
+    Every ``supervise_every_s``: evaluate goals (auto-promotion lives here).
+    ``max_cycles`` > 0 exits after N cycles (for testing/ops checks).
+    ``--profile moonshot`` runs the ring-fenced sleeve: own data dir/DB/KILL,
+    configs/moonshot/ contracts, and (via env) its own sub-account + wallet.
+    """
+    import os
 
-    candles_1h: dict[str, dict] = {}
-    closes_by_coin: dict[str, list[float]] = {}
-    spot_mids: dict[str, float] = {}
-    liquidations: list[dict] = []
+    if profile:
+        os.environ["HLBOT_PROFILE"] = profile
 
-    with _httpx.Client(timeout=15) as cli:
-        # 60 × 1m candles -> vwap & sigma per top coin
-        end_ms = int(time.time() * 1000)
-        start_ms = end_ms - 60 * 60_000
-        for coin in top_coins:
-            try:
-                cs = cli.post(api_url + "/info", json={
-                    "type": "candleSnapshot",
-                    "req": {"coin": coin, "interval": "1m",
-                            "startTime": start_ms, "endTime": end_ms},
-                }).json() or []
-                if not isinstance(cs, list) or len(cs) < 10:
-                    continue
-                pxs, vols = [], []
-                for k in cs:
-                    try:
-                        c_px = float(k.get("c", 0))
-                        c_vol = float(k.get("v", 0))
-                        if c_px > 0:
-                            pxs.append(c_px)
-                            vols.append(c_vol)
-                    except (TypeError, ValueError):
-                        continue
-                if len(pxs) < 10:
-                    continue
-                tot_vol = sum(vols)
-                vwap = sum(p * v for p, v in zip(pxs, vols, strict=False)) / tot_vol if tot_vol > 0 else sum(pxs) / len(pxs)
-                mean = sum(pxs) / len(pxs)
-                var = sum((p - mean) ** 2 for p in pxs) / len(pxs)
-                sigma = var ** 0.5
-                candles_1h[coin] = {"vwap": vwap, "sigma": sigma, "n": len(pxs)}
-                closes_by_coin[coin] = pxs
-            except Exception:  # noqa: BLE001
-                continue
+    from ..agents.runtime import fetch_market_view
+    from ..engine.runner import build_roster, run_cycle
+    from ..engine.views import enrich_view, overlay_ws_snapshot
+    from ..ingest.hyperliquid import ingest_fills as _ingest_fills
+    from ..ingest.hyperliquid import ingest_funding as _ingest_funding
+    from ..ingest.hyperliquid import snapshot_equity as _snapshot_equity
+    from ..ops.kill import equity_floor_breached, kill_active, trip_kill
+    from ..scoring.positions import refresh_attribution
 
-        # Spot mids for BTC/ETH/SOL. HL spot pairs use wrapped tokens
-        # (UBTC/USDC=@142, UETH/USDC=@151, USOL/USDC=@156) and the midPx is
-        # quoted in scaled native units. We use allMids @N indices and scale
-        # against the perp mid to detect basis: skip pair if it would produce
-        # a clearly nonsensical (>5%) basis (means we don't have a clean spot).
+    conn, s = _conn()
+    data_dir = s.db_path.parent
+    heartbeat_path = data_dir / "run_heartbeat"
+
+    exchange = info = None
+    if live:
+        from ..exec.orders import build_exchange, telegram_alert
         try:
-            spot = cli.post(api_url + "/info", json={"type": "spotMetaAndAssetCtxs"}).json()
-            if isinstance(spot, list) and len(spot) == 2:
-                meta = spot[0] or {}
-                ctxs = spot[1] or []
-                universe = meta.get("universe", []) or []
-                tokens = meta.get("tokens", []) or []
-                name_by_token = {t.get("index"): t.get("name") for t in tokens}
-                # token szDecimals required to normalize price
-                wei_by_token = {t.get("index"): int(t.get("weiDecimals", 0) or 0) for t in tokens}
-                for u, c in zip(universe, ctxs, strict=False):
-                    pair_tokens = u.get("tokens", [])
-                    if len(pair_tokens) < 2:
-                        continue
-                    base_idx = pair_tokens[0]
-                    base_name = name_by_token.get(base_idx)
-                    quote_name = name_by_token.get(pair_tokens[1])
-                    if quote_name != "USDC":
-                        continue
-                    norm = None
-                    if base_name in ("UBTC", "UETH", "USOL"):
-                        norm = base_name[1:]   # strip leading 'U'
-                    elif base_name in ("BTC", "ETH", "SOL"):
-                        norm = base_name
-                    if norm not in ("BTC", "ETH", "SOL"):
-                        continue
-                    try:
-                        raw_mid = float(c.get("midPx") or 0)
-                    except (TypeError, ValueError):
-                        raw_mid = 0
-                    if raw_mid <= 0:
-                        continue
-                    # USDC weiDecimals=8 (standard). base wei from token meta.
-                    base_wei = wei_by_token.get(base_idx, 8)
-                    quote_wei = 8  # USDC
-                    scaled_mid = raw_mid * (10 ** (base_wei - quote_wei))
-                    # only adopt if scaled_mid is within 5% of perp mid (sanity)
-                    perp_mid = view.mids.get(norm)
-                    if (
-                        perp_mid and scaled_mid > 0
-                        and 0.5 < scaled_mid / perp_mid < 1.5
-                        and ((base_name or "").startswith("U") or norm not in spot_mids)
-                    ):
-                        # Prefer wrapped (U-prefixed) over plain if both present.
-                        spot_mids[norm] = scaled_mid
-        except Exception:  # noqa: BLE001
-            pass
+            exchange, info, _ = build_exchange(env_path=s.api_wallet_env)
+        except Exception as e:  # noqa: BLE001
+            console.print(f"[red]FATAL: build_exchange failed: {e}[/red]")
+            telegram_alert(f"🚨 hl-bot run: build_exchange failed: {e}")
+            raise typer.Exit(2) from e
 
-        # recent liquidations (best-effort; endpoint may not exist publicly)
+    configs_dir = s.configs_dir
+    overrides_roster = build_roster(conn, configs_dir)
+    console.print(
+        f"[bold]hlbot run[/bold] live={live} execution={execution} interval={interval}s · "
+        f"profile={s.profile or 'core'} · "
+        f"roster: {', '.join(e.agent.name for e in overrides_roster)}"
+    )
+
+    last_ingest = 0.0
+    last_supervise = 0.0
+    last_enrich = 0.0
+    cached_extra: dict = {}
+    cycles = 0
+    while True:
+        t0 = time.time()
         try:
-            ev = cli.post(api_url + "/info", json={"type": "liquidations"}).json()
-            if isinstance(ev, list):
-                for e in ev:
-                    try:
-                        coin = e.get("coin")
-                        sz = float(e.get("sz") or 0)
-                        px = float(e.get("px") or 0)
-                        if coin and sz > 0 and px > 0:
-                            liquidations.append({
-                                "coin": coin,
-                                "side": e.get("side"),
-                                "notional_usd": sz * px,
-                                "ts_ms": int(e.get("time") or 0),
-                            })
-                    except (TypeError, ValueError):
-                        continue
-        except Exception:  # noqa: BLE001
-            pass
+            view = fetch_market_view(s.hl_api_url, [])
+            if t0 - last_enrich >= enrich_every_s:
+                enrich_view(view, s.hl_api_url, view.extra.get("day_ntl_vlm", {}))
+                cached_extra = dict(view.extra)
+                last_enrich = t0
+            else:
+                merged = dict(cached_extra)
+                merged.update(view.extra)
+                view.extra = merged
+            overlay_ws_snapshot(view, os.environ.get("HLBOT_WS_SNAPSHOT"))
 
-    view.extra["candles_1h"] = candles_1h
-    view.extra["closes"] = closes_by_coin
-    view.extra["spot_mids"] = spot_mids
-    view.extra["liquidations"] = liquidations
+            res = run_cycle(conn, s, view, live=live, execution=execution,
+                            exchange=exchange, info=info, configs_dir=configs_dir)
+            console.print(f"[dim]{time.strftime('%H:%M:%S')}[/dim] {res.summary()}")
+            for ev in res.events:
+                console.print(f"  {ev}")
+
+            if t0 - last_ingest >= ingest_every_s:
+                last_ingest = t0
+                if s.hl_address:
+                    with contextlib.suppress(Exception):
+                        _ingest_fills(conn, s.hl_address, s.hl_api_url)
+                        _ingest_funding(conn, s.hl_address, s.hl_api_url, 7)
+                        _snapshot_equity(conn, s.hl_address, s.hl_api_url)
+                        refresh_attribution(conn)
+                breached, why = equity_floor_breached(conn)
+                if breached and not kill_active(data_dir):
+                    trip_kill(data_dir, f"EQUITY FLOOR: {why}")
+                    console.print(f"[red]KILL tripped: {why}[/red]")
+
+            if t0 - last_supervise >= supervise_every_s:
+                last_supervise = t0
+                actions = supervise(conn, configs_dir, data_dir=data_dir)
+                if actions:
+                    console.print(f"[bold]supervisor[/bold]: {json.dumps(actions)}")
+
+            heartbeat_path.touch()
+        except KeyboardInterrupt:
+            console.print("[yellow]run loop interrupted[/yellow]")
+            return
+        except Exception as e:  # noqa: BLE001
+            log_ = logging.getLogger("hlbot.run")
+            log_.exception("cycle failed")
+            console.print(f"[red]cycle error: {e}[/red]")
+
+        cycles += 1
+        if max_cycles and cycles >= max_cycles:
+            return
+        time.sleep(max(0.0, interval - (time.time() - t0)))
 
 
 @app.command()
 def femr_tick(live: bool = False, execution: str = "auto"):
-    """Run the full agent roster one tick (despite the legacy name).
+    """DEPRECATED — one-shot tick of the full agent roster, kept for manual
+    ops; production runs `hlbot run` (consolidated engine loop).
 
     paper (default): log decisions only, no orders placed.
     live: place real orders on MAIN account, gated by guardrails.
@@ -424,6 +439,9 @@ def femr_tick(live: bool = False, execution: str = "auto"):
     # Instantiate the full agent roster. In paper mode, evaluate everything. In
     # live mode, only agents explicitly enabled and promoted to live_small/live
     # in agent_state are allowed into the execution roster.
+    # Roster: confirmed post-cost bleeders (twap_mr_v1 taker, basis_v1) are
+    # retired (configs/*.yaml roster: retired) so they stop consuming
+    # MetaAllocator weight; the maker-designed carry strategies are in.
     agents = [
         FemrAgent(config=_cfg("femr_v1", {
             "max_notional_per_trade": 20.0,
@@ -431,29 +449,40 @@ def femr_tick(live: bool = False, execution: str = "auto"):
             "funding_enter_per_hr": 0.00015,
             "funding_exit_per_hr": 0.00005,
         }), conn=conn),
-        TwapMrAgent(config=_cfg("twap_mr_v1", {}), conn=conn),
-        TwapMrRegimeAgent(config=_cfg("twap_mr_regime_v1", {}), conn=conn),
-        FundingCarryAgent(config=_cfg("funding_carry_v1", {}), conn=conn),
         XFundCarryAgent(config=_cfg("xfund_carry_v1", {}), conn=conn),
+        FundingCarryAgent(config=_cfg("funding_carry_v1", {}), conn=conn),
+        TwapMrRegimeAgent(config=_cfg("twap_mr_regime_v1", {}), conn=conn),
         BasisAgent(config=_cfg("basis_v1", {}), conn=conn),
         # liq_cascade is entry-dead without a WS snapshot (its only real signal
         # source — REVIEW C6) but MUST stay on the roster: its stop/max-hold
         # exits and position reconciliation manage anything it already holds.
         LiqCascadeAgent(config=_cfg("liq_cascade_v1", {}), conn=conn),
     ]
+    paper_sim_agents: list = []
     if live and not ws_path:
         console.print("[dim]liq_cascade_v1: no HLBOT_WS_SNAPSHOT — no liquidation "
                       "signal, entries impossible (exits still managed)[/dim]")
     if live:
+        full_roster = agents
         agents, skipped_live = _filter_live_agents_by_state(conn, agents)
+        disabled = {
+            r["agent"] for r in
+            conn.execute("SELECT agent FROM agent_state WHERE enabled = 0").fetchall()
+        }
+        live_names = {a.name for a in agents}
+        # Paper-mode (but not paused) agents keep trading in the simulator so
+        # their scorecards accrue the evidence auto-promotion gates on.
+        paper_sim_agents = [
+            a for a in full_roster
+            if a.name not in live_names and a.name not in disabled
+        ]
         if skipped_live:
             console.print(
                 "[yellow]live roster skipped[/yellow]: "
                 + ", ".join(f"{name}({why})" for name, why in skipped_live.items())
             )
         if not agents:
-            console.print("[yellow]LIVE MODE but no agent_state rows are enabled in live_small/live; no orders possible[/yellow]")
-            return
+            console.print("[yellow]LIVE MODE but no agent_state rows are enabled in live_small/live; paper simulation only[/yellow]")
 
     # Allocator: rebalance per-agent caps from rolling 7d performance.
     # The approved live risk rule is dynamic but layered:
@@ -571,15 +600,16 @@ def femr_tick(live: bool = False, execution: str = "auto"):
         f"bot-owned: {sorted(owned_all) or '∅'} · manual: {manual_coins or '∅'}[/dim]"
     )
 
+    paper_names = {a.name for a in paper_sim_agents}
     all_decisions = []
-    for agent in agents:
+    for agent in [*agents, *paper_sim_agents]:
         decisions = agent.decide(view)
         for d in decisions:
-            d.is_paper = not live
+            d.is_paper = (not live) or (agent.name in paper_names)
             # Only log non-place/flatten actions immediately (holds skipped, rejected later).
             # `place` and `flatten` are logged ONLY after exchange acceptance in the execution
-            # loop below — otherwise the cooldown check would see our own intent rows and
-            # block subsequent ticks forever.
+            # loop below (or after a simulated fill in the paper simulator) — otherwise the
+            # cooldown check would see our own intent rows and block subsequent ticks forever.
             if d.action not in ("hold", "place", "flatten"):
                 log_decision(conn, d)
             all_decisions.append(d)
@@ -590,9 +620,37 @@ def femr_tick(live: bool = False, execution: str = "auto"):
         end = "" if d.action != "hold" else "[/dim]"
         console.print(f"  {tag}{d.agent} {d.action} {d.coin or ''} :: {d.reasoning}{end}")
 
+    from ..sim.paper import simulate_cycle
+
     if not live:
-        console.print("[yellow]PAPER MODE[/yellow]")
+        # Every decision is paper: simulate fills so paper performance is
+        # scoreable (n_trades/edge/sharpe gates can actually fire).
+        sim = simulate_cycle(
+            conn, view,
+            [d for d in all_decisions if d.action in ("place", "flatten")],
+            maker_entries=(execution == "maker"),
+        )
+        console.print(f"[yellow]PAPER MODE[/yellow] — {sim.summary()}")
         return
+
+    paper_decisions = [
+        d for d in all_decisions
+        if d.agent in paper_names and d.action in ("place", "flatten")
+    ]
+    if paper_names:
+        sim = simulate_cycle(conn, view, paper_decisions,
+                             maker_entries=(execution == "maker"))
+        console.print(f"[dim]{sim.summary()}[/dim]")
+    if not agents:
+        return  # nothing enabled for live execution
+
+    from ..ops.kill import kill_active
+    kill_reason = kill_active(s.db_path.parent)
+    if kill_reason:
+        console.print(
+            f"[red]KILL ACTIVE[/red]: {kill_reason} — "
+            "new entries blocked; flatten/cancel still allowed (`hlbot resume` to clear)"
+        )
 
     try:
         exchange, info, _ = build_exchange()
@@ -643,10 +701,12 @@ def femr_tick(live: bool = False, execution: str = "auto"):
 
     # Execute through the single audited router (exec/router.py): per-agent
     # maker/taker entries (maker quotes priced off the live book), taker exits,
-    # guardrail/cooldown gates, fill-confirmed decision logging.
+    # guardrail/cooldown gates, fill-confirmed decision logging. The sticky
+    # kill switch vetoes new entries; risk-reducing flatten/closes still run.
     outcomes = execute_decisions(
         conn, exchange, all_decisions,
-        exec_modes=exec_modes, entries_allowed=ok, book_top=view.book_top,
+        exec_modes=exec_modes, entries_allowed=ok and not kill_reason,
+        book_top=view.book_top,
     )
     for oc in outcomes:
         if oc.status == "filled":
@@ -782,16 +842,19 @@ def confirm(
     min_edge_bps: float = 3.0,
     min_sharpe: float = 1.0,
     cache: bool = True,
+    record: bool = False,
 ):
     """Confirm a strategy through the G0 gate: walk-forward + cost stress.
 
     Prints an explicit PASS/FAIL. A strategy must clear this on real history
-    before it is eligible for paper→live promotion (see docs/GO_LIVE.md).
+    before it is eligible for paper→live promotion. With --record the verdict
+    is stamped into the confirmations table, which is what promotion stages
+    with require_g0 check (auto-promotion runs on this evidence).
     """
     from ..backtest.confirm import confirm_strategy
     from ..backtest.data import cached_or_fetch, load_frames
 
-    _, s = _conn()
+    conn, s = _conn()
     coin_list = [c.strip() for c in coins.split(",") if c.strip()]
     factories = {
         "twap_mr_v1": lambda conn: TwapMrAgent(config={}, conn=conn),
@@ -819,8 +882,56 @@ def confirm(
         min_edge_bps=min_edge_bps, min_sharpe=min_sharpe, periods_per_year=per_year,
     )
     console.print(res.summary())
+    if record:
+        conn.execute(
+            """INSERT INTO confirmations(agent, ts_ms, dataset, prefer, confirmed,
+                                         oos_edge_bps, summary)
+               VALUES(?,?,?,?,?,?,?)""",
+            (agent, int(time.time() * 1000), f"{coins}/{interval}/{days}d", prefer,
+             1 if res.confirmed else 0, res.out_of_sample.edge_bps, res.summary()),
+        )
+        conn.commit()
+        console.print(f"[dim]confirmation recorded (confirmed={res.confirmed})[/dim]")
     if not res.confirmed:
         raise typer.Exit(1)
+
+
+@app.command()
+def sweep(
+    spec: Path,
+    refresh: bool = False,
+    json_dir: Path = Path("data/sweeps"),
+    md_dir: Path = Path("research/results"),
+):
+    """Run a parameter/universe sweep through the G0 confirmation gate.
+
+    Loads configs/sweeps/<name>.yaml, replays every combo over cached real
+    history, and writes a ranked report to research/results/ (committed by the
+    nightly host job so research sessions start from fresh evidence)."""
+    from ..backtest.data import cached_or_fetch
+    from ..engine.runner import AGENT_FACTORIES
+    from ..research.sweep import SweepSpec, run_sweep, write_outputs
+
+    _, s = _conn()
+    sw = SweepSpec.load(spec)
+    factory = AGENT_FACTORIES.get(sw.agent)
+    if factory is None:
+        console.print(f"[red]unknown agent {sw.agent}[/red]")
+        raise typer.Exit(1)
+    frames_by_universe = {}
+    for universe in sw.universes or [[]]:
+        console.print(f"[dim]loading {sw.days}d {sw.interval} for {universe}…[/dim]")
+        try:
+            frames_by_universe[tuple(universe)] = cached_or_fetch(
+                list(universe), interval=sw.interval, days=sw.days,
+                base_url=s.hl_api_url, refresh=refresh)
+        except Exception as e:  # noqa: BLE001
+            console.print(f"[red]history load failed for {universe}: {e}[/red]")
+            frames_by_universe[tuple(universe)] = []
+    rows = run_sweep(sw, frames_by_universe, factory)
+    jpath, mpath = write_outputs(sw, rows, json_dir=json_dir, md_dir=md_dir)
+    confirmed = sum(1 for r in rows if r.confirmed)
+    console.print(f"[green]✓[/green] {len(rows)} combos, {confirmed} confirmed → {mpath}")
 
 
 @app.command()
@@ -855,7 +966,7 @@ def health(max_tick_age_s: int = 900, heartbeat: bool = True):
     from ..ops.health import assess_health, ping_heartbeat
 
     conn, s = _conn()
-    rep = assess_health(conn, max_tick_age_s=max_tick_age_s)
+    rep = assess_health(conn, max_tick_age_s=max_tick_age_s, data_dir=s.db_path.parent)
     console.print(rep.render())
     if heartbeat:
         ping_heartbeat(os.environ.get("HEALTHCHECK_URL"), ok=rep.ok)

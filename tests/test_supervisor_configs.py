@@ -41,10 +41,12 @@ def test_twap_and_femr_configs_load():
     femr = load_goals(CONFIG_DIR / "femr_v1.yaml")
     assert twap[0].agent == "twap_mr_v1"
     assert femr[0].agent == "femr_v1"
-    # No config promotes straight to full live.
+    # No config promotes straight from paper to full live.
     for goals in (twap, femr):
-        assert goals[0].promotion is not None
-        assert goals[0].promotion.to_mode == "live_small"
+        ladder = goals[0].ladder()
+        assert ladder
+        paper_stage = next(p for p in ladder if p.from_mode == "paper")
+        assert paper_stage.to_mode == "live_small"
 
 
 def test_bleeding_twap_is_paused_by_supervisor(conn):

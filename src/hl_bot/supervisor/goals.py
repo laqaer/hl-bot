@@ -42,7 +42,7 @@ from typing import Any, Literal
 import yaml
 from pydantic import BaseModel, Field
 
-from ..scoring.metrics import Scorecard, Window, score_agent
+from ..scoring.metrics import Scorecard, Source, Window, score_agent
 
 OPS = {
     ">": op.gt, ">=": op.ge, "<": op.lt, "<=": op.le,
@@ -55,6 +55,10 @@ class Condition(BaseModel):
     window: Window = "30d"
     op: str
     threshold: float
+    # Which fills the metric is computed from: 'live' = real exchange fills,
+    # 'paper' = the simulator's fills. Promotion INTO live must gate on real
+    # fills; promotion OUT of paper can only ever gate on paper ones.
+    source: Source = "live"
 
     def evaluate(self, sc: Scorecard) -> tuple[bool | None, float | None]:
         """Returns (passed, value). passed=None means the metric was N/A
@@ -74,18 +78,53 @@ class Promotion(BaseModel):
     from_mode: str = Field(alias="from")
     to_mode: str = Field(alias="to")
     conditions: list[Condition]
+    # Minimum days the agent must have spent in from_mode before promotion can
+    # fire — staggers correlated promotions and rate-limits the ladder.
+    min_days_in_mode: float = 7.0
+    # Require a fresh PASSING `hlbot confirm --record` row (the G0 gate on real
+    # history) before paper performance is allowed to promote into live.
+    require_g0: bool = False
+    g0_max_age_days: float = 30.0
 
     model_config = {"populate_by_name": True}
+
+
+class Sizing(BaseModel):
+    """Mode-based size caps: live_small runs deliberately tiny regardless of
+    what the allocator would grant; full 'live' uses the resolved caps."""
+    live_small_max_total: float | None = None
+    live_small_max_per_trade: float | None = None
+    live_small_fraction: float | None = None    # of the resolved cap
 
 
 class AgentGoals(BaseModel):
     agent: str
     description: str = ""
     mode: Literal["paper", "live_small", "live"] = "paper"
+    # Roster membership: 'live' = eligible for the tick roster, 'paper' = runs
+    # paper-only regardless of agent_state, 'retired' = excluded entirely (a
+    # retired agent stops consuming MetaAllocator weight).
+    roster: Literal["live", "paper", "retired"] = "live"
+    # Per-agent re-entry cooldown per coin (replaces the old global 1h constant;
+    # carry can stay patient while event-driven agents need minutes or less).
+    cooldown_s: int = 3600
     goals: dict[str, Any] = Field(default_factory=dict)
     guardrails: list[Guardrail] = Field(default_factory=list)
     promotion: Promotion | None = None
+    # Multi-stage ladder (paper -> live_small -> live). A single `promotion:`
+    # block is treated as a one-stage ladder; if both are present the ladder
+    # wins for stages it covers.
+    promotion_ladder: list[Promotion] = Field(default_factory=list)
     demotion: Promotion | None = None
+    sizing: Sizing = Field(default_factory=Sizing)
+
+    def ladder(self) -> list[Promotion]:
+        stages = list(self.promotion_ladder)
+        if self.promotion and not any(
+            p.from_mode == self.promotion.from_mode for p in stages
+        ):
+            stages.insert(0, self.promotion)
+        return stages
 
 
 @dataclass
@@ -97,6 +136,7 @@ class Evaluation:
     status: Literal["pass", "fail", "na"]
     action: Literal["promote", "demote", "pause", "none"] = "none"
     detail: str = ""
+    to_mode: str | None = None      # set on promote actions (ladder target)
 
 
 def load_goals(config_path: str | Path) -> list[AgentGoals]:
@@ -107,32 +147,75 @@ def load_goals(config_path: str | Path) -> list[AgentGoals]:
     return [AgentGoals.model_validate(d) for d in raw]
 
 
-def evaluate(conn: sqlite3.Connection, g: AgentGoals) -> list[Evaluation]:
+def g0_confirmed(
+    conn: sqlite3.Connection, agent: str, *, max_age_days: float = 30.0,
+    now_ms: int | None = None,
+) -> bool:
+    """True when a fresh PASSING `hlbot confirm --record` row exists (G0)."""
+    now_ms = now_ms or int(time.time() * 1000)
+    since = now_ms - int(max_age_days * 86_400_000)
+    try:
+        row = conn.execute(
+            "SELECT 1 FROM confirmations WHERE agent=? AND confirmed=1 AND ts_ms>=? LIMIT 1",
+            (agent, since),
+        ).fetchone()
+    except sqlite3.OperationalError:
+        return False
+    return row is not None
+
+
+def _mode_start_ms(
+    conn: sqlite3.Connection, agent: str, last_promoted_ms: int | None
+) -> int | None:
+    """When the agent entered its current mode: last promotion timestamp, or —
+    for never-promoted agents — its first recorded decision."""
+    if last_promoted_ms:
+        return int(last_promoted_ms)
+    row = conn.execute(
+        "SELECT MIN(ts_ms) FROM agent_decisions WHERE agent=?", (agent,)
+    ).fetchone()
+    return int(row[0]) if row and row[0] is not None else None
+
+
+def evaluate(
+    conn: sqlite3.Connection,
+    g: AgentGoals,
+    *,
+    current_mode: str | None = None,
+    last_promoted_ms: int | None = None,
+    now_ms: int | None = None,
+) -> list[Evaluation]:
     """Run guardrails + promotion/demotion checks, return Evaluations.
 
+    ``current_mode`` is the DB truth from agent_state (the YAML ``mode`` is only
+    the agent's *initial* mode — gating on it froze every ladder at stage one).
     This function does NOT mutate state; the supervisor does that based on the
     actions returned.
     """
+    now_ms = now_ms or int(time.time() * 1000)
+    mode = current_mode or g.mode
     out: list[Evaluation] = []
 
-    # Pre-compute scorecards for all referenced windows.
-    windows: set[Window] = set()
+    # Pre-compute scorecards for all referenced (window, source) pairs.
+    keys: set[tuple[Window, Source]] = set()
     for gr in g.guardrails:
-        windows.add(gr.window)
-    if g.promotion:
-        for c in g.promotion.conditions:
-            windows.add(c.window)
+        keys.add((gr.window, gr.source))
+    for p in g.ladder():
+        for c in p.conditions:
+            keys.add((c.window, c.source))
     if g.demotion:
         for c in g.demotion.conditions:
-            windows.add(c.window)
+            keys.add((c.window, c.source))
     primary = g.goals.get("primary")
     if isinstance(primary, dict):
-        windows.add(primary.get("window", "30d"))
+        keys.add((primary.get("window", "30d"), primary.get("source", "live")))
     secondary = g.goals.get("secondary", [])
     for s in secondary if isinstance(secondary, list) else []:
-        windows.add(s.get("window", "30d"))
+        keys.add((s.get("window", "30d"), s.get("source", "live")))
 
-    cards: dict[Window, Scorecard] = {w: score_agent(conn, g.agent, w) for w in windows}
+    cards: dict[tuple[Window, Source], Scorecard] = {
+        (w, src): score_agent(conn, g.agent, w, src) for w, src in keys
+    }
 
     # Primary / secondary goals -> informational pass/fail (no action).
     def _status(ok: bool | None) -> str:
@@ -140,7 +223,7 @@ def evaluate(conn: sqlite3.Connection, g: AgentGoals) -> list[Evaluation]:
 
     if isinstance(primary, dict):
         c = Condition.model_validate(primary)
-        ok, v = c.evaluate(cards[c.window])
+        ok, v = c.evaluate(cards[(c.window, c.source)])
         out.append(Evaluation(
             agent=g.agent, goal_name="primary",
             metric_value=v, threshold=c.threshold,
@@ -149,7 +232,7 @@ def evaluate(conn: sqlite3.Connection, g: AgentGoals) -> list[Evaluation]:
         ))
     for i, s in enumerate(secondary if isinstance(secondary, list) else []):
         c = Condition.model_validate(s)
-        ok, v = c.evaluate(cards[c.window])
+        ok, v = c.evaluate(cards[(c.window, c.source)])
         out.append(Evaluation(
             agent=g.agent, goal_name=f"secondary[{i}]",
             metric_value=v, threshold=c.threshold,
@@ -162,7 +245,7 @@ def evaluate(conn: sqlite3.Connection, g: AgentGoals) -> list[Evaluation]:
     # metric — e.g. no trades yet) NEVER triggers an action.
     guardrail_failed = False
     for gr in g.guardrails:
-        ok, v = gr.evaluate(cards[gr.window])
+        ok, v = gr.evaluate(cards[(gr.window, gr.source)])
         status = _status(ok)
         if status == "fail":
             guardrail_failed = True
@@ -174,17 +257,40 @@ def evaluate(conn: sqlite3.Connection, g: AgentGoals) -> list[Evaluation]:
             detail=gr.reason or f"{gr.metric}({gr.window}) {gr.op} {gr.threshold}",
         ))
 
-    # Promotion: ALL conditions must explicitly pass (na blocks promotion), and
-    # no guardrail may be failing. Risk controls dominate growth controls: an
-    # agent cannot be paused/demoted/alerting and promoted in the same run.
-    if g.promotion and g.mode == g.promotion.from_mode and not guardrail_failed:
-        results = [c.evaluate(cards[c.window]) for c in g.promotion.conditions]
-        if results and all(ok is True for ok, _ in results):
+    # Promotion: pick the ladder stage matching the agent's CURRENT mode. ALL
+    # conditions must explicitly pass (na blocks promotion), the agent must
+    # have spent min_days_in_mode there, a fresh G0 confirmation must exist
+    # when required, and no guardrail may be failing. Risk controls dominate
+    # growth controls: an agent cannot be paused/demoted and promoted at once.
+    stage = next((p for p in g.ladder() if p.from_mode == mode), None)
+    if stage and not guardrail_failed:
+        blockers: list[str] = []
+        start = _mode_start_ms(conn, g.agent, last_promoted_ms)
+        days_in_mode = (now_ms - start) / 86_400_000 if start else 0.0
+        if days_in_mode < stage.min_days_in_mode:
+            blockers.append(
+                f"only {days_in_mode:.1f}d in {mode} (< {stage.min_days_in_mode:g}d)")
+        if stage.require_g0 and not g0_confirmed(
+                conn, g.agent, max_age_days=stage.g0_max_age_days, now_ms=now_ms):
+            blockers.append(
+                f"no fresh G0 confirmation (≤{stage.g0_max_age_days:g}d)")
+        results = [c.evaluate(cards[(c.window, c.source)]) for c in stage.conditions]
+        conditions_pass = bool(results) and all(ok is True for ok, _ in results)
+        if conditions_pass and not blockers:
             out.append(Evaluation(
                 agent=g.agent, goal_name="promotion",
                 metric_value=None, threshold=None,
                 status="pass", action="promote",
-                detail=f"{g.promotion.from_mode} -> {g.promotion.to_mode}",
+                detail=f"{stage.from_mode} -> {stage.to_mode}",
+                to_mode=stage.to_mode,
+            ))
+        elif conditions_pass and blockers:
+            out.append(Evaluation(
+                agent=g.agent, goal_name="promotion",
+                metric_value=None, threshold=None,
+                status="na", action="none",
+                detail=f"{stage.from_mode} -> {stage.to_mode} blocked: "
+                       + "; ".join(blockers),
             ))
 
     return out

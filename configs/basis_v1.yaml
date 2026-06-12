@@ -1,0 +1,8 @@
+agent: basis_v1
+description: >-
+  Perp/spot basis convergence on BTC/ETH/SOL. Retired: the basis on majors is
+  too well-arbitraged to clear taker costs, and the spot-price normalization
+  (wrapped-token wei decimals) is fragile. Revisit only with maker execution
+  and a confirmed G0 pass.
+mode: paper
+roster: retired

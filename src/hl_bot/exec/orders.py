@@ -116,16 +116,18 @@ def build_exchange(env_path: Path | None = None) -> tuple[Exchange, Info, LocalA
 
 
 def bot_owned_coins(conn: sqlite3.Connection, agent: str = "femr_v1") -> set[str]:
-    """Coins bot believes it owns per its own decision audit log.
+    """Coins bot believes it owns LIVE per its own decision audit log.
 
     NOTE: only counts decisions that were CONFIRMED filled. The new logger
     writes action='place' only after fill verification; rejected attempts
-    write action='rejected' which is excluded here.
+    write action='rejected' which is excluded here. Paper rows (is_paper=1,
+    e.g. from the paper-fill simulator) are never live ownership.
     """
     rows = conn.execute(
         """
         SELECT coin, action FROM agent_decisions
         WHERE agent = ? AND coin IS NOT NULL AND action IN ('place', 'flatten')
+          AND is_paper = 0
         ORDER BY ts_ms ASC
         """, (agent,),
     ).fetchall()
@@ -189,6 +191,41 @@ def coin_in_cooldown(
         """, (agent, coin, cutoff_ms),
     ).fetchone()
     return row is not None
+
+
+def order_rate_ok(
+    conn: sqlite3.Connection,
+    agent: str | None = None,
+    *,
+    max_per_hour: int = 20,
+    account_max_per_hour: int = 60,
+    now_ms: int | None = None,
+) -> tuple[bool, str]:
+    """Order-rate circuit breaker for the autonomous book.
+
+    Counts live order attempts (place / rest / rejected / maker_reject rows, is_paper=0)
+    in the trailing hour, per agent and account-wide. A promoted agent with a
+    short cooldown plus a bug must hit this wall, not the exchange.
+    """
+    now_ms = now_ms or int(time.time() * 1000)
+    since = now_ms - 3_600_000
+    acct = conn.execute(
+        """SELECT COUNT(*) FROM agent_decisions
+           WHERE action IN ('place','rest','rejected','maker_reject') AND is_paper = 0 AND ts_ms >= ?""",
+        (since,),
+    ).fetchone()[0]
+    if int(acct) >= account_max_per_hour:
+        return False, f"account order rate {acct}/h >= {account_max_per_hour}/h"
+    if agent is not None:
+        n = conn.execute(
+            """SELECT COUNT(*) FROM agent_decisions
+               WHERE agent = ? AND action IN ('place','rest','rejected','maker_reject')
+                 AND is_paper = 0 AND ts_ms >= ?""",
+            (agent, since),
+        ).fetchone()[0]
+        if int(n) >= max_per_hour:
+            return False, f"{agent} order rate {n}/h >= {max_per_hour}/h"
+    return True, "ok"
 
 
 # ---------------------------------------------------------------------------
@@ -260,8 +297,11 @@ def check_guardrails(
     ).fetchone()
     daily_pnl = float(row[0] or 0.0)
     if daily_pnl < -abs(cfg.max_daily_loss):
+        # Stable "DAILY_LOSS:" prefix — the runner trips the sticky kill switch
+        # on this breach (a one-tick halt isn't enough once promotion is
+        # automatic; a human must look before trading resumes).
         return False, (
-            f"24h bot PnL ${daily_pnl:.2f} < -${cfg.max_daily_loss:.2f} "
+            f"DAILY_LOSS: 24h bot PnL ${daily_pnl:.2f} < -${cfg.max_daily_loss:.2f} "
             f"(agents={','.join(bot_agents)})"
         )
 

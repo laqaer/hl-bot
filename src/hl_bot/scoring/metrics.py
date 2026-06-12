@@ -23,7 +23,7 @@ from typing import Literal
 import numpy as np
 import pandas as pd
 
-from .attribution import agent_pnl_events, daily_pnl_series, funding_events_for_agent
+from .attribution import daily_pnl_series, funding_events_for_agent
 from .curves import dollar_max_drawdown
 
 Window = Literal["1h", "24h", "7d", "30d", "all"]
@@ -60,8 +60,15 @@ class Scorecard:
         return asdict(self)
 
 
-def _fills_df(conn: sqlite3.Connection, agent: str, since_ms: int | None) -> pd.DataFrame:
-    q = "SELECT time_ms, coin, side, px, sz, closed_pnl, fee FROM fills WHERE agent = ?"
+Source = Literal["live", "paper"]
+_FILLS_TABLE = {"live": "fills", "paper": "paper_fills"}
+
+
+def _fills_df(
+    conn: sqlite3.Connection, agent: str, since_ms: int | None, source: Source = "live"
+) -> pd.DataFrame:
+    table = _FILLS_TABLE[source]
+    q = f"SELECT time_ms, coin, side, px, sz, closed_pnl, fee FROM {table} WHERE agent = ?"
     params: list = [agent]
     if since_ms is not None:
         q += " AND time_ms >= ?"
@@ -71,15 +78,34 @@ def _fills_df(conn: sqlite3.Connection, agent: str, since_ms: int | None) -> pd.
 
 
 def _funding_total(conn: sqlite3.Connection, since_ms: int | None) -> float:
-    # Account-level funding: the exact sum of funding_payments, reported under
-    # the "_account" pseudo-agent. Real agents get their share via the fills
-    # position-replay in scoring.attribution (REVIEW C4).
+    """Account-level funding truth: the exact sum of funding_payments,
+    reported under the "_account" pseudo-agent. Real agents get their share
+    via the fills position-replay in scoring.attribution (REVIEW C4)."""
     q = "SELECT COALESCE(SUM(usdc), 0) FROM funding_payments"
     params: list = []
     if since_ms is not None:
         q += " WHERE time_ms >= ?"
         params.append(since_ms)
     return float(conn.execute(q, params).fetchone()[0])
+
+
+def _agent_funding(
+    conn: sqlite3.Connection, agent: str, since_ms: int | None, source: Source = "live"
+) -> pd.DataFrame:
+    """Per-agent funding rows (time_ms, usdc). Live rows come from the
+    funding_attribution replay (B6); paper rows from the simulator's accrual."""
+    table = "funding_attribution" if source == "live" else "paper_funding"
+    q = f"SELECT time_ms, usdc FROM {table} WHERE agent = ?"
+    params: list = [agent]
+    if since_ms is not None:
+        q += " AND time_ms >= ?"
+        params.append(since_ms)
+    q += " ORDER BY time_ms ASC"
+    try:
+        return pd.read_sql_query(q, conn, params=params)
+    except pd.errors.DatabaseError:
+        # Pre-migration DB (table missing): funding simply unattributed.
+        return pd.DataFrame({"time_ms": [], "usdc": []})
 
 
 def _equity_curve(conn: sqlite3.Connection, since_ms: int | None) -> pd.DataFrame:
@@ -106,22 +132,30 @@ def _max_dd(equity: pd.Series) -> float | None:
     return float(dd.min()) if not dd.empty else None
 
 
-def score_agent(conn: sqlite3.Connection, agent: str, window: Window) -> Scorecard:
+def score_agent(
+    conn: sqlite3.Connection, agent: str, window: Window, source: Source = "live"
+) -> Scorecard:
     now_ms = int(time.time() * 1000)
     w = WINDOW_MS[window]
     since = now_ms - w if w else None
 
-    fills = _fills_df(conn, agent, since)
+    fills = _fills_df(conn, agent, since, source)
     n_trades = int(len(fills))
     realized = float(fills["closed_pnl"].sum()) if n_trades else 0.0
     fees = float(fills["fee"].sum()) if n_trades else 0.0
     if agent == "_account":
-        funding = _funding_total(conn, since)
-        funding_events = []
-    else:
+        # Account row keeps the exchange total (includes residual + manual).
+        funding = _funding_total(conn, since) if source == "live" else 0.0
+        funding_events: list[tuple[int, float]] = []
+    elif source == "live":
         # Per-agent share of account funding via fills position replay (C4).
         # Computed once here; reused below for the agent's equity curve.
         funding_events = funding_events_for_agent(conn, agent, since)
+        funding = float(sum(u for _, u in funding_events))
+    else:
+        # Paper funding comes from the simulator's hourly accrual table.
+        fdf = _agent_funding(conn, agent, since, source)
+        funding_events = [(int(t), float(u)) for t, u in zip(fdf["time_ms"], fdf["usdc"], strict=True)]
         funding = float(sum(u for _, u in funding_events))
     net = realized + funding - fees
 
@@ -139,9 +173,9 @@ def score_agent(conn: sqlite3.Connection, agent: str, window: Window) -> Scoreca
     edge_bps = float(net / notional * 10_000) if notional > 0 else None
 
     # Sharpe / DD. The account gets fractional DD from its real equity curve;
-    # real agents get Sharpe from daily net PnL (fills + attributed funding)
-    # plus a dollar drawdown — an agent has no capital base, so a fractional
-    # DD would be an invention (C5/B7).
+    # real agents (live AND paper) get Sharpe from daily net PnL (fills +
+    # attributed/simulated funding) plus a dollar drawdown — an agent has no
+    # capital base, so a fractional DD would be an invention (C5/B7).
     sharpe = dd = calmar = None
     dd_usd: float | None = None
     if agent == "_account":
@@ -158,7 +192,15 @@ def score_agent(conn: sqlite3.Connection, agent: str, window: Window) -> Scoreca
                 ann_ret = (1 + rets.mean()) ** 365 - 1 if not rets.empty else 0
                 calmar = float(ann_ret / abs(dd)) if dd != 0 else None
     else:
-        events = agent_pnl_events(conn, agent, since, funding_events=funding_events)
+        # Built from the source-respecting fills frame (live `fills` or
+        # `paper_fills`) so paper scorecards get the same treatment;
+        # equivalent to agent_pnl_events() for live.
+        events = [
+            (int(t), float(p))
+            for t, p in zip(fills["time_ms"], fills["closed_pnl"] - fills["fee"], strict=True)
+        ]
+        events.extend(funding_events)
+        events.sort(key=lambda e: e[0])
         daily = daily_pnl_series(events)
         if len(daily) >= 3:
             s = pd.Series(daily)
