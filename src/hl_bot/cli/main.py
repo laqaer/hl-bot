@@ -484,18 +484,23 @@ def femr_tick(live: bool = False, execution: str = "taker", vwap_window: int = 0
     all_positions = positions_from_clearinghouse(st)
 
     # RECONCILE first — clear stale DB ownership for each agent independently.
-    reconciled_all = reconcile_agents(conn, all_positions, [a.name for a in agents])
-    if reconciled_all:
-        console.print(f"[yellow]reconciled stale ownership: {reconciled_all}[/yellow]")
+    # Live only: reconciliation compares the LIVE book to exchange truth; paper
+    # positions have no exchange counterpart, and a paper tick shouldn't write
+    # live-book rows.
+    if live:
+        reconciled_all = reconcile_agents(conn, all_positions, [a.name for a in agents])
+        if reconciled_all:
+            console.print(f"[yellow]reconciled stale ownership: {reconciled_all}[/yellow]")
 
     # FEMR sees only its own owned coins (adopts handled internally by name match).
-    owned_femr = bot_owned_coins(conn, agent="femr_v1")
+    owned_femr = bot_owned_coins(conn, agent="femr_v1", paper=not live)
     bot_positions = [p for p in all_positions if p["coin"] in owned_femr]
     view.extra["live_positions"] = bot_positions
 
     # Partition live positions into bot-owned (any roster agent) vs manual via the
-    # shared, tested classification (agents.runtime).
-    ownership = classify_position_ownership(conn, all_positions, [a.name for a in agents])
+    # shared, tested classification (agents.runtime), against this tick's book.
+    ownership = classify_position_ownership(
+        conn, all_positions, [a.name for a in agents], paper=not live)
     owned_all = ownership.owned_all
     manual_coins = ownership.manual_coins
     console.print(
@@ -507,15 +512,20 @@ def femr_tick(live: bool = False, execution: str = "taker", vwap_window: int = 0
         f"bot-owned: {sorted(owned_all) or '∅'} · manual: {manual_coins or '∅'}[/dim]"
     )
 
-    # Gather decisions through the shared, tested path (agents.runtime). `place`
-    # and `flatten` are logged ONLY after exchange acceptance in the execution
-    # loop below (defer_exec_logging) — otherwise the cooldown check would see our
-    # own intent rows and block subsequent ticks forever. A crashing agent is
-    # isolated so it can't abort risk-reducing flattens from healthy agents.
+    # Gather decisions through the shared, tested path (agents.runtime). In live
+    # mode, `place`/`flatten` are logged ONLY after exchange acceptance in the
+    # execution loop below (defer_exec_logging) — otherwise the cooldown check
+    # would see our own intent rows and block subsequent ticks forever. In paper
+    # mode there is no execution loop, so exec decisions are logged HERE as
+    # is_paper=1 rows — this is what makes the paper book exist at all (before,
+    # paper ticks logged nothing and paper agents could never track their own
+    # positions). The book-aware replay filters keep those rows invisible to the
+    # live path. A crashing agent is isolated so it can't abort risk-reducing
+    # flattens from healthy agents.
     all_decisions = gather_decisions(
         conn, agents, view,
         is_paper=not live,
-        defer_exec_logging=True,
+        defer_exec_logging=live,
         log_holds=False,
         honor_enabled=False,
     )

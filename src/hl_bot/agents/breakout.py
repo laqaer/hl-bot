@@ -116,6 +116,7 @@ class BreakoutAgent(Agent):
         Same audit-log replay as twap_mr: a 'place' opens, a 'flatten' closes.
         The last-flatten timestamps drive the re-entry cooldown so a stopped-out
         coin isn't immediately re-bought off the same stale channel.
+        Replays only the book matching the current tick mode (``paper_book``).
         """
         if self.conn is None:
             return {}, {}
@@ -123,8 +124,9 @@ class BreakoutAgent(Agent):
             """SELECT ts_ms, coin, action, side, sz, px, cloid
                FROM agent_decisions
                WHERE agent=? AND coin IS NOT NULL AND action IN ('place','flatten')
+                 AND is_paper=?
                ORDER BY ts_ms ASC""",
-            (self.name,),
+            (self.name, 1 if self.paper_book else 0),
         ).fetchall()
         open_by_coin: dict[str, dict] = {}
         last_flat_ms: dict[str, int] = {}

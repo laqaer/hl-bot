@@ -102,6 +102,47 @@ def test_crashing_agent_is_isolated_so_others_still_run(conn):
     assert len(err) == 1 and err[0]["is_paper"] == 1
 
 
+def test_gather_sets_paper_book_to_match_tick_mode(conn):
+    # Agents replay their own decision log; gather_decisions must point that
+    # replay at the book this tick will write BEFORE decide() runs, so a paper
+    # tick can never act on live positions and vice versa.
+    class _Recorder(Agent):
+        def __init__(self):
+            super().__init__(name="rec")
+            self.seen: list[bool] = []
+
+        def decide(self, view: MarketView) -> list[Decision]:
+            self.seen.append(self.paper_book)
+            return []
+
+    rec = _Recorder()
+    assert rec.paper_book is True, "default matches the backtest engine (is_paper=1)"
+    gather_decisions(conn, [rec], _view(), is_paper=False)
+    gather_decisions(conn, [rec], _view(), is_paper=True)
+    assert rec.seen == [False, True]
+
+
+def test_paper_femr_policy_logs_exec_rows_as_paper(conn):
+    # The femr_tick PAPER policy (defer_exec_logging=False since there is no
+    # execution loop, log_holds=False): place/flatten are logged at gather time
+    # with is_paper=1 — this is what makes the paper book exist.
+    agent = _FakeAgent("a", [
+        Decision(agent="a", action="hold", coin="BTC"),
+        Decision(agent="a", action="place", coin="BTC", side="B", sz=0.01, px=100.0),
+        Decision(agent="a", action="flatten", coin="ETH"),
+    ])
+    out = gather_decisions(
+        conn, [agent], _view(),
+        is_paper=True, defer_exec_logging=False, log_holds=False, honor_enabled=False,
+    )
+    assert [d.action for d in out] == ["hold", "place", "flatten"]
+    assert not _logged(conn, "a", "hold"), "holds stay unlogged (noise)"
+    place = _logged(conn, "a", "place")
+    flatten = _logged(conn, "a", "flatten")
+    assert len(place) == 1 and place[0]["is_paper"] == 1
+    assert len(flatten) == 1 and flatten[0]["is_paper"] == 1
+
+
 def test_honor_enabled_skips_disabled_agents(conn):
     conn.execute(
         "INSERT INTO agent_state(agent, mode, enabled) VALUES('off','paper',0)")

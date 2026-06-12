@@ -1653,3 +1653,68 @@ correlation number justifies the plumbing investment), B12 remainder.
 B-G014 unblocks ~2026-06-26 (three confirm arms). On B-EDGE2b reruns, also
 rerun `hlbot correlate` — a corr that drifts toward +1 in a new regime would
 gut the second-edge case even if breakout's own edge holds.
+
+## Iteration 37 — 2026-06-12 — B-PAPER: the paper book now exists, and paper/live books never mix
+
+**What.** Scoping B-EDGE2a ("roster entry paper-only") exposed that there is no
+such thing as a paper book: `femr_tick` without `--live` never logged
+place/flatten at all — `defer_exec_logging=True` defers logging to the live
+execution loop, which paper mode returns before reaching. Verified against
+pre-extraction history (the gap dates to the original `femr_tick`, not the
+Iter-14 refactor): every "paper default" pilot to date (twap_mr_regime_v1 etc.)
+accumulated zero evidence, and paper agents could never see their own positions
+(no exits, no cooldowns, would re-enter forever). Fixed as the foundation slice
+of B-EDGE2a:
+
+- `femr_tick` paper ticks log place/flatten at gather time as `is_paper=1`
+  (`defer_exec_logging=live`); live behavior unchanged (log-after-confirm).
+- Book separation everywhere the decision log is replayed, since mixed-book DBs
+  are now possible: agents replay the book matching the tick mode via
+  `Agent.paper_book` (set by `gather_decisions` before `decide()`; default True
+  == the backtest engine's `is_paper=1` logging, so backtests are untouched) —
+  all 7 position-replaying agents filtered. `bot_owned_coins` and
+  `coin_in_cooldown` default to the LIVE book (`paper=False`), so a paper row
+  can never reclassify a manual position as bot-owned (the don't-touch
+  protection), never gates a live entry, and a live tick can never flatten a
+  phantom paper position. `reconcile_positions` is pinned live-book-only and
+  `femr_tick` now runs reconcile only in live mode — exchange truth says
+  nothing about paper positions; before this, the first paper position would
+  have been force-flattened as "stale" on the next tick.
+- femr's entry scan counts its own replayed positions as active (union with
+  exchange positions) — in live this is a no-op (reconcile clears strays
+  pre-decide); in paper it stops infinite re-entry of the same coin.
+
+**Why it matters.** Promotion needs forward-test evidence (G1); breakout_v1 and
+every future candidate get their paper track record from exactly this machinery.
+This also closes a real live-safety hole *before* it could open: had paper
+logging been "fixed" naively (or had anyone run a paper tick against the live
+DB after such a fix), unfiltered replays would have let paper rows trigger real
+flattens and strip manual-position protection.
+
+**Evidence.** 215 tests pass (12 new: tests/test_paper_book.py — replay-book
+filter parametrized over all 7 agents, owned/cooldown book params, reconcile
+never touches the paper book, ownership classification per book, femr
+no-re-entry + control; test_gather_decisions.py — paper_book set to match tick
+mode, paper femr policy logs exec rows as is_paper=1; one existing cooldown
+test updated to seed a live-book row, matching what the live path writes).
+Ruff clean. Live-fire on a scratch DB (real API, 3 paper ticks): tick 1 logged
+3 paper places (femr XMR, twap_mr TRX, twap_mr_regime TRX) all `is_paper=1`;
+tick 2 showed `bot-owned: ['TRX','XMR']` with twap_mr holding instead of
+re-entering; tick 3 (post femr fix) femr holds at capacity, no duplicate place.
+Docs: deploy/README §"Paper book" (run a parallel paper loop with
+`HLBOT_DB=data/hlbot_paper.sqlite`). No edge claim — this is measurement
+infrastructure; no live behavior change (live rows were always `is_paper=0`,
+filters preserve them exactly).
+
+**Known limitation (filed B-PAPER2).** femr's EXIT engine evaluates exchange
+positions only, so a paper femr position never exits — it now just holds a
+capacity slot instead of spamming re-entries. Fix is to synthesize paper
+`live_positions` from the paper-book replay; other agents exit fine (their
+exits replay their own log).
+
+**What's next (loop).** B-EDGE2a remainder, now meaningful: 15m closes feed in
+`_enrich_view` (`closes_15m`, one ~385-row API call per top coin, gated on
+breakout in roster), breakout `closes_key` config, roster entry with the
+validated lb=384/ex=96 config + goals yaml. Then the paper book starts
+accumulating breakout's G1 evidence while B-G014 waits on the store
+(~2026-06-26).

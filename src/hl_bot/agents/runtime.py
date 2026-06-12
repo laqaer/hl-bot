@@ -197,6 +197,8 @@ def classify_position_ownership(
     conn: sqlite3.Connection,
     all_positions: list[dict],
     agent_names: list[str],
+    *,
+    paper: bool = False,
 ) -> PositionOwnership:
     """Split live HL positions into bot-owned (per agent) vs manual.
 
@@ -207,10 +209,16 @@ def classify_position_ownership(
     ownership keys off each agent's CONFIRMED place/flatten decision log, and a
     coin owned by an agent that was filtered out of ``agent_names`` (e.g. a
     not-promoted live agent) correctly falls into ``manual_coins``.
+
+    ``paper`` selects which decision book defines ownership (matching the tick
+    mode). The default is the live book, so paper rows can never reclassify a
+    manual position as bot-owned — losing the don't-touch protection.
     """
     from ..exec.orders import bot_owned_coins
 
-    owned_by_agent = {name: bot_owned_coins(conn, agent=name) for name in agent_names}
+    owned_by_agent = {
+        name: bot_owned_coins(conn, agent=name, paper=paper) for name in agent_names
+    }
     owned_all: set[str] = set()
     for coins in owned_by_agent.values():
         owned_all |= coins
@@ -332,12 +340,18 @@ def gather_decisions(
       returned but NOT logged here — they're logged only after the exchange
       confirms, with the real fill px/sz (see :func:`execute_decisions`), so the
       cooldown check never sees our own intent rows.
+
+    Each agent's ``paper_book`` flag is set to ``is_paper`` before ``decide()``
+    so its position replay reads the book this tick will write: paper ticks see
+    paper rows, live ticks see live rows, and the two books never mix even when
+    they share one DB.
     """
     out: list[Decision] = []
     for agent in agents:
         if honor_enabled and not _agent_mode(conn, agent.name)[1]:
             log.info("agent %s disabled, skipping", agent.name)
             continue
+        agent.paper_book = is_paper
         try:
             decisions = agent.decide(view)
         except Exception as e:  # noqa: BLE001

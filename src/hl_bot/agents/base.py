@@ -31,6 +31,13 @@ class Agent(abc.ABC):
     def __init__(self, name: str, config: dict[str, Any] | None = None) -> None:
         self.name = name
         self.config = config or {}
+        # Which decision book this agent replays for its own position state:
+        # True = paper rows (is_paper=1), False = live rows (is_paper=0).
+        # The runtime (gather_decisions) sets this to match the current tick's
+        # mode each tick, so a paper tick can never replay live positions and a
+        # live tick can never replay paper ones. Default True matches the
+        # backtest engine, which logs every decision with is_paper=1.
+        self.paper_book: bool = True
 
     @abc.abstractmethod
     def decide(self, view: MarketView) -> list[Decision]:

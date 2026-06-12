@@ -88,6 +88,23 @@ B-WIN), append `--vwap-window 240` to `HLBOT_TICK_ARGS` or set
 `HLBOT_VWAP_WINDOW=240` in `/etc/hl-bot/env`. Backtest the exact window first:
 `hlbot confirm ... --vwap-window 240`.
 
+## Paper book (forward-testing candidates)
+
+A paper tick (`hlbot femr_tick` without `--live`) logs its place/flatten
+decisions as paper rows (`is_paper=1`), so paper agents track positions,
+exits, and cooldowns exactly like live — that paper book is the forward-test
+evidence for promoting a candidate. Replays are book-aware (a live tick never
+acts on paper rows and vice versa), so sharing one DB is safe; still, to keep
+the live DB clean, prefer a dedicated file when running a paper loop next to a
+live one:
+
+```bash
+sudo -u hlbot bash -c 'cd /opt/hl-bot && HLBOT_DB=data/hlbot_paper.sqlite uv run hlbot femr_tick'
+```
+
+Note the live tick in live mode runs only promoted agents — paper evidence for
+a candidate accumulates only where paper ticks actually run.
+
 ## Kill switch
 
 ```bash

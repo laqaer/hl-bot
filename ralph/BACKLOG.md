@@ -76,6 +76,31 @@ Keep it ruthlessly prioritized: the top item should always be the highest-levera
 
 ## P1 — honest measurement (so the supervisor can trust itself)
 
+- [x] **B-PAPER — Make the paper book exist + paper/live book separation.** Done
+  (Iter 37). Found while scoping B-EDGE2a: paper `femr_tick` NEVER logged
+  place/flatten (gap dates to the original femr_tick — `defer_exec_logging`
+  defers to an execution loop paper mode never reaches), so "paper trading"
+  produced no book at all and paper agents couldn't track their own positions
+  (the twap_mr_regime "paper pilot" accumulated zero evidence). Now: paper ticks
+  log exec decisions at gather time (is_paper=1), and every decision-log replay
+  is book-aware — agents replay the book matching the tick mode
+  (`Agent.paper_book`, set by `gather_decisions`), `bot_owned_coins` /
+  `coin_in_cooldown` default to the LIVE book, reconcile is live-gated +
+  live-book-only — so a paper row can never reclassify a manual position as
+  bot-owned, gate a live entry, or trigger a phantom live flatten. femr also no
+  longer re-enters a coin its paper replay holds. Live-fire verified (scratch
+  DB, 3 real paper ticks): entries logged is_paper=1, tick-2 shows
+  `bot-owned: [TRX, XMR]`, no duplicate entries. Operator doc: deploy/README
+  §Paper book (use `HLBOT_DB=data/hlbot_paper.sqlite` for a paper loop beside
+  a live one).
+- [ ] **B-PAPER2 — femr paper-EXIT fidelity.** femr evaluates exits only on
+  exchange positions ("adopt" semantics), so a paper femr position never exits
+  — it just holds a capacity slot (entry-side dedup fixed in B-PAPER). Fix:
+  in paper ticks, synthesize `view.extra["live_positions"]` from the paper-book
+  replay (entry_px/sz known; position_value=sz·entry; liq/uPnL approximated)
+  so femr's section-1 exit logic runs on the paper book too. Other agents are
+  unaffected (their exits replay their own log).
+
 - [x] **B6/B7 — Per-agent funding attribution + Sharpe.** Done: funding split to
   the agent holding the coin at funding time (scoring includes it in net/edge);
   per-agent Sharpe from daily PnL so sharpe-gates evaluate. Tested. (Iteration 7.)
@@ -288,6 +313,16 @@ each on ≥90d real history (`hlbot confirm` / `hlbot backtest --config`) before
   - [ ] **B-EDGE2a — paper wiring.** Live plumbing for a 15m-cadence agent
     (96h channel needs 5760×1m or 385×15m bars — beyond `_enrich_view`'s 1m
     fetch); roster entry paper-only. No live flip (human-gated).
+    _Foundation done (Iter 37, B-PAPER): paper ticks now produce a real,
+    live-separated paper book, so a roster entry accumulates evidence._
+    Remaining: (1) 15m closes feed — fetch `lookback+1`×15m candles per top
+    coin in `_enrich_view` into `view.extra["closes_15m"]` (one API call per
+    coin, ~385 rows, under the ~5000 cap; fresher than the hourly-harvested
+    store and works on any box), gated on breakout being in the roster so live
+    mode (where it isn't promoted) pays nothing; (2) breakout `closes_key`
+    config (default `"closes"` keeps backtests on frame closes; roster entry
+    sets `"closes_15m"`); (3) roster entry with the validated 15m config
+    (lookback 384 / exit 96) + a goals yaml.
   - [ ] **B-EDGE2b — revalidate as the store grows** (15m span 52d→90d+):
     rerun both confirms each few weeks; momentum is regime-fragile.
   - [x] **B-EDGE2c — quantify correlation to twap_mr_v1.** Done (Iter 36):

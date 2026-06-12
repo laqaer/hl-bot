@@ -104,9 +104,10 @@ class FemrAgent(Agent):
             SELECT ts_ms, coin, action, side, sz, px, cloid
             FROM agent_decisions
             WHERE agent = ? AND coin IS NOT NULL AND action IN ('place', 'flatten')
+              AND is_paper = ?
             ORDER BY ts_ms ASC
             """,
-            (self.name,),
+            (self.name, 1 if self.paper_book else 0),
         ).fetchall()
         open_by_coin: dict[str, dict] = {}
         for r in rows:
@@ -231,7 +232,12 @@ class FemrAgent(Agent):
                 ))
 
         # -------- 2. SCAN for new entries --------
-        active_coins = set(live_by_coin.keys()) - adopted_to_close
+        # Coins we already hold per our own audit replay count as active too:
+        # on a paper tick there is never an exchange position, so without this
+        # FEMR would re-enter the same coin every tick. In live mode the replay
+        # is a subset of exchange truth (reconcile clears strays pre-decide),
+        # so this adds nothing there.
+        active_coins = (set(live_by_coin.keys()) | set(femr_positions)) - adopted_to_close
         active_notional = sum(
             abs(float(p.get("position_value", 0) or 0))
             for c, p in live_by_coin.items() if c not in adopted_to_close

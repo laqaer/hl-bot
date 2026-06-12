@@ -115,19 +115,26 @@ def build_exchange(env_path: Path | None = None) -> tuple[Exchange, Info, LocalA
 # ---------------------------------------------------------------------------
 
 
-def bot_owned_coins(conn: sqlite3.Connection, agent: str = "femr_v1") -> set[str]:
+def bot_owned_coins(
+    conn: sqlite3.Connection, agent: str = "femr_v1", paper: bool = False
+) -> set[str]:
     """Coins bot believes it owns per its own decision audit log.
 
     NOTE: only counts decisions that were CONFIRMED filled. The new logger
     writes action='place' only after fill verification; rejected attempts
     write action='rejected' which is excluded here.
+
+    ``paper`` selects the book: False (default) replays only live rows
+    (is_paper=0) so paper-tick rows can never make the live path believe it
+    owns a position; True replays the paper book.
     """
     rows = conn.execute(
         """
         SELECT coin, action FROM agent_decisions
         WHERE agent = ? AND coin IS NOT NULL AND action IN ('place', 'flatten')
+          AND is_paper = ?
         ORDER BY ts_ms ASC
-        """, (agent,),
+        """, (agent, 1 if paper else 0),
     ).fetchall()
     owned: set[str] = set()
     for r in rows:
@@ -151,9 +158,13 @@ def reconcile_positions(
 
     This protects against: (a) the user manually closed a bot position,
     (b) we logged a place but the fill never happened, (c) a liquidation.
+
+    Live-book only by construction: exchange truth says nothing about paper
+    positions, so reconciling the paper book here would force-flatten every
+    paper position that (correctly) has no live counterpart.
     """
     live_coins = {p["coin"] for p in live_positions if abs(float(p.get("szi", 0) or 0)) > 0}
-    owned = bot_owned_coins(conn, agent)
+    owned = bot_owned_coins(conn, agent, paper=False)
     stale = owned - live_coins
     if not stale:
         return []
@@ -176,17 +187,22 @@ def coin_in_cooldown(
     coin: str,
     agent: str = "femr_v1",
     cooldown_s: int = COOLDOWN_S,
+    paper: bool = False,
 ) -> bool:
-    """True if bot attempted (placed OR rejected) this coin within cooldown window."""
+    """True if bot attempted (placed OR rejected) this coin within cooldown window.
+
+    Defaults to the live book (is_paper=0): this gate is consulted on the live
+    execution path, and a paper-tick row must never block a live entry.
+    """
     cutoff_ms = int((time.time() - cooldown_s) * 1000)
     row = conn.execute(
         """
         SELECT 1 FROM agent_decisions
         WHERE agent = ? AND coin = ?
           AND action IN ('place', 'rejected', 'flatten')
-          AND ts_ms >= ?
+          AND ts_ms >= ? AND is_paper = ?
         LIMIT 1
-        """, (agent, coin, cutoff_ms),
+        """, (agent, coin, cutoff_ms, 1 if paper else 0),
     ).fetchone()
     return row is not None
 

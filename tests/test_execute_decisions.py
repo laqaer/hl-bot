@@ -124,8 +124,10 @@ def test_guardrail_block_skips_place_without_touching_exchange(conn):
 
 
 def test_cooldown_skips_place(conn):
+    # is_paper=False: the live cooldown gate keys off the LIVE book, like every
+    # row the live path writes (a paper row must not block live entries).
     log_decision(conn, Decision(agent=AGENT, action="place", coin="BTC",
-                                side="B", sz=0.01, px=100.0))
+                                side="B", sz=0.01, px=100.0, is_paper=False))
     ex = _FakeExchange(market=_filled(100.0, 0.01))
     events = execute_decisions(conn, ex, _view(), [_place()],
                                agent_names={AGENT}, guardrails_ok=True)
