@@ -4042,3 +4042,72 @@ Idle queue unchanged (B-SCALE doc on real G2 evidence; per-agent funding
 clamp if mixed funding-sign agents ever share the live book). The edge
 hunt (P0.6) is back to two candidates: twap_mr (proven, live) +
 breakout-ER (paper, b_edge2b pending).
+
+## Iteration 75 — 2026-06-12 — B-EDGE2g: breakout extended-history read at 1h — all arms FAIL; momentum's profit is one pocket
+
+**Ripeness checks** (per-iteration readout): b_edge2b NOT RIPE (15m span
+52.4d < 60d, ETA ~Jun 20); b_g014 NOT RIPE (1m span 4.0d < 14d, ETA
+~Jun 26); b_edge3 NOT RIPE (1h LIT 171.9d < 200d, ~Jul 10). Store healthy,
+zero missing bars on all three universes.
+
+**Why this.** With all three specs waiting on the calendar, the
+highest-leverage unblocked move was making the calendar irrelevant for the
+breakout question: Iter 74's 1h harvest captured ~208d, and every breakout
+number in the book rests on ONE ~52d 15m window ending Jun 12 — the exact
+sample shape whose extension killed xmom one iteration ago. Rescaling the
+validated config to native 1h bars trades cadence for span and buys the
+extended-history read ~3 months before the 15m store can provide it.
+
+**Changed.**
+- `configs/experiments/b_edge2_1h.json` frozen: breakout_v1, 1h,
+  source=store, days=0, vwap_window 97 (=lb+1), three taker arms mirroring
+  b_edge2b at the SAME time horizons (lb=96/ex=24/er_lb=24 at 1h = 96h
+  channel / 24h exit / 24h ER, identical to lb=384/ex=96/er_lb=96 at 15m;
+  stop/max-hold/cooldown are in hours and carry over unchanged). The frozen
+  decision rule states up front that this CANNOT adjudicate breakout_er_v1's
+  15m promotion case (4× coarser exit/stop evaluation = different
+  experiment; b_edge2b stays the gate) and that IS-on-extended-history is
+  the genuinely fresh evidence (everything before ~Apr 21 untouched; all
+  parameters incl. ER 0.1 were selected on the 52d window, so the 70/30
+  OOS tail lies inside the selection window — b_edge3's overlap caveat).
+- `test_b_edge2_1h_spec_pins` mirrors the other spec pins (horizons,
+  taker-only, ER knobs, the can't-adjudicate-15m sentence).
+
+**The verdict (pre-registered, ripe at 171.9d worst / 0 gaps, not forced —
+record `configs/experiments/results/b_edge2_1h.20260612T125649Z.json`):**
+- original-taker **FAIL**: IS **−10.5bps**/994tr/sharpe −0.97, OOS +17.1/
+  412tr/+2.09; full-sample taker −2.6bps/1406tr.
+- breadth-taker **FAIL**: IS **−17.6**/1024tr, OOS +12.6/530tr; full −6.9.
+- combined-er-taker (the promotion candidate's config) **FAIL**: IS
+  **−13.9**/1294tr, OOS +16.3/620tr/+2.41; full-sample taker −4.0bps/
+  1912tr. None robust to 2× slippage.
+
+**Honest read.** The ~146d extended IS leg is decisively negative on every
+universe at >1000 trades/arm — not thin-sample noise — while every positive
+tail sits inside the already-seen Apr–Jun momentum pocket. This is the
+exact xmom shape (Iter 74), now across two independent strategy families
+(rank momentum + Donchian channel). Two honest limits, frozen in the spec
+before the numbers existed: (a) 1h evaluation genuinely costs edge (OOS
++16.3 at 1h vs +36.1 at 15m on overlapping windows), so this does NOT
+prove the 15m configuration loses on extended history — it proves the
+SIGNAL at 1h does, and sharply cuts the prior that the 15m PASS is
+durable; (b) b_edge2b (~Jun 20) remains the promotion gate, but its
+verdict must now be read against this record — a 15m PASS whose profit
+still lives entirely in the pocket is the warned-about shape. Both paper
+agents stay (out-of-time forward test unaffected); nothing promoted,
+nothing flipped. min_span_days bumped 150→200 post-run per protocol
+(LIT binding → next rerun ~Jul 10, same day as b_edge3's).
+
+**Evidence.** 481 → **482 tests pass**; ruff clean. Experiment live-run on
+the real store (numbers above); verdict record committed beside the specs.
+
+**Found.** The b_edge3/b_edge2_1h rerun pair now lands the same week
+(~Jul 10) — one iteration can take both readouts.
+
+**What's next (loop).** Per-iteration: the three `--check-only` readouts
+(b_edge2b ~Jun 20 FIRST — read against B-EDGE2g; b_g014 ~Jun 26; b_edge3 +
+b_edge2_1h ~Jul 10). B-EDGE2f at ≥30d paper books (~Jul 8); xmom paper card
+~Jul 12. Idle queue unchanged (B-SCALE doc on real G2 evidence; per-agent
+funding clamp if mixed funding-sign agents ever share the live book). Edge
+hunt status: twap_mr (proven, live) + breakout-ER (paper, now under a
+regime-fragility cloud pending b_edge2b).

@@ -656,7 +656,31 @@ each on ≥90d real history (`hlbot confirm` / `hlbot backtest --config`) before
     three taker arms, ripeness-gated at 60d 15m span (~Jun 20: first sample
     that outgrows the 52d window every breakout number so far shares); run
     `uv run hlbot experiment configs/experiments/b_edge2b.json`, then bump
-    `min_span_days` so the next rerun waits for new data again.
+    `min_span_days` so the next rerun waits for new data again. **Read the
+    Jun-20 verdict against B-EDGE2g below: the same time-horizons at 1h on
+    208d FAIL all three arms (IS strongly negative); a 15m PASS whose gain
+    still lives entirely in the Apr–Jun pocket is the warned-about shape.**
+  - [x] **B-EDGE2g — extended-history read at 1h cadence (span-for-cadence).**
+    Done (Iter 75): the Iter-74 1h harvest made ~208d available NOW vs
+    ~Sep for 90d of 15m, so the xmom-killer test was pointed at breakout
+    months early. Frozen `configs/experiments/b_edge2_1h.json` (same TIME
+    horizons rescaled to native 1h bars: lb=96/ex=24/er_lb=24 = 96h/24h/24h;
+    stop/hold/cooldown already in hours; three taker arms mirroring
+    b_edge2b) and ran the pre-registered verdict same-day on the ripe store:
+    **all three arms FAIL** — IS-on-extended-history (mostly pre-April,
+    never touched by any breakout run) is strongly NEGATIVE (original
+    −10.5bps/994tr, breadth −17.6/1024tr, combined-ER −13.9/1294tr taker)
+    while the +12.6..+17.1 OOS tails sit inside the already-seen Apr–Jun
+    selection window; full-sample taker negative on all arms (−2.6/−6.9/
+    −4.0bps). Same shape that killed xmom (Iter 74). Frozen caveat: 1h
+    evaluation is a DIFFERENT experiment (4× coarser exits) — this cannot
+    fail breakout_er_v1's 15m case (b_edge2b stays the gate) and the OOS
+    cadence cost is real (+16.3 at 1h vs +36.1 at 15m on overlapping
+    windows), but it is a strong regime-fragility warning: across two
+    strategy families (xmom, Donchian) and two cadences, momentum's profit
+    on this tape is one Apr–Jun pocket. Record:
+    `results/b_edge2_1h.20260612T125649Z.json`; min_span_days bumped
+    150→200 post-run (LIT binding → next rerun ~Jul 10, beside b_edge3).
   - [x] **B-EDGE2d — out-of-universe breadth test.** Done (Iter 48): same
     config (lb=384/ex=96) on 10 fresh liquid coins (CRV,ENA,LIT,NEAR,SUI,TON,
     WLD,XMR,XPL,XRP — top fresh by 24h volume, full 52d history) **FAILS G0**:

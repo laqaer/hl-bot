@@ -331,6 +331,28 @@ def test_b_edge2b_spec_pins():
         assert a.config["lookback_bars"] == 384 and a.config["exit_lookback_bars"] == 96
 
 
+def test_b_edge2_1h_spec_pins():
+    spec = load_spec(SPECS_DIR / "b_edge2_1h.json")
+    assert (spec.agent, spec.interval, spec.source, spec.days) == ("breakout_v1", "1h", "store", 0.0)
+    assert spec.min_span_days >= 150  # bumped after each rerun so the next waits for fresh data
+    assert spec.max_missing_pct == 1.0
+    assert spec.vwap_window == 97  # breakout needs window >= lookback+1 to carry closes
+    assert all(a.prefer == "taker" for a in spec.arms)  # maker fills aren't momentum evidence
+    by_name = {a.name: a for a in spec.arms}
+    assert set(by_name) == {"original-taker", "breadth-taker", "combined-er-taker"}
+    combined = by_name["combined-er-taker"]
+    assert len(spec.arm_coins(combined)) == 20
+    assert combined.config["min_efficiency_ratio"] == 0.1
+    # same TIME horizons as b_edge2b's 15m arms (96h channel / 24h exit / 24h ER),
+    # rescaled to 1h bars — the whole point is span-for-cadence, not new knobs
+    assert combined.config["er_lookback_bars"] == 24
+    for a in spec.arms:
+        assert a.config["lookback_bars"] == 96 and a.config["exit_lookback_bars"] == 24
+    # different exit cadence = different experiment: the spec must say it can't
+    # adjudicate the 15m promotion case
+    assert "b_edge2b" in spec.decision
+
+
 def test_b_edge3_spec_pins():
     spec = load_spec(SPECS_DIR / "b_edge3.json")
     assert (spec.agent, spec.interval, spec.source, spec.days) == ("xmom_v1", "1h", "store", 0.0)

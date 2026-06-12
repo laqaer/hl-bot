@@ -1,0 +1,34 @@
+{
+  "name": "b_edge2_1h",
+  "description": "B-EDGE2g: the breakout/ER configuration rescaled to native 1h bars, run on the ~208d 1h store (harvesting began 2026-06-12; first capture reaches back to ~2025-11-16, LIT 171.9d worst). Every breakout number so far lives on one ~52d 15m window ending 2026-06-12 — the same shape of sample whose extension just killed xmom (b_edge3, Iter 74). This spec buys the extended-history read ~4 months early by trading cadence for span: lb=96/ex=24/er_lb=24 at 1h are the SAME time horizons as the validated lb=384/ex=96/er_lb=96 at 15m (96h channel, 24h exit channel, 24h ER window); stop/max-hold/cooldown are already in hours and carry over unchanged. What changes is evaluation cadence — exits, stops and entries are checked 4x less often — so this is a DIFFERENT experiment from b_edge2b, not its adjudicator. Taker arms only — optimistic maker fills are not promotion evidence for momentum.",
+  "agent": "breakout_v1",
+  "coins": ["ADA", "AVAX", "BTC", "DOGE", "ETH", "HYPE", "LINK", "SOL", "TRX", "ZEC"],
+  "interval": "1h",
+  "days": 0,
+  "source": "store",
+  "vwap_window": 97,
+  "min_span_days": 200,
+  "min_edge_bps": 3.0,
+  "min_sharpe": 1.0,
+  "min_trades": 20,
+  "arms": [
+    {
+      "name": "original-taker",
+      "prefer": "taker",
+      "config": {"lookback_bars": 96, "exit_lookback_bars": 24}
+    },
+    {
+      "name": "breadth-taker",
+      "prefer": "taker",
+      "coins": ["CRV", "ENA", "LIT", "NEAR", "SUI", "TON", "WLD", "XMR", "XPL", "XRP"],
+      "config": {"lookback_bars": 96, "exit_lookback_bars": 24}
+    },
+    {
+      "name": "combined-er-taker",
+      "prefer": "taker",
+      "coins": ["ADA", "AVAX", "BTC", "DOGE", "ETH", "HYPE", "LINK", "SOL", "TRX", "ZEC", "CRV", "ENA", "LIT", "NEAR", "SUI", "TON", "WLD", "XMR", "XPL", "XRP"],
+      "config": {"lookback_bars": 96, "exit_lookback_bars": 24, "min_efficiency_ratio": 0.1, "er_lookback_bars": 24}
+    }
+  ],
+  "decision": "This spec CANNOT pass or fail breakout_er_v1's 15m promotion case — b_edge2b remains the promotion gate; the cadence change makes a PASS here supportive independent evidence and a FAIL a strong regime-fragility warning to weigh against any later 15m PASS. What it tests: does the 96h-channel momentum signal survive ~208d net of taker costs at 1h evaluation? Everything before ~2026-04-21 is history no breakout run has touched, and ALL parameters (channel lengths, ER threshold 0.1) were selected on the 52d window ending 2026-06-12 — so, as with b_edge3, the 70/30 walk-forward's OOS tail (~62d) lies INSIDE the selection window and the in-sample leg (mostly pre-April, never touched) is the genuinely fresh evidence; weigh IS-on-extended-history at least as heavily as OOS. Read all three arms the b_edge2b way: combined-er-taker is the configuration that matters, original-taker tracks the base edge's regime, breadth-taker is expected weak/FAIL. After running, bump min_span_days so any rerun waits for new data; promotion stays human-gated via B-PAPER3c."
+}
