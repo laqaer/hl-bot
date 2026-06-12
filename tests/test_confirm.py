@@ -49,6 +49,8 @@ def test_confirms_profitable_mean_reversion_as_maker():
     res = confirm_strategy(
         lambda conn: TwapMrAgent(config={}, conn=conn),
         _choppy(), prefer="maker", min_sharpe=0.5,
+        # synthetic path is short; production keeps the 30/10 defaults
+        min_trades_is=10, min_trades_oos=4,
     )
     assert res.confirmed
     assert res.in_sample.edge_bps and res.in_sample.edge_bps > 0
@@ -70,3 +72,13 @@ def test_insufficient_data_not_confirmed():
         _choppy(4),
     )
     assert not res.confirmed
+
+
+def test_too_few_trades_blocks_confirmation_by_default():
+    # One lucky carry episode on a sparse 180d run must not stamp G0.
+    res = confirm_strategy(
+        lambda conn: TwapMrAgent(config={}, conn=conn),
+        _choppy(), prefer="maker", min_sharpe=0.5,
+    )
+    assert not res.confirmed
+    assert any("too few trades" in r for r in res.reasons)

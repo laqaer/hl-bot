@@ -63,8 +63,16 @@ class Frame:
 class CostModel:
     """Execution cost assumptions.
 
-    Hyperliquid base fees are ~3.5 bps taker / ~1.0 bp maker (lower at volume).
+    Hyperliquid base fees are 4.5 bps taker / 1.5 bps maker (lower at volume).
     ``slippage_bps`` is the half-spread + impact crossed on a taker order.
+
+    EXITS ARE ALWAYS TAKER, even in maker mode: production closes positions
+    with market orders (risk reduction beats price), so a backtest that
+    prices exits as maker overstates carry round trips ~3-4x on costs.
+    NOTE: maker ENTRY fills remain optimistic (fill at mid, no queue, 100%
+    fill rate) — strictly an upper bound; the paper simulator's cross-to-fill
+    rule is the honest fill model and porting it here is tracked in the
+    backlog (V-series). CI pins these constants (tests/test_gate_minima.py).
     """
 
     taker_fee_bps: float = 4.5
@@ -83,6 +91,14 @@ class CostModel:
     @property
     def fee_rate(self) -> float:
         return self.fee_bps / 10_000.0
+
+    @property
+    def exit_fee_rate(self) -> float:
+        return self.taker_fee_bps / 10_000.0
+
+    @property
+    def exit_slip(self) -> float:
+        return self.slippage_bps / 10_000.0
 
 
 # ---------------------------------------------------------------------------
@@ -281,16 +297,16 @@ class Backtester:
             return
         # Closing a long = sell (hit bid); closing a short = buy (lift ask).
         if pos.side == "B":
-            exit_px = mid * (1 - self.cost.slip)
+            exit_px = mid * (1 - self.cost.exit_slip)
             price_pnl = (exit_px - pos.entry_px) * close_sz
             close_side = "A"
         else:
-            exit_px = mid * (1 + self.cost.slip)
+            exit_px = mid * (1 + self.cost.exit_slip)
             price_pnl = (pos.entry_px - exit_px) * close_sz
             close_side = "B"
         frac = close_sz / pos.sz if pos.sz else 1.0
         funding = pos.funding_accrued * frac
-        fee = exit_px * close_sz * self.cost.fee_rate
+        fee = exit_px * close_sz * self.cost.exit_fee_rate
         closed_pnl = price_pnl + funding  # funding folded in; fee tracked separately
         self._realized += closed_pnl - fee
         self._record_fill(agent, coin, close_side, close_sz, exit_px, fee, closed_pnl, d.cloid)

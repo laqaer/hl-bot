@@ -8,6 +8,8 @@
 
 from __future__ import annotations
 
+import pytest
+
 from hl_bot.agents.base import Agent, MarketView
 from hl_bot.backtest.data import build_frames
 from hl_bot.backtest.engine import Backtester, CostModel, Frame
@@ -54,10 +56,13 @@ def test_opposite_side_place_opens_only_remainder():
     assert open_short[0] == 2.0
 
     # No double-count: traded notional = 5 (open) + 5 (close) + 2 (open) + 2 (close) = 14 units.
-    assert res.scorecard.notional_traded == 14.0 * 100.0
+    assert res.scorecard.notional_traded == pytest.approx(14.0 * 100.0, rel=2e-4)  # exits pay taker slip now
     assert res.scorecard.n_fills == 4   # n_trades counts nonzero closes only
     # No price move, no cost -> flat PnL (would be nonzero if sizing/fees were wrong).
-    assert abs(res.net_pnl) < 1e-6
+    # Exits always pay taker (fee + slip) even in maker mode — matching
+    # production market closes. Close legs: 5u + 2u @ ~100 = 700 notional.
+    expected_cost = 700.0 * (4.5 + 2.0) / 10_000
+    assert res.net_pnl == pytest.approx(-expected_cost, rel=2e-3)
 
 
 def test_funding_scaled_by_bar_interval():

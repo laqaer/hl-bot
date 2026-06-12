@@ -182,7 +182,8 @@ def build_frames(
             if vwap is not None and sigma is not None:
                 candles_1h[coin] = {"vwap": vwap, "sigma": sigma, "n": min(cut, vwap_window)}
             closes_window[coin] = closes[max(0, cut - vwap_window):cut]
-            vol[coin] = sum(vols[max(0, cut - 1440):cut]) * mid  # ~rolling notional proxy
+            bars_per_day = max(1, round(24.0 / max(bar_hours, 1e-9)))
+            vol[coin] = sum(vols[max(0, cut - bars_per_day):cut]) * mid  # rolling 24h notional
             funding[coin] = funding_rate_at(funding_by_coin.get(coin, []), ts) * bar_hours
         if mids:
             frames.append(Frame(
