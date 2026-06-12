@@ -90,20 +90,24 @@ Keep it ruthlessly prioritized: the top item should always be the highest-levera
 
 ## P1 — honest measurement (so the supervisor can trust itself)
 
-- [ ] **B-PNL-SPLIT — health's `pnl_24h` (and its loss floor) reads the whole
-  account, not the bot.** Found Iter 87 live: health printed pnl_24h −$325.80
-  while the bot's own 24h book was +$0.97 — the difference is `agent='manual'`
-  fills (−$326.77, mostly xyz:CL, a builder-perp the bot never trades; the
-  operator trades the same account). The `fills.agent` attribution column
-  already exists and is clean (twap_mr_v1 +0.51 / femr_v1 +0.46 / manual
-  −326.77 over the same window). Fix: `assess_health` splits bot vs manual —
-  the `daily_loss_floor` crit should key on BOT PnL (a manual loss must not
-  page the bot's dead-man switch, and a manual win must not mask a bot bleed);
-  print both numbers. Check `reports/track_record.py` uses the same split
-  (per-agent tables suggest it does; verify the headline equity curve too —
-  equity_snapshots are account-wide and CANNOT be split, so the track record
-  needs an explicit "shared account" caveat until the bot gets its own
-  address/vault).
+- [x] **B-PNL-SPLIT — health's `pnl_24h` (and its loss floor) judged the whole
+  account, not the bot.** Done (Iter 88; found Iter 87 live: health printed
+  pnl_24h −$325.80 while the bot's own 24h book was +$0.97 — the difference
+  was `agent='manual'` fills, the operator trading the same account).
+  `assess_health` now splits 24h PnL bot vs account in one query (bot = agent
+  NOT NULL and ≠ 'manual'; `unknown:` prefixes are bot-tagged cloids → bot;
+  NULL = pre-attribution legacy → not ours) — the `daily_loss_floor` crit
+  keys on BOT PnL only, both numbers print (`bot $+2.84 (account $-323.93,
+  manual $-326.77)` live-fired on the deploy DB — the incident, rendered
+  honestly). The floor is now ARMABLE: `hlbot health --daily-loss-floor` /
+  `HLBOT_DAILY_LOSS_FLOOR` env (it was hardwired unarmed at −1e9, the crit
+  unreachable in deployment); malformed env refuses to run (missed dead-man
+  ping pages) rather than silently disarm. Track record: per-agent tables
+  verified already split (manual/unknown excluded); headline account section
+  CANNOT split (equity_snapshots are address-wide) so all three exports carry
+  an explicit shared-account caveat (`ACCOUNT_NOTE`). Operator: arm via
+  /etc/hl-bot/env (deploy/README §Monitoring), e.g. −3%/day ≈ −$20 today.
+- [x] **B-PAPER — Make the paper book exist + paper/live book separation.** Done
   (Iter 37). Found while scoping B-EDGE2a: paper `femr_tick` NEVER logged
   place/flatten (gap dates to the original femr_tick — `defer_exec_logging`
   defers to an execution loop paper mode never reaches), so "paper trading"

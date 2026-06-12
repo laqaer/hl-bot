@@ -6,7 +6,9 @@
   * is evidence still accumulating?      (decision rows not silent for days)
   * is ingest fresh?                     (recent fills/equity snapshots)
   * is any agent paused by a guardrail?  (agent_state.enabled = 0)
-  * is it bleeding?                       (24h realized PnL vs a floor)
+  * is it bleeding?                       (24h realized BOT PnL vs a floor;
+                                          the shared account's manual fills
+                                          print beside it, never judged)
   * is the auto-deployer alive/shipping? (``DeploySignals``; warn-only)
   * can a bad verdict reach a human?     (``PagerSignals``; warn-only)
   * is the paper forward-test loop alive? (``PaperSignals``; warn-only)
@@ -36,6 +38,35 @@ UPDATE_HEARTBEAT = ".update_heartbeat"  # touched on every COMPLETED updater run
 # deploy/run-paper-tick.sh (pinned by test, like the updater markers above).
 PAPER_DB_BASENAME = "hlbot_paper.sqlite"
 PAPER_DB_ENV = "HLBOT_PAPER_DB"
+
+# Bleeding floor for the pnl_24h check: unarmed by default (nothing trips a
+# −1e9 floor); armed via `hlbot health --daily-loss-floor` or the env below.
+DAILY_LOSS_FLOOR_ENV = "HLBOT_DAILY_LOSS_FLOOR"
+UNARMED_LOSS_FLOOR = -1e9
+
+
+def resolve_daily_loss_floor(
+    cli_value: float | None = None,
+    env: Mapping[str, str] | None = None,
+) -> float:
+    """Resolve the bleeding floor: CLI > HLBOT_DAILY_LOSS_FLOOR > unarmed.
+
+    A malformed env value raises instead of falling through — silently
+    disarming a safety rail is worse than crashing: `hlbot health` then exits
+    non-zero, the dead-man ping is missed, and the typo pages a human.
+    """
+    if cli_value is not None:
+        return cli_value
+    raw = (os.environ if env is None else env).get(DAILY_LOSS_FLOOR_ENV, "").strip()
+    if not raw:
+        return UNARMED_LOSS_FLOOR
+    try:
+        return float(raw)
+    except ValueError as e:
+        raise ValueError(
+            f"{DAILY_LOSS_FLOOR_ENV}={raw!r} is not a number — refusing to "
+            "run with a silently disarmed bleeding floor"
+        ) from e
 
 
 @dataclass
@@ -224,7 +255,7 @@ def assess_health(
     max_tick_age_s: int = 900,        # 15 min: ticks should be far more frequent
     max_ingest_age_s: int = 3600,     # 1 h
     max_decision_age_s: int = 259_200,  # 3 d: loop alive but book silent → warn
-    daily_loss_floor: float = -1e9,   # set to a negative $ to flag bleeding
+    daily_loss_floor: float = UNARMED_LOSS_FLOOR,  # negative $ floor on BOT pnl
     deploy: DeploySignals | None = None,
     max_update_age_s: int = 7200,     # 2 h ≈ 8 missed 15-min updater fires
     pager: PagerSignals | None = None,
@@ -382,18 +413,34 @@ def assess_health(
             checks.append(("paper", "ok",
                            f"last paper tick {paper.beat_age_s/60:.1f} min ago"))
 
-    # --- 24h realized PnL ---
+    # --- 24h realized PnL (bot vs whole account — B-PNL-SPLIT) ---
+    # The trading address is shared with the operator's manual trading, so the
+    # account-wide sum can page the dead-man switch on a manual loss — or mask
+    # a real bot bleed under a manual win (seen live: account −$325.80 while
+    # the bot's own book was +$0.97; the gap was manual builder-perp fills).
+    # The floor judges BOT fills only: `agent` is cloid-resolved at ingest,
+    # NULL/'manual' means "not placed by us" ('unknown:' prefixes ARE ours —
+    # bot-tagged cloids whose agent name is no longer registered).
     since = now_ms - 86_400_000
     row = conn.execute(
-        "SELECT COALESCE(SUM(closed_pnl),0) - COALESCE(SUM(fee),0) FROM fills WHERE time_ms >= ?",
+        "SELECT COALESCE(SUM(closed_pnl - fee), 0),"
+        "       COALESCE(SUM(CASE WHEN agent IS NOT NULL AND agent <> 'manual'"
+        "                    THEN closed_pnl - fee ELSE 0 END), 0)"
+        "  FROM fills WHERE time_ms >= ?",
         (since,),
     ).fetchone()
-    pnl24 = float(row[0] or 0.0)
-    metrics["pnl_24h"] = pnl24
+    pnl24_account = float(row[0] or 0.0)
+    pnl24 = float(row[1] or 0.0)
+    metrics["pnl_24h"] = pnl24                  # bot-only: the floor's subject
+    metrics["pnl_24h_account"] = pnl24_account  # whole address, manual included
+    detail = f"bot ${pnl24:+.2f}"
+    manual = pnl24_account - pnl24
+    if abs(manual) >= 0.005:  # only mention manual when it rounds to a cent
+        detail += f" (account ${pnl24_account:+.2f}, manual ${manual:+.2f})"
     if pnl24 < daily_loss_floor:
-        checks.append(("pnl_24h", "crit", f"${pnl24:+.2f} < floor ${daily_loss_floor:+.2f}"))
+        checks.append(("pnl_24h", "crit", f"{detail} < floor ${daily_loss_floor:+.2f}"))
     else:
-        checks.append(("pnl_24h", "ok", f"${pnl24:+.2f}"))
+        checks.append(("pnl_24h", "ok", detail))
 
     levels = [lvl for _, lvl, _ in checks]
     status = "down" if "crit" in levels else ("warn" if "warn" in levels else "ok")

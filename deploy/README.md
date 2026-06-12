@@ -61,6 +61,13 @@ ticking box warns `pager: DOWN pages nobody` on every health line until you
 wire one — telegram alone can't catch a fully dead box (nothing left running
 to send it); only the missed dead-man ping does.
 
+Bleeding floor: set `HLBOT_DAILY_LOSS_FLOOR=-20` (a negative $) in
+`/etc/hl-bot/env` to make health go DOWN when the **bot's** 24h realized PnL
+drops below it. The floor judges cloid-attributed bot fills only — your own
+manual trading on the shared account neither pages it nor masks a bot bleed
+(the account-wide number prints beside it). Unset = unarmed. A malformed
+value refuses to run (missed dead-man ping) rather than silently disarm.
+
 ## Host sizing & "I can't SSH in"
 
 `install.sh` adds a swapfile (`deploy/ensure-swap.sh`) and the units bound the

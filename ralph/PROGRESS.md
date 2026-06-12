@@ -4894,3 +4894,67 @@ watches its own paper loop.
 **Evidence.** 534 → 541 tests (+7 in test_ops.py: stale-warn,
 never-ticked-warn, fresh-ok, absent-quiet, signal reader, CLI wiring,
 script-name pin); committed green at a2442b1.
+
+## Iteration 88 — 2026-06-12 — B-PNL-SPLIT: the bleeding floor judges the bot, not the shared account
+
+**Ripeness checks** (per-iteration readout): b_g014 NOT RIPE (1m span 4.2d
+< 14d, ~Jun 26); b_edge2b NOT RIPE (15m span 52.6d < 60d, ~Jun 20). Store
+fresh (worst lag 22.7m, harvest skipped; peer sync +0/+0).
+
+**The work.** Iter 87 found `hlbot health` printing pnl_24h −$325.80 while
+the bot's 24h book was +$0.97 — the gap was the operator's manual fills on
+the shared account. Health's loss floor judged that account-wide number, so
+a manual loss could page the bot's dead-man switch and a manual win could
+mask a real bot bleed. Also found while fixing: the floor was UNARMED in
+deployment — the CLI never passed `daily_loss_floor`, so the −1e9 default
+made the crit unreachable on every box.
+
+**Changed.**
+- `ops/health.py`: the 24h PnL query splits bot vs account in one pass.
+  Bot = `agent IS NOT NULL AND agent <> 'manual'` (cloid-resolved at ingest;
+  `unknown:` prefixes are bot-tagged cloids whose name is unregistered →
+  ours; NULL = pre-attribution legacy → not ours, matching
+  `scoring/positions.py`'s manual fallback). The floor crits on BOT PnL;
+  the check line prints both (`bot $X (account $Y, manual $Z)`, manual part
+  omitted when it rounds to zero). Metrics: `pnl_24h` = bot (the floor's
+  subject), `pnl_24h_account` = whole address.
+- Floor armable: `resolve_daily_loss_floor` (CLI `--daily-loss-floor` >
+  `HLBOT_DAILY_LOSS_FLOOR` env > unarmed). A malformed env value raises —
+  `hlbot health` exits non-zero, the dead-man ping is missed, the typo pages
+  a human — instead of silently disarming a safety rail. Documented in
+  deploy/README §Monitoring; arming the live box is the operator's call
+  (it changes paging policy; ≈ −$20 ≈ 3%/day of today's $689 equity would
+  mirror the guardrail halt).
+- `reports/track_record.py`: verified the per-agent tables already split
+  (manual/`unknown:` excluded since B15); the headline account section reads
+  address-wide equity_snapshots + ALL fills and cannot be split, so all
+  three exports (json `account_note`, md italic line, html muted p) now
+  carry an explicit shared-account caveat until the bot trades its own
+  address/vault (B16b).
+
+**Evidence.** 541 → **547 tests** pass (+4 health: manual-loss-ignored,
+manual-win-can't-mask, unknown:/NULL edge split, resolver precedence +
+loud-typo; +1 CLI wiring pin: env-armed floor exits 1 on a bot bleed under
+a masking manual win, 0 unarmed; +1 track-record: note in all three
+exports); ruff clean. Live-fired read-only on the deploy DB: `pnl_24h: bot
+$+2.84 (account $-323.93, manual $-326.77)` — the Iter-87 incident, now
+rendered honestly. Bonus repair: Iter 87's backlog insert had eaten the
+`- [x] B-PAPER` header line (orphaning its body under the new item) —
+restored.
+
+**Live watch.** (1) hlbot-paper-tick.timer VERIFIED on the box: enabled,
+firing every 5m (last 17:22:25, next 17:27:25), `hlbot_paper.sqlite`
+growing, health shows `paper: last paper tick 2.5 min ago` — B-PAPERLOOP +
+B-PAPERHB both confirmed live; G1 calendar clocks are running. (2) 17:23
+harvest-timer fire VERIFIED syncing deploy→loop: deploy store files 17:23,
+loop store rewritten 17:24 with no loop-side harvest (journal unreadable
+from this user — mtime evidence instead). B-STORESYNC now proven in both
+directions. (3) TON max-hold (~19:12 deadline): still pending at 17:25 —
+next iteration. (4) Equity $689.38 (was $671.20 Iter 85).
+
+**What's next (loop).** Check TON exchange-truth after 19:12. Per-iteration
+readouts unchanged (b_edge2b ~Jun 20, b_g014 ~Jun 26, b_edge3 + b_edge2_1h
+~Jul 10, B-EDGE2f paper readout ~Jul 12). Idle queue: B-SCALE doc once real
+G2 evidence exists; off-host store backup proposal if the operator wants
+host-loss coverage; operator nudge — wire HEALTHCHECK_URL (pager warn still
+firing on every health line) and consider arming HLBOT_DAILY_LOSS_FLOOR.

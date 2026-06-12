@@ -45,6 +45,19 @@ PAPER_NOTE = (
     "the cards, never folded into net/edge/sharpe(d)/maxDD$ ('—' = no mid)"
 )
 
+# The trading address is shared with the operator's manual trading, and
+# equity snapshots are account-wide by nature — they CANNOT be split by
+# agent. Until the bot trades its own address/vault (B16b), the headline
+# section must say so (B-PNL-SPLIT: seen live, manual fills moved the
+# account −$325.80 on a day the bot's own book made +$0.97).
+ACCOUNT_NOTE = (
+    "shared account — the equity curve and headline figures read the WHOLE "
+    "address (equity snapshots + all fills, including the operator's manual "
+    "trades); they are not a bot-only record until the bot trades its own "
+    "address/vault. Bot-only evidence is the per-agent table "
+    "(cloid-attributed fills)."
+)
+
 
 def _account_equity_curve(conn: sqlite3.Connection) -> list[tuple[int, float]]:
     rows = conn.execute(
@@ -183,6 +196,7 @@ def build_track_record(
     out: dict[str, Any] = {
         "generated_ms": now_ms,
         "account": account,
+        "account_note": ACCOUNT_NOTE,
         "equity_curve": curve,
         "agents": sorted(per_agent, key=lambda d: d["net_pnl"], reverse=True),
     }
@@ -206,6 +220,7 @@ def to_markdown(track: dict[str, Any]) -> str:
         f"· calmar `{_num(a.get('calmar'))}` · net `${a.get('net_pnl', 0):+.2f}` "
         f"· snapshots `{a.get('n_snapshots', 0)}`"
     )
+    lines.append(f"_{ACCOUNT_NOTE}_")
     lines.append("")
     lines.append("## Agents")
     lines.append("| agent | trades | net | edge | win | sharpe(d) | maxDD$ |")
@@ -337,6 +352,7 @@ def to_html(track: dict[str, Any]) -> str:
         f"<p class=\"muted\">sharpe {_num(a.get('sharpe'))} · max DD "
         f"{_pct(a.get('max_drawdown_pct'))} · calmar {_num(a.get('calmar'))} · "
         f"net ${a.get('net_pnl', 0):+.2f} · {a.get('n_snapshots', 0)} snapshots</p>"
+        f"<p class=\"muted\">{ACCOUNT_NOTE}</p>"
         "<h2>Per-agent</h2><table><thead><tr><th>agent</th><th>trades</th><th>net</th>"
         "<th>edge</th><th>win</th><th>sharpe(d)</th><th>maxDD$</th></tr></thead><tbody>"
         f"{rows or '<tr><td colspan=7 class=muted>no agent fills yet</td></tr>'}"

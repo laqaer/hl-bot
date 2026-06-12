@@ -1376,11 +1376,14 @@ def ws(
 
 
 @app.command()
-def health(max_tick_age_s: int = 900, max_decision_age_s: int = 259_200, heartbeat: bool = True):
+def health(max_tick_age_s: int = 900, max_decision_age_s: int = 259_200, heartbeat: bool = True,
+           daily_loss_floor: float | None = None):
     """Assess bot health (tick/ingest freshness, equity, paused agents, 24h PnL).
 
     Pings HEALTHCHECK_URL when healthy (dead-man switch) and Telegram-alerts when
-    not. Designed to run on a timer alongside the tick.
+    not. Designed to run on a timer alongside the tick. The bleeding check goes
+    crit when 24h BOT PnL (manual fills excluded) drops below --daily-loss-floor
+    (or HLBOT_DAILY_LOSS_FLOOR); unset = unarmed.
     """
     import os
 
@@ -1390,11 +1393,13 @@ def health(max_tick_age_s: int = 900, max_decision_age_s: int = 259_200, heartbe
         read_deploy_signals,
         read_pager_signals,
         read_paper_signals,
+        resolve_daily_loss_floor,
     )
 
     conn, s = _conn()
     rep = assess_health(
         conn, max_tick_age_s=max_tick_age_s, max_decision_age_s=max_decision_age_s,
+        daily_loss_floor=resolve_daily_loss_floor(daily_loss_floor),
         deploy=read_deploy_signals(s.db_path), pager=read_pager_signals(),
         paper=read_paper_signals(s.db_path))
     console.print(rep.render())

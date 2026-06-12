@@ -44,13 +44,13 @@ def _beat(conn, t_ms, mode="paper"):
     )
 
 
-def _fill(conn, t_ms, pnl=1.0, fee=0.05):
+def _fill(conn, t_ms, pnl=1.0, fee=0.05, agent="twap_mr_v1"):
     conn.execute(
         """INSERT INTO fills(hash, tid, time_ms, coin, side, px, sz, start_position,
            dir, closed_pnl, fee, fee_token, builder_fee, cloid, agent, raw_json)
            VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
         (f"h{t_ms}", t_ms, t_ms, "BTC", "B", 100.0, 1.0, 0, "Close Long",
-         pnl, fee, "USDC", 0, None, "twap_mr_v1", "{}"),
+         pnl, fee, "USDC", 0, None, agent, "{}"),
     )
 
 
@@ -175,6 +175,98 @@ def test_health_down_when_bleeding(conn):
     _equity(conn, now - 60_000)
     rep = assess_health(conn, now_ms=now, daily_loss_floor=-30.0)
     assert rep.status == "down"
+
+
+def test_health_floor_ignores_manual_loss(conn):
+    # B-PNL-SPLIT: the address is shared with the operator's manual trading.
+    # A manual loss must not page the bot's dead-man switch — the floor judges
+    # bot fills only, with the account-wide number printed beside it.
+    now = int(time.time() * 1000)
+    _decision(conn, now - 60_000)
+    _equity(conn, now - 60_000)
+    _fill(conn, now - 120_000, pnl=1.0)                    # bot: +0.95 net
+    _fill(conn, now - 180_000, pnl=-50.0, agent="manual")  # operator's loss
+    rep = assess_health(conn, now_ms=now, daily_loss_floor=-30.0)
+    assert rep.status != "down"
+    assert rep.metrics["pnl_24h"] == pytest.approx(0.95)
+    assert rep.metrics["pnl_24h_account"] == pytest.approx(-49.10)
+    detail = next(d for n, _, d in rep.checks if n == "pnl_24h")
+    assert "bot" in detail and "manual" in detail
+
+
+def test_health_manual_win_cannot_mask_bot_bleed(conn):
+    now = int(time.time() * 1000)
+    _decision(conn, now - 60_000)
+    _equity(conn, now - 60_000)
+    _fill(conn, now - 120_000, pnl=-50.0)                  # bot bleed
+    _fill(conn, now - 180_000, pnl=500.0, agent="manual")  # masking manual win
+    rep = assess_health(conn, now_ms=now, daily_loss_floor=-30.0)
+    assert rep.status == "down"
+    assert rep.metrics["pnl_24h"] == pytest.approx(-50.05)
+
+
+def test_health_bot_split_edges(conn):
+    # 'unknown:<prefix>' is a bot-tagged cloid whose agent name is no longer
+    # registered — ours, so it counts against the floor; a NULL agent
+    # (pre-attribution legacy row) does not.
+    now = int(time.time() * 1000)
+    _decision(conn, now - 60_000)
+    _equity(conn, now - 60_000)
+    _fill(conn, now - 120_000, pnl=-40.0, agent="unknown:deadbeef")
+    _fill(conn, now - 180_000, pnl=-40.0, agent=None)
+    rep = assess_health(conn, now_ms=now, daily_loss_floor=-30.0)
+    assert rep.status == "down"
+    assert rep.metrics["pnl_24h"] == pytest.approx(-40.05)
+    assert rep.metrics["pnl_24h_account"] == pytest.approx(-80.10)
+
+
+def test_resolve_daily_loss_floor():
+    from hl_bot.ops.health import (
+        DAILY_LOSS_FLOOR_ENV,
+        UNARMED_LOSS_FLOOR,
+        resolve_daily_loss_floor,
+    )
+
+    assert resolve_daily_loss_floor(None, {}) == UNARMED_LOSS_FLOOR
+    assert resolve_daily_loss_floor(None, {DAILY_LOSS_FLOOR_ENV: "-25.5"}) == -25.5
+    assert resolve_daily_loss_floor(-10.0, {DAILY_LOSS_FLOOR_ENV: "-25.5"}) == -10.0
+    # A typo'd floor must crash loudly (missed dead-man ping pages), never
+    # silently disarm the rail.
+    with pytest.raises(ValueError, match=DAILY_LOSS_FLOOR_ENV):
+        resolve_daily_loss_floor(None, {DAILY_LOSS_FLOOR_ENV: "thirty"})
+
+
+def test_cli_health_floor_armed_via_env(monkeypatch, tmp_path):
+    # Wiring pin: HLBOT_DAILY_LOSS_FLOOR arms the bleeding crit end-to-end —
+    # before B-PNL-SPLIT the CLI hardwired the unarmed default, so the crit
+    # was unreachable in deployment.
+    from typer.testing import CliRunner
+
+    import hl_bot.exec.orders as orders
+    from hl_bot.cli.main import app
+    from hl_bot.db.schema import init_db
+
+    db = tmp_path / "t.sqlite"
+    conn = init_db(db)
+    now = int(time.time() * 1000)
+    _beat(conn, now - 60_000)
+    _decision(conn, now - 60_000)
+    _equity(conn, now - 60_000)
+    _fill(conn, now - 120_000, pnl=-50.0)                  # bot bleed
+    _fill(conn, now - 180_000, pnl=500.0, agent="manual")  # masking manual win
+    conn.commit()
+    monkeypatch.setenv("HLBOT_DB", str(db))
+    monkeypatch.delenv("HEALTHCHECK_URL", raising=False)
+    monkeypatch.setattr(orders, "telegram_alert", lambda *a, **k: True)
+
+    monkeypatch.setenv("HLBOT_DAILY_LOSS_FLOOR", "-30")
+    res = CliRunner().invoke(app, ["health", "--no-heartbeat"])
+    assert res.exit_code == 1, res.output
+    assert "manual" in res.output
+
+    monkeypatch.delenv("HLBOT_DAILY_LOSS_FLOOR")
+    res = CliRunner().invoke(app, ["health", "--no-heartbeat"])
+    assert res.exit_code == 0, res.output
 
 
 def _fresh(conn, now):

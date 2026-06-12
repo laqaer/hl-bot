@@ -69,6 +69,19 @@ def test_track_record_structure_and_numbers(conn):
     assert "Account" in md
 
 
+def test_account_note_in_all_exports(conn):
+    # B-PNL-SPLIT: equity snapshots are account-wide and CANNOT be split by
+    # agent, and the operator trades the same address — the headline section
+    # must say so in every export until the bot gets its own address/vault.
+    from hl_bot.reports.track_record import ACCOUNT_NOTE, to_html
+
+    _fill(conn, "twap_mr_v1", int(time.time() * 1000), pnl=1.0)
+    tr = build_track_record(conn)
+    assert tr["account_note"] == ACCOUNT_NOTE
+    assert "shared account" in to_markdown(tr)
+    assert "shared account" in to_html(tr)
+
+
 def test_export_writes_files(conn, tmp_path):
     _fill(conn, "femr_v1", int(time.time() * 1000), pnl=1.0)
     jp, mp, hp = export(conn, tmp_path / "tr")
