@@ -275,8 +275,23 @@ each on ≥90d real history (`hlbot confirm` / `hlbot backtest --config`) before
   live math == backtest math bar-for-bar; `closes` is the window slice like
   backtest frames. Default 60 — no live change. Operator flip documented in
   deploy/README.md §Going-live; gated on B-G014's multi-week evidence.
-- [ ] **B-EDGE2 — hunt a second, low-correlation edge** (carry is pruned) so the
-  book isn't single-strategy before raising AUM.
+- [~] **B-EDGE2 — hunt a second, low-correlation edge** (carry is pruned) so the
+  book isn't single-strategy before raising AUM. **First candidate found (Iter 35):**
+  `breakout_v1` (Donchian close-channel momentum, `agents/breakout.py`) — on
+  15m/52.2d store data the 96h channel posts maker +41.9 / **taker +36.4bps**
+  (322 trades, Sharpe +4.9, maxDD −9.1%), **G0 PASS** (IS +26.0 / OOS +75.9,
+  robust to taker-3×); 48h channel also passes (not knife-edge); ex-ZEC still
+  passes (taker +18.5, OOS +68.5 — IS sharpe 0.98 marginal). Clean dose-response
+  in channel length (4h −7.4 → 96h +36.4 taker). Caveats: one 52d regime sample;
+  maker fills optimistic for momentum (use taker numbers); edge lives at 15m
+  cadence / 48–96h horizon, NOT the live 1m loop. Remaining:
+  - [ ] **B-EDGE2a — paper wiring.** Live plumbing for a 15m-cadence agent
+    (96h channel needs 5760×1m or 385×15m bars — beyond `_enrich_view`'s 1m
+    fetch); roster entry paper-only. No live flip (human-gated).
+  - [ ] **B-EDGE2b — revalidate as the store grows** (15m span 52d→90d+):
+    rerun both confirms each few weeks; momentum is regime-fragile.
+  - [ ] **B-EDGE2c — quantify correlation to twap_mr_v1** (daily-PnL corr on
+    the same sample) to substantiate the diversification claim.
 
 ## P3 — capital formation (see docs/CAPITAL.md)
 

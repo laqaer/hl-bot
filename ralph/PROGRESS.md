@@ -1550,3 +1550,59 @@ clean. No edge claim — this is plumbing; the numbers stay B-WIN's (Iter 33).
 B-EDGE2 (second edge hunt). B-G014 unblocks ~2026-06-26 (store 1m span ≥14d;
 loop.sh tops the store up every iteration) with three arms: baseline,
 stop 0.03, w=240 — w=240 is now one config flip away if it rules.
+
+## Iteration 35 — 2026-06-12 — B-EDGE2: breakout_v1 (Donchian momentum) — G0 PASS on 52d, the first taker-positive multi-week strategy
+
+**What.** The book is single-strategy (twap_mr mean reversion); carry is pruned.
+Built the canonical low-correlation complement: `agents/breakout.py`
+(`breakout_v1`) — close-channel (Donchian) time-series momentum. Long when mid
+breaks the prior `lookback_bars` close-high, short on the low; exit on the
+opposite `exit_lookback_bars` channel, ±3% stop, or 24h max hold; 1h re-entry
+cooldown; same liquidity floor / notional caps / audit-log replay pattern as
+twap_mr. Registered in `_backtest_factories` ("breakout_v1"); config in BARS so
+one agent sweeps any cadence (`--vwap-window ≥ lookback+1` carries the closes).
+
+**Sweep (store, 10-coin ADA…ZEC, edge bps, funding from API).**
+
+| Channel | 15m/52.2d taker | 15m/52.2d maker | trades |
+|---------|----------------:|----------------:|-------:|
+| 4h  (lb=16)   | −7.4  | −1.9  | 3250 |
+| 24h (lb=96)   | +3.0  | +8.4  | 872  |
+| 48h (lb=192)  | +12.6 | +18.1 | 502  |
+| **96h (lb=384)** | **+36.4** | **+41.9** | 322 |
+
+Monotone dose-response in channel length; 96h: win 53–55%, Sharpe +4.2/+4.9,
+maxDD −9.5/−9.1%. Other cadences, shorter channels: 5m/17.4d 24h-channel taker
+−2.1 / maker +3.6; 1m/3.6d 4h-channel taker −13.9 / maker −8.4 — the edge
+lives at the 48–96h horizon on 15m bars, NOT at the live 1m cadence (and the
+3.6d pocket where twap_mr earns +7.6 is exactly where breakout bleeds —
+the anti-correlation thesis showing up in-sample).
+
+**Walk-forward confirms (G0 as code, prefer=maker, store).**
+- lb=384/ex=96: **PASS** — IS +26.0bps/sh +4.15 (226 tr), OOS +75.9/sh +6.02
+  (96 tr); cost ladder positive through taker-3× (+32.7bps); 2× slippage ok.
+- lb=192/ex=48: **PASS** — IS +7.8, OOS +39.3, taker-3× +8.8 (adjacent config
+  passes → not a knife-edge parameter).
+- ex-ZEC lb=384: **PASS** — full maker +24.0/taker +18.5 (302 tr), OOS +68.5;
+  honest flag: IS sharpe 0.98 vs the 1.0 bar (rounding-marginal). ZEC
+  contributed (~46% of net$) but the edge is not a one-coin artifact.
+
+**Caveats (why this is NOT live-ready).** (1) One 52.2d regime sample —
+momentum is regime-fragile; revalidate as the store grows (B-EDGE2b). (2) The
+engine's maker fill (rest at mid, always fills) is optimistic for momentum —
+posting into a running breakout often misses; treat the TAKER arm (+36.4 /
++18.5 ex-ZEC) as the honest number. Taker is also what live does today.
+(3) Live plumbing doesn't exist: `_enrich_view` fetches 1m candles, capped
+~5000 by the API — a 96h channel needs 385×15m bars (B-EDGE2a). (4) Bar-close
+fills, no intra-bar stop modeling — same limits as every backtest here.
+
+**Evidence.** 191 tests pass (15 new in tests/test_breakout.py: channel math
+incl. current-bar exclusion + buffer, entry/exit/cooldown/volume-floor/ranking
+decide() coverage, trend-profits + chop-stays-flat engine runs, factory
+registration); ruff clean. All numbers reproducible via the CLI flags above
+(store candles committed to disk locally, funding from API).
+
+**What's next (loop).** B-EDGE2a (paper wiring at 15m cadence — design the
+candle source first: store-read vs 15m API fetch), B-EDGE2c (PnL correlation
+vs twap_mr), B12 remainder. B-G014 unblocks ~2026-06-26. No live change here:
+breakout_v1 exists only behind the backtest CLI.

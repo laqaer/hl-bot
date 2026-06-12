@@ -14,6 +14,7 @@ from rich.console import Console
 from rich.table import Table
 
 from ..agents.basis import BasisAgent
+from ..agents.breakout import BreakoutAgent
 from ..agents.femr import FemrAgent
 from ..agents.funding_arb import FundingArbAgent
 from ..agents.funding_carry import FundingCarryAgent
@@ -627,6 +628,7 @@ def _backtest_factories(cfg: dict[str, Any]):
         "xfund_carry_v1": lambda conn: XFundCarryAgent(config=cfg, conn=conn),
         "liq_cascade_v1": lambda conn: LiqCascadeAgent(config=cfg, conn=conn),
         "basis_v1": lambda conn: BasisAgent(config=cfg, conn=conn),
+        "breakout_v1": lambda conn: BreakoutAgent(config=cfg, conn=conn),
     }
 
 
