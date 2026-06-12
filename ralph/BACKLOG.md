@@ -311,12 +311,14 @@ Keep it ruthlessly prioritized: the top item should always be the highest-levera
   live-fired against the real socket — subscription accepted, snapshot
   carries `user_fills`. No deploy change needed (unit's EnvironmentFile
   already provides the env).
-- [ ] **B10d — `hlbot ws --seconds N` never exits.** Found in Iter 56's
-  live-fire: `run_ws` finishes its duration loop but the SDK
-  `Info(skip_ws=False)` websocket thread is non-daemon and never
-  disconnected, so the process hangs until killed (exit 124 under timeout).
-  Irrelevant to the forever-running systemd service; matters for scripted
-  smoke tests. Fix: call `info.disconnect_websocket()` after the loop.
+- [x] **B10d — `hlbot ws --seconds N` never exits.** Done (Iter 57): `run_ws`
+  wraps subscribe + duration loop in try/finally and calls
+  `info.disconnect_websocket()` on every exit path (duration elapsed,
+  exception, Ctrl-C) — the SDK `Info(skip_ws=False)` ws thread is non-daemon
+  and previously hung the process (exit 124 under timeout). Side effect:
+  `run_ws` is now unit-testable with a fake Info — subscription wiring
+  (allMids/userFills/per-coin l2Book/trades/activeAssetCtx) pinned by test
+  for the first time. Live-fired: `--seconds 5` exits 0 in ~6s.
 - [x] **B14a — Deploy automation.** Done — this entry was a stale duplicate of
   the Iter-5/6 Done item; audited (Iter 53): `deploy/` covers the whole
   description (install.sh idempotent EC2 bootstrap, test-gated auto-update.sh,

@@ -2925,3 +2925,39 @@ maker-rest the arm to watch). B-EDGE2b three-armed reruns as the 15m store
 grows. B-EDGE2f at ≥30d paper books (~Jul 8). Idle queue: B10d (ws clean
 exit), B-PROP / B17 capital-formation specs, B-SCALE doc once G2 evidence
 is real.
+
+## Iteration 57 — 2026-06-12 — B10d: bounded `hlbot ws` runs exit cleanly
+
+**Why this.** Research tasks remain time-blocked (B-G014 needs 1m store span
+≥14d, ~Jun 23–26; B-EDGE2f needs ≥30d paper books, ~Jul 8). Top idle item was
+B10d, filed by Iter 56's live-fire: `run_ws` finishes its `--seconds N`
+duration loop but the SDK `Info(skip_ws=False)` websocket thread is
+non-daemon and was never disconnected, so the process hung until killed
+(exit 124 under `timeout`). Irrelevant to the forever-running systemd
+service; it breaks scripted smoke tests — exactly the kind of check a
+go-live runbook or CI canary wants to run.
+
+**Changed.** `ingest/ws.py run_ws`: everything after `Info()` construction
+(subscribes + duration loop) now sits in try/finally with
+`info.disconnect_websocket()` in the finally — so the ws thread is torn down
+on duration exit, on exception, and on Ctrl-C alike. The forever-running
+service path (`duration_s=None`) is behaviorally unchanged (the loop never
+returns; the finally only runs when something ends it, which is when you
+want the disconnect anyway). Side effect: `run_ws` lost its
+`pragma: no cover — requires a live socket` excuse — with `Info` faked it is
+now unit-testable, so the subscription wiring (allMids + userFills-when-
+address + per-coin l2Book/trades/activeAssetCtx) is pinned by a test for the
+first time, not just eyeballed in journald.
+
+**Evidence.** 354 → **356 tests pass** (2 new in `tests/test_ws.py`:
+duration-exit arm asserts `disconnect_websocket` called AND the exact
+subscription set for one coin + user address; raising-subscribe arm asserts
+the finally still disconnects). `ruff check src tests scripts` clean.
+Live-fired against the real socket (scratch DB + snapshot): `hlbot ws
+--coins BTC --seconds 5` under `timeout 30` → websocket connects, snapshot
+written (13KB), **exit 0 in ~6s** (was exit 124 at 30s).
+
+**What's next (loop).** B-G014 when 1m store span ≥14d (~Jun 23–26; w=240
+maker-rest the arm to watch). B-EDGE2b three-armed reruns as the 15m store
+grows. B-EDGE2f at ≥30d paper books (~Jul 8). Idle queue: B-PROP / B17
+capital-formation specs, B-SCALE doc once G2 evidence is real.

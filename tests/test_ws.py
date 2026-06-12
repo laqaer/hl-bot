@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import time
 
+import pytest
+
 from hl_bot.ingest.ws import MarketState, load_fresh_snapshot, write_snapshot
 
 
@@ -122,6 +124,66 @@ def test_ws_command_user_fills_follow_vault(monkeypatch, tmp_path):
     monkeypatch.setenv("HL_VAULT_ADDRESS", "0x" + "d" * 40)
     calls = _invoke_ws_command(monkeypatch, tmp_path)
     assert calls["user_address"] == "0x" + "d" * 40
+
+
+class _FakeInfo:
+    """Stands in for hyperliquid.info.Info — records subscriptions + disconnect."""
+
+    instances: list[_FakeInfo] = []
+
+    def __init__(self, base_url, skip_ws=False):
+        self.base_url = base_url
+        self.subscriptions: list[dict] = []
+        self.disconnected = False
+        _FakeInfo.instances.append(self)
+
+    def subscribe(self, sub, cb):
+        self.subscriptions.append(sub)
+
+    def disconnect_websocket(self):
+        self.disconnected = True
+
+
+def _patch_fake_info(monkeypatch):
+    import hyperliquid.info as hl_info
+
+    _FakeInfo.instances.clear()
+    monkeypatch.setattr(hl_info, "Info", _FakeInfo)
+
+
+def test_run_ws_disconnects_on_duration_exit(monkeypatch, tmp_path):
+    # B10d: the SDK ws thread is non-daemon — a bounded run must disconnect
+    # or the process never exits (`hlbot ws --seconds N` hung until killed).
+    from hl_bot.ingest.ws import run_ws
+
+    _patch_fake_info(monkeypatch)
+    run_ws(["BTC"], tmp_path / "snap.json", duration_s=0, user_address="0x" + "a" * 40)
+
+    (info,) = _FakeInfo.instances
+    assert info.disconnected
+    subs = {(s["type"], s.get("coin"), s.get("user")) for s in info.subscriptions}
+    assert subs == {
+        ("allMids", None, None),
+        ("userFills", None, "0x" + "a" * 40),
+        ("l2Book", "BTC", None),
+        ("trades", "BTC", None),
+        ("activeAssetCtx", "BTC", None),
+    }
+
+
+def test_run_ws_disconnects_even_when_loop_raises(monkeypatch, tmp_path):
+    from hl_bot.ingest.ws import run_ws
+
+    _patch_fake_info(monkeypatch)
+
+    def _boom(self, sub, cb):
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(_FakeInfo, "subscribe", _boom)
+    with pytest.raises(RuntimeError):
+        run_ws(["BTC"], tmp_path / "snap.json", duration_s=0)
+    (info,) = _FakeInfo.instances
+    assert info.disconnected
 
 
 def test_snapshot_roundtrip_and_staleness(tmp_path):

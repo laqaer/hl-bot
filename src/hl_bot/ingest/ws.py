@@ -190,7 +190,7 @@ def load_fresh_snapshot(path: str | Path, *, max_age_s: float = 30.0) -> MarketV
 
 
 # ---------------------------------------------------------------------------
-# Connect loop (thin; network — not unit-tested)
+# Connect loop (thin; unit-tested with a fake Info)
 # ---------------------------------------------------------------------------
 
 
@@ -202,7 +202,7 @@ def run_ws(
     write_interval_s: float = 1.0,
     duration_s: float | None = None,
     user_address: str | None = None,
-) -> None:  # pragma: no cover - requires a live socket
+) -> None:
     """Subscribe to HL WS for ``coins`` and persist a snapshot every interval.
 
     Uses the hyperliquid SDK's Info subscriptions. Runs until ``duration_s``
@@ -214,18 +214,25 @@ def run_ws(
 
     state = MarketState()
     info = Info(base_url, skip_ws=False)
-    info.subscribe({"type": "allMids"}, lambda m: state.apply_message(m))
-    if user_address:
-        info.subscribe(
-            {"type": "userFills", "user": user_address}, lambda m: state.apply_message(m)
-        )
-    for coin in coins:
-        info.subscribe({"type": "l2Book", "coin": coin}, lambda m: state.apply_message(m))
-        info.subscribe({"type": "trades", "coin": coin}, lambda m: state.apply_message(m))
-        info.subscribe({"type": "activeAssetCtx", "coin": coin}, lambda m: state.apply_message(m))
+    try:
+        info.subscribe({"type": "allMids"}, lambda m: state.apply_message(m))
+        if user_address:
+            info.subscribe(
+                {"type": "userFills", "user": user_address}, lambda m: state.apply_message(m)
+            )
+        for coin in coins:
+            info.subscribe({"type": "l2Book", "coin": coin}, lambda m: state.apply_message(m))
+            info.subscribe({"type": "trades", "coin": coin}, lambda m: state.apply_message(m))
+            info.subscribe(
+                {"type": "activeAssetCtx", "coin": coin}, lambda m: state.apply_message(m)
+            )
 
-    start = time.time()
-    while duration_s is None or time.time() - start < duration_s:
-        time.sleep(write_interval_s)
-        if state.updated_ms:
-            write_snapshot(state, snapshot_path)
+        start = time.time()
+        while duration_s is None or time.time() - start < duration_s:
+            time.sleep(write_interval_s)
+            if state.updated_ms:
+                write_snapshot(state, snapshot_path)
+    finally:
+        # The SDK's ws thread is non-daemon and outlives this loop; without an
+        # explicit disconnect a bounded run (--seconds N) hangs forever.
+        info.disconnect_websocket()
