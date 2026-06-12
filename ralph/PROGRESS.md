@@ -2013,3 +2013,73 @@ pause/demote only; promotion MUST be suppressed there since `run_once`
 auto-applies promote actions — design note in the backlog), B12 remainder
 (femr_tick preamble harness), B-EDGE2b re-confirm as the store grows.
 B-G014 unblocks ~2026-06-26 (store 1m span ≥14d).
+
+## Iteration 43 — 2026-06-12 — B-PAPER3c: the supervisor reads the paper book (pause/demote only)
+
+**What.** `supervisor.goals.evaluate` now sources an agent's scorecards from
+its paper book (`score_paper_agent`, modeled costs + optional modeled funding)
+when the agent's *effective* mode is paper and it has paper rows; everything
+else stays fills-based. Specifics:
+
+- **Effective mode, not YAML mode:** a new `_effective_mode` reads the
+  `agent_state` row (where supervisor actions and operator promotions land),
+  falling back to the YAML's declared initial `mode:`. The promotion gate now
+  keys on the effective mode too — fixing a latent wart where an agent already
+  promoted in the DB could be "re-promoted" forever off the stale YAML value.
+- **Guardrails fire on paper evidence:** pause/demote/alert evaluate against
+  the paper card. Every paper-sourced row in `goal_evaluations` carries a
+  `[paper]` detail prefix so the audit trail can never pass paper evidence
+  off as exchange truth (Evaluation grew a `source: fills|paper` field).
+- **Promotion can NEVER apply from paper:** when every promotion condition
+  passes on a paper card, the evaluation is downgraded to status=pass /
+  action=none with detail "promotion-ready paper -> live_small on paper
+  evidence — human-gated, not applied". Defense in depth: `run_once` also
+  refuses to `_set_mode` any promote whose source is paper (logs an error)
+  even if one were ever emitted.
+- **Funding threading:** `supervise`/`run_once`/`evaluate` accept
+  `paper_funding_by_coin`; `hlbot supervisor` fetches it by default via the
+  shared `_fetch_paper_funding` (`--no-paper-funding` opt-out) so femr's
+  paper card isn't judged on funding=0 — the exact spurious-pause trap
+  B-PAPER3a warned about.
+
+**Why.** The paper book is the forward-test pipeline for breakout_v1/femr,
+but the supervisor was blind to it: fills-based cards for paper-only agents
+are permanently N/A, so the pre-declared breakout guardrails ($15/24h pause,
+-20bps/7d demote) could never fire and a bleeding paper candidate would have
+accumulated "evidence" unguarded forever. Now the same YAML contract polices
+both books, while the live-gate hard rule (paper evidence never flips a mode)
+is enforced at two layers.
+
+**Evidence.** 263 tests pass (7 new in tests/test_paper_goals.py: real
+breakout_v1.yaml pause guardrail fires on a -$20 paper round trip +
+agent_state disabled + all audit rows `[paper]`-tagged; promotion-ready paper
+book yields action=none/"human-gated" and run_once applies nothing; effective
+mode picks fills over a stale bleeding paper book (live_small agent not
+paused, metric=+1.9 not -250); no re-promotion off stale YAML mode; funding
+threading shifts the guardrail metric by exactly the modeled +$10 event;
+monkeypatched rogue paper-promote is refused by run_once; no-paper-book agent
+stays fills-sourced with unprefixed details). Ruff clean. Live-fire (real
+API, scratch DBs): bleeding XPL paper book → `hlbot supervisor` fetched real
+XPL funding history, fired PAUSE + DEMOTE (enabled=0, paused_reason set, all
+6 audit rows `[paper]`-prefixed); 31-round-trip winning book clearing all
+breakout promotion gates → "no actions taken", promotion row reads
+"[paper] promotion-ready paper -> live_small … human-gated, not applied",
+zero agent_state rows written, zero network calls with `--no-paper-funding`.
+
+**Honest caveats.** (1) Paper guardrail decisions inherit every B-PAPER3/3a
+modeling limit (synthetic taker fills, entry-mid funding marks,
+realized-only) — a paused paper agent is a modeling verdict, not exchange
+truth; the `[paper]` tag keeps that visible. (2) `hlbot supervisor` now makes
+one funding-history call per paper coin per run (every 5 min via
+run-tick.sh); spans grow with the paper book's age since the "all"-window
+card needs full-history accrual — fine at today's handful of coins, revisit
+(cache or recent-window-only fetch) if the paper roster widens a lot.
+(3) A paused paper agent stops accumulating forward-test evidence until an
+operator re-enables it — that's the intended tripwire, but it means paper
+G1 samples can have guardrail-shaped holes; the pause is visible in
+`agent_state.paused_reason` and the audit trail.
+
+**What's next (loop).** B12 remainder (femr_tick preamble harness), B-EDGE2b
+re-confirm as the store grows (15m span check), B1c remaining hypotheses
+(beta-neutral xfund cross-section / lower cadence) if idle. B-G014 unblocks
+~2026-06-26 (store 1m span ≥14d — check `hlbot harvest-candles` spans).

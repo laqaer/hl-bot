@@ -4,10 +4,11 @@ mode: paper
 
 # Numbers are sized for the roster's paper config ($20/trade, $60 book).
 # Backtest basis (15m × 52d store, 10 coins): taker +36.4bps, win 53-55%,
-# maxDD -9.1%. NOTE: score_agent is fills-based, and a paper book produces no
-# fills — these metrics stay N/A (never trigger) until the agent trades
-# live_small or a paper-book scorecard exists. The gates are pre-declared so
-# the promotion bar is on record before any size is at stake.
+# maxDD -9.1%. NOTE: while the agent is paper-mode the supervisor scores it
+# from the paper-book replay (modeled costs + funding, B-PAPER3c): the pause/
+# demote guardrails below CAN fire on paper evidence, but promotion from paper
+# cards is informational only ("promotion-ready", human-gated). The gates are
+# pre-declared so the promotion bar is on record before any size is at stake.
 goals:
   primary:
     metric: edge_bps

@@ -51,11 +51,20 @@ def _demote(conn: sqlite3.Connection, agent: str) -> None:
     _set_mode(conn, agent, new, reason="demoted by supervisor")
 
 
-def run_once(conn: sqlite3.Connection, configs: list[AgentGoals]) -> dict[str, list[str]]:
-    """Evaluate all agent configs once. Returns map of agent -> actions taken."""
+def run_once(
+    conn: sqlite3.Connection,
+    configs: list[AgentGoals],
+    paper_funding_by_coin: dict | None = None,
+) -> dict[str, list[str]]:
+    """Evaluate all agent configs once. Returns map of agent -> actions taken.
+
+    ``paper_funding_by_coin`` (raw funding-rate history, see
+    ``paper_funding_spans``) feeds modeled funding into paper-book scorecards
+    so funding strategies aren't judged on funding=0 cards.
+    """
     actions_taken: dict[str, list[str]] = {}
     for g in configs:
-        evals = evaluate(conn, g)
+        evals = evaluate(conn, g, paper_funding_by_coin=paper_funding_by_coin)
         persist(conn, evals)
         acts: list[str] = []
         for e in evals:
@@ -66,6 +75,13 @@ def run_once(conn: sqlite3.Connection, configs: list[AgentGoals]) -> dict[str, l
                 _demote(conn, g.agent)
                 acts.append(f"DEMOTE: {e.detail}")
             elif e.action == "promote" and g.promotion:
+                if e.source == "paper":
+                    # Defense in depth: evaluate() never emits "promote" from
+                    # paper cards; if one ever slips through, refuse to go
+                    # live on modeled fills (human-gated hard rule).
+                    log.error("refusing paper-sourced promotion for %s (%s)",
+                              g.agent, e.detail)
+                    continue
                 _set_mode(conn, g.agent, g.promotion.to_mode,
                           reason=f"promoted via {e.detail}")
                 acts.append(f"PROMOTE: {e.detail}")
@@ -75,9 +91,13 @@ def run_once(conn: sqlite3.Connection, configs: list[AgentGoals]) -> dict[str, l
     return actions_taken
 
 
-def supervise(conn: sqlite3.Connection, configs_dir: str | Path) -> dict[str, list[str]]:
+def supervise(
+    conn: sqlite3.Connection,
+    configs_dir: str | Path,
+    paper_funding_by_coin: dict | None = None,
+) -> dict[str, list[str]]:
     """Load every *.yaml in configs_dir and evaluate."""
     configs: list[AgentGoals] = []
     for p in sorted(Path(configs_dir).glob("*.yaml")):
         configs.extend(load_goals(p))
-    return run_once(conn, configs)
+    return run_once(conn, configs, paper_funding_by_coin=paper_funding_by_coin)

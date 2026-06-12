@@ -132,6 +132,16 @@ sudo -u hlbot bash -c 'cd /opt/hl-bot && HLBOT_DB=data/hlbot_paper.sqlite uv run
 and the account equity curve stays fills-based. `--no-paper-funding` skips
 the funding-rate fetches like `score --no-funding`.
 
+The supervisor judges paper-mode agents on these same paper cards
+(B-PAPER3c): pause/demote/alert guardrails in the agent's `configs/*.yaml`
+fire on paper evidence (rows are `[paper]`-tagged in `goal_evaluations`),
+but promotion from paper cards is **informational only** — a paper agent
+passing every promotion gate logs a "promotion-ready … human-gated, not
+applied" evaluation and stays paper until the operator flips it in
+`agent_state`. `hlbot supervisor` fetches modeled funding for the paper book
+by default (one funding-history call per paper coin, every tick via
+run-tick.sh); `--no-paper-funding` keeps it offline.
+
 ## Kill switch
 
 ```bash

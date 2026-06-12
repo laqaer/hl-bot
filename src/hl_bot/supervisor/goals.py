@@ -28,6 +28,15 @@ Each agent has a contract:
 
 Operators: '>', '>=', '<', '<=', '==', '!='.
 Metrics: any field on Scorecard (sharpe, net_pnl, win_rate, max_drawdown, ...).
+
+Evidence source: an agent whose *effective* mode (agent_state row, falling back
+to the YAML's declared mode) is ``paper`` and that has a paper decision book is
+scored from the paper-book replay (``score_paper_agent`` — modeled costs, and
+modeled funding when the caller supplies rate history); everything else is
+scored from exchange fills as before. Guardrails (pause/demote/alert) fire on
+paper evidence, but promotion NEVER does: paper cards passing every promotion
+gate emit an informational "promotion-ready (human-gated)" evaluation with no
+action — going live on modeled fills is a human decision (B-PAPER3c).
 """
 
 from __future__ import annotations
@@ -43,6 +52,7 @@ import yaml
 from pydantic import BaseModel, Field
 
 from ..scoring.metrics import Scorecard, Window, score_agent
+from ..scoring.paper import score_paper_agent
 
 OPS = {
     ">": op.gt, ">=": op.ge, "<": op.lt, "<=": op.le,
@@ -101,6 +111,9 @@ class Evaluation:
     status: Literal["pass", "fail", "na"]
     action: Literal["promote", "demote", "pause", "none"] = "none"
     detail: str = ""
+    # Which book produced the scorecard. A paper-sourced evaluation must never
+    # carry action="promote" (live promotion on modeled fills is human-gated).
+    source: Literal["fills", "paper"] = "fills"
 
 
 def load_goals(config_path: str | Path) -> list[AgentGoals]:
@@ -111,13 +124,49 @@ def load_goals(config_path: str | Path) -> list[AgentGoals]:
     return [AgentGoals.model_validate(d) for d in raw]
 
 
-def evaluate(conn: sqlite3.Connection, g: AgentGoals) -> list[Evaluation]:
+def _effective_mode(conn: sqlite3.Connection, g: AgentGoals) -> str:
+    """Current mode: the agent_state row (supervisor actions / operator
+    promotions land there) wins over the YAML's declared *initial* mode."""
+    row = conn.execute(
+        "SELECT mode FROM agent_state WHERE agent=?", (g.agent,)
+    ).fetchone()
+    return row["mode"] if row else g.mode
+
+
+def _has_paper_book(conn: sqlite3.Connection, agent: str) -> bool:
+    row = conn.execute(
+        """SELECT 1 FROM agent_decisions
+           WHERE agent=? AND is_paper=1 AND coin IS NOT NULL
+             AND action IN ('place','flatten') LIMIT 1""",
+        (agent,),
+    ).fetchone()
+    return row is not None
+
+
+def evaluate(
+    conn: sqlite3.Connection,
+    g: AgentGoals,
+    paper_funding_by_coin: dict[str, list[dict[str, Any]]] | None = None,
+) -> list[Evaluation]:
     """Run guardrails + promotion/demotion checks, return Evaluations.
 
     This function does NOT mutate state; the supervisor does that based on the
     actions returned.
+
+    A paper-mode agent with a paper book is scored from the paper-book replay
+    (pass ``paper_funding_by_coin`` — raw ``fetch_funding_history`` rows, see
+    ``paper_funding_spans`` — so funding strategies aren't judged on funding=0
+    cards). Paper evidence can pause/demote/alert but never promotes: when
+    every promotion gate passes on a paper card, the returned evaluation is
+    informational (action="none", "human-gated" in the detail). The promotion
+    mode check uses the *effective* mode, so an agent already promoted in
+    agent_state is not re-promoted by a stale YAML ``mode:``.
     """
     out: list[Evaluation] = []
+
+    mode = _effective_mode(conn, g)
+    use_paper = mode == "paper" and _has_paper_book(conn, g.agent)
+    source: Literal["fills", "paper"] = "paper" if use_paper else "fills"
 
     # Pre-compute scorecards for all referenced windows.
     windows: set[Window] = set()
@@ -136,9 +185,16 @@ def evaluate(conn: sqlite3.Connection, g: AgentGoals) -> list[Evaluation]:
     for s in secondary if isinstance(secondary, list) else []:
         windows.add(s.get("window", "30d"))
 
-    cards: dict[Window, Scorecard] = {
-        w: score_agent(conn, g.agent, w, capital_base=g.capital) for w in windows
-    }
+    if use_paper:
+        cards: dict[Window, Scorecard] = {
+            w: score_paper_agent(conn, g.agent, w, capital_base=g.capital,
+                                 funding_by_coin=paper_funding_by_coin)
+            for w in windows
+        }
+    else:
+        cards = {
+            w: score_agent(conn, g.agent, w, capital_base=g.capital) for w in windows
+        }
 
     # Primary / secondary goals -> informational pass/fail (no action).
     def _status(ok: bool | None) -> str:
@@ -152,6 +208,7 @@ def evaluate(conn: sqlite3.Connection, g: AgentGoals) -> list[Evaluation]:
             metric_value=v, threshold=c.threshold,
             status=_status(ok),
             detail=f"{c.metric}({c.window}) {c.op} {c.threshold}",
+            source=source,
         ))
     for i, s in enumerate(secondary if isinstance(secondary, list) else []):
         c = Condition.model_validate(s)
@@ -161,6 +218,7 @@ def evaluate(conn: sqlite3.Connection, g: AgentGoals) -> list[Evaluation]:
             metric_value=v, threshold=c.threshold,
             status=_status(ok),
             detail=f"{c.metric}({c.window}) {c.op} {c.threshold}",
+            source=source,
         ))
 
     # Guardrails: a guardrail "passes" when the condition is satisfied (i.e.
@@ -178,20 +236,34 @@ def evaluate(conn: sqlite3.Connection, g: AgentGoals) -> list[Evaluation]:
             status=status,
             action=("none" if status != "fail" else gr.action),  # type: ignore[arg-type]
             detail=gr.reason or f"{gr.metric}({gr.window}) {gr.op} {gr.threshold}",
+            source=source,
         ))
 
     # Promotion: ALL conditions must explicitly pass (na blocks promotion), and
     # no guardrail may be failing. Risk controls dominate growth controls: an
     # agent cannot be paused/demoted/alerting and promoted in the same run.
-    if g.promotion and g.mode == g.promotion.from_mode and not guardrail_failed:
+    if g.promotion and mode == g.promotion.from_mode and not guardrail_failed:
         results = [c.evaluate(cards[c.window]) for c in g.promotion.conditions]
         if results and all(ok is True for ok, _ in results):
-            out.append(Evaluation(
-                agent=g.agent, goal_name="promotion",
-                metric_value=None, threshold=None,
-                status="pass", action="promote",
-                detail=f"{g.promotion.from_mode} -> {g.promotion.to_mode}",
-            ))
+            if use_paper:
+                # Paper evidence flags readiness but NEVER flips a mode:
+                # run_once auto-applies "promote", and going live on modeled
+                # fills would violate the human-gated live rule.
+                out.append(Evaluation(
+                    agent=g.agent, goal_name="promotion",
+                    metric_value=None, threshold=None,
+                    status="pass", action="none", source=source,
+                    detail=(f"promotion-ready {g.promotion.from_mode} -> "
+                            f"{g.promotion.to_mode} on paper evidence — "
+                            "human-gated, not applied"),
+                ))
+            else:
+                out.append(Evaluation(
+                    agent=g.agent, goal_name="promotion",
+                    metric_value=None, threshold=None,
+                    status="pass", action="promote", source=source,
+                    detail=f"{g.promotion.from_mode} -> {g.promotion.to_mode}",
+                ))
 
     return out
 
@@ -207,5 +279,6 @@ def persist(conn: sqlite3.Connection, evals: list[Evaluation]) -> None:
             ) VALUES(?,?,?,?,?,?,?,?)
             """,
             (ts, e.agent, e.goal_name, e.metric_value, e.threshold,
-             e.status, e.action, e.detail),
+             e.status, e.action,
+             f"[paper] {e.detail}" if e.source == "paper" else e.detail),
         )

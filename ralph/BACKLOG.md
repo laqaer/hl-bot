@@ -130,14 +130,18 @@ Keep it ruthlessly prioritized: the top item should always be the highest-levera
   both. `hlbot track-record` fetches modeled funding for the paper section
   by default (`--no-paper-funding` opt-out; per-coin failure degrades to 0),
   sharing `_fetch_paper_funding` with `score --paper`.
-- [ ] **B-PAPER3c — goal evaluation on paper cards (pause/demote ONLY).**
-  Let `supervisor.goals.evaluate` score paper-mode agents from
-  `score_paper_agent` (their fills-based cards are permanently N/A so
-  guardrails can never fire today). **Design constraint:** when paper cards
-  feed the evaluation, the promotion check MUST be suppressed or downgraded
-  to an informational "promotion-ready (human-gated)" alert — `run_once`
-  auto-applies `promote` actions via `_set_mode`, and paper evidence
-  auto-flipping an agent to live_small violates the live-gate hard rule.
+- [x] **B-PAPER3c — goal evaluation on paper cards (pause/demote ONLY).** Done
+  (Iter 43): `evaluate` scores an agent from its paper book when its
+  *effective* mode (agent_state row > YAML `mode:`) is paper AND paper rows
+  exist; guardrails (pause/demote/alert) fire on paper evidence, audit rows
+  are `[paper]`-tagged. Promotion from paper cards is downgraded to an
+  informational "promotion-ready … human-gated, not applied" evaluation
+  (action=none) AND `run_once` refuses any paper-sourced `promote` (defense
+  in depth). `hlbot supervisor` models paper funding by default
+  (`--no-paper-funding` opt-out) so femr isn't judged on funding=0 cards.
+  Bonus fix: the promotion mode-check now uses the effective mode, so an
+  agent already promoted in agent_state can't be re-promoted off a stale
+  YAML `mode:`. Live-fire verified both directions on scratch DBs.
 
 - [x] **B6/B7 — Per-agent funding attribution + Sharpe.** Done: funding split to
   the agent holding the coin at funding time (scoring includes it in net/edge);

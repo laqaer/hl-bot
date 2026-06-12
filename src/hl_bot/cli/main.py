@@ -199,10 +199,26 @@ def positions(rebuild: bool = True):
 
 
 @app.command()
-def supervisor(configs: Path = CONFIG_DIR):
-    """Evaluate goals/guardrails for every agent config in ./configs."""
-    conn, _ = _conn()
-    actions = supervise(conn, configs)
+def supervisor(
+    configs: Path = CONFIG_DIR,
+    paper_funding: bool = typer.Option(
+        True, "--paper-funding/--no-paper-funding",
+        help="Model funding accrual over paper holds from HL funding-rate "
+             "history so paper-mode agents' goal evaluation sees their funding "
+             "revenue (network; per-coin failure degrades to funding=0; zero "
+             "calls when there is no paper book).",
+    ),
+):
+    """Evaluate goals/guardrails for every agent config in ./configs.
+
+    Paper-mode agents with a paper book are scored from the paper-book replay
+    (modeled costs + funding). Pause/demote guardrails fire on paper evidence;
+    promotion from paper cards is informational only ("promotion-ready",
+    human-gated) — the supervisor never flips an agent live on modeled fills.
+    """
+    conn, s = _conn()
+    funding_by_coin = _fetch_paper_funding(conn, s) if paper_funding else {}
+    actions = supervise(conn, configs, paper_funding_by_coin=funding_by_coin or None)
     console.print(json.dumps(actions, indent=2) if actions else "[dim]no actions taken[/dim]")
 
 
