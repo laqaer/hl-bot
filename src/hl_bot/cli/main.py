@@ -262,6 +262,112 @@ def supervisor(
     console.print(json.dumps(actions, indent=2) if actions else "[dim]no actions taken[/dim]")
 
 
+@app.command("agent-mode")
+def agent_mode(
+    agent: str = typer.Argument(None, help="Agent name; omit to list every agent's state."),
+    set_mode: str = typer.Option(
+        None, "--set", help="Target mode: paper / live_small / live."),
+    enable: bool = typer.Option(
+        None, "--enable/--disable",
+        help="Allow into / drop from the live execution roster "
+             "(--enable also clears a recorded pause — the unpause path)."),
+    confirm: bool = typer.Option(
+        False, "--confirm",
+        help="Required for any loosening change (toward live execution)."),
+    override_evidence: bool = typer.Option(
+        False, "--override-evidence",
+        help="Apply a loosening change even when the supervisor's evidence "
+             "gates fail; the override goes on the audit record."),
+    configs: Path = CONFIG_DIR,
+):
+    """Show or change an agent's mode/enabled state (the GO_LIVE switch).
+
+    Replaces docs/GO_LIVE.md's raw-SQL procedure: validates the agent name,
+    classifies the change (tightening always applies; loosening needs
+    --confirm, moves one rank at a time, and re-checks the supervisor's
+    promotion evidence gates), clears pause markers on --enable, and writes
+    every applied change to the goal_evaluations audit trail. Read-only
+    without --set/--enable/--disable.
+    """
+    from ..agents.runtime import build_roster, load_agent_overrides
+    from ..supervisor.goals import load_goals
+    from ..supervisor.operator import (
+        OperatorError,
+        apply_mode_change,
+        current_state,
+        evidence_readout,
+        list_states,
+        plan_mode_change,
+    )
+
+    conn, _ = _conn()
+    contracts = []
+    for p in sorted(Path(configs).glob("*.yaml")):
+        contracts.extend(load_goals(p))
+    known = {a.name for a in build_roster(conn, load_agent_overrides())}
+    known.update(g.agent for g in contracts)
+    # Legacy state rows (renamed/retired agents) stay reachable so a stale
+    # live_small row can still be tightened, even off-roster.
+    known.update(
+        r["agent"] for r in conn.execute("SELECT agent FROM agent_state").fetchall()
+    )
+
+    if agent is None:
+        table = Table(title="Agent modes (paper ticks run the FULL roster; "
+                            "live execution needs enabled + live_small/live)")
+        for col in ("agent", "mode", "enabled", "paused"):
+            table.add_column(col)
+        for st in list_states(conn, known):
+            table.add_row(
+                st.agent, st.mode, "on" if st.enabled else "[red]OFF[/red]",
+                st.paused_reason or ("paused" if st.paused_at_ms else "—"),
+            )
+        console.print(table)
+        return
+
+    if set_mode is None and enable is None:
+        st = current_state(conn, agent)
+        ev = evidence_readout(conn, agent)
+        console.print(
+            f"[bold]{agent}[/bold]: mode={st.mode} "
+            f"enabled={'on' if st.enabled else 'OFF'}"
+            + (f" paused: {st.paused_reason} "
+               f"(at {_fmt_ts(st.paused_at_ms)})" if st.paused_at_ms else "")
+        )
+        console.print(
+            f"  evidence: {ev.book} book spans {ev.span_days:.1f}d; "
+            f"pause/demote breaches on record (30d): {ev.breaches_30d}"
+        )
+        if ev.last_promotion_detail:
+            console.print(
+                f"  last promotion evaluation ({_fmt_ts(ev.last_promotion_ts_ms)}): "
+                f"{ev.last_promotion_detail}"
+            )
+        return
+
+    try:
+        change = plan_mode_change(
+            conn, agent, known_agents=known, contracts=contracts,
+            mode=set_mode, enabled=enable,
+            confirm=confirm, override_evidence=override_evidence,
+        )
+    except OperatorError as e:
+        console.print(f"[red]refused[/red]: {e}")
+        raise typer.Exit(1) from None
+    apply_mode_change(conn, change)
+    console.print(f"[green]applied[/green] ({change.direction}): {change.detail}")
+    if change.new_enabled == 0 and change.new_mode in ("live_small", "live"):
+        console.print(
+            "[yellow]note[/yellow]: mode is live-capable but enabled=off — "
+            "pass --enable to let it into the live roster")
+
+
+def _fmt_ts(ts_ms: int | None) -> str:
+    if not ts_ms:
+        return "—"
+    return time.strftime("%Y-%m-%d %H:%M:%SZ", time.gmtime(ts_ms / 1000))
+
+
 @app.command()
 def research_strategies(write: bool = True):
     """Evaluate strategy health from fills; emit risk-reducing proposals.

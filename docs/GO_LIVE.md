@@ -56,14 +56,22 @@ Agents are paper until **explicitly** enabled in `agent_state` AND in
 `live_small`/`live` mode. The live tick (`femr_tick --live`) only executes agents
 that pass `_filter_live_agents_by_state`.
 
-1. Confirm the gates above. Re-read the agent's latest backtest + paper numbers.
+1. Confirm the gates above. Re-read the agent's latest backtest + paper numbers
+   (`uv run hlbot agent-mode <agent>` prints the evidence book span, recorded
+   guardrail breaches, and the supervisor's latest promotion evaluation).
 2. Set the agent live-small (one agent at a time):
-   ```sql
-   -- in the bot DB (HLBOT_DB)
-   INSERT INTO agent_state(agent, mode, enabled) VALUES('<agent>', 'live_small', 1)
-     ON CONFLICT(agent) DO UPDATE SET mode='live_small', enabled=1;
+   ```bash
+   uv run hlbot agent-mode <agent> --set live_small --enable --confirm
    ```
-   or let the supervisor promote it once its `*.yaml` promotion conditions pass.
+   The command validates the agent name, refuses rank-skips (paper→live needs
+   a live_small window in between), and re-checks the supervisor's promotion
+   evidence gates — flipping against failing gates additionally requires
+   `--override-evidence`, and the override lands on the `goal_evaluations`
+   audit trail. Alternatively let the supervisor promote it once its `*.yaml`
+   promotion conditions pass. (Break-glass equivalent, if the CLI is broken:
+   `INSERT INTO agent_state(agent, mode, enabled) VALUES('<agent>',
+   'live_small', 1) ON CONFLICT(agent) DO UPDATE SET mode='live_small',
+   enabled=1;` in the bot DB.)
 3. First live tick, watched:
    ```bash
    uv run hlbot femr_tick --live      # places real orders for enabled agents only
@@ -87,11 +95,15 @@ that pass `_filter_live_agents_by_state`.
 
 - **Halt new entries immediately:** the supervisor pauses an agent on its 24h
   loss guardrail; to force it:
-  ```sql
-  UPDATE agent_state SET enabled=0, mode='paper', paused_reason='manual halt' WHERE agent='<agent>';
+  ```bash
+  uv run hlbot agent-mode <agent> --set paper --disable   # tightening: applies instantly, audited
   ```
+  (Break-glass SQL: `UPDATE agent_state SET enabled=0, mode='paper',
+  paused_reason='manual halt' WHERE agent='<agent>';`.)
   Paused/paper agents place nothing; **flatten/close decisions still run** for
-  risk reduction.
+  risk reduction. To resume after a pause, `--enable` clears the pause marker
+  (re-enabling into live mode re-checks the evidence gates and needs
+  `--confirm`).
 - **Flatten everything:** stop the cron, then run the live tick once — open
   positions hit their exit logic; or close manually on HL. Reconciliation will
   clear stale DB ownership next tick.

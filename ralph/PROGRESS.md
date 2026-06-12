@@ -5020,3 +5020,87 @@ card promotion-ready before ~Jul 12). Idle queue: off-host store backup
 proposal (both store clones share one host); operator nudges — wire
 HEALTHCHECK_URL, consider arming HLBOT_DAILY_LOSS_FLOOR; stale `[~]`
 B4-RUN header at BACKLOG line ~39 duplicates the closed item (cosmetic).
+
+## Iteration 90 — 2026-06-12 — B-STOREBKP: off-host S3 backup of the candle store (entry reconstructed)
+
+_The commit (`ralph: iteration 1583`, 75bb503) landed code + backlog but its
+PROGRESS entry was lost; reconstructed next iteration from the diff._
+B-STORESYNC's residual risk was the HOST: both store clones live on one box,
+litestream is inactive (no binary, no config), so host loss permanently
+invalidates the multi-week 1m sample every P0 clock waits on. Shipped
+`backtest/store_backup.py` — stdlib-only SigV4 S3 PUT (no boto3 on the box;
+signing pinned to the AWS-published derivation vector), creds from AWS_* env
+or the EC2 IMDSv2 role, gated on `HLBOT_STORE_BACKUP_S3=bucket[/prefix]`
+(unset = inert, pinned), ~hourly throttle marker, stable `candle_store.tar`
+overwrite + dated weekly restore point. Wired into `harvest-candles` on both
+paths post-sync; failures warn, never redden the timer. 569 tests at that
+commit (+11), ruff clean. Arming is the operator's call (env + s3:PutObject
+on the role; deploy/README §Operate, env.example). Follow-up filed:
+B-STOREBKP2 (health warn when an ARMED backup silently stops succeeding).
+
+## Iteration 91 — 2026-06-12 — B-OPSGATE: `hlbot agent-mode` — the GO_LIVE switch as a validated, audited command
+
+**Ripeness checks** (per-iteration readout): b_edge2b NOT RIPE (15m span
+52.7d < 60d, ~Jun 20); b_g014 NOT RIPE (1m span 4.3d < 14d, ~Jun 26). Store
+fresh (worst lag 27.2m, harvest skipped; peer sync +0/+0).
+
+**The work.** Audited the promotion machinery's HUMAN half, the part Iter 89
+didn't touch: when a paper card turns promotion-ready (~Jul 12 at the
+earliest), the documented GO_LIVE procedure for flipping the agent live was
+raw SQL against the live DB. Found while auditing: (1) no agent-name
+validation — a typo'd INSERT creates a dead `twap_mr_v2` row live_small/on
+while the real agent silently stays paper; (2) NO unpause path anywhere in
+src — `_pause` sets enabled=0 and nothing ever sets it back (even the
+supervisor's promote upsert leaves `enabled` untouched on conflict), so any
+guardrail pause is permanent until hand-edited sqlite; (3) operator flips
+left no audit trail at all. Also verified non-issues while there: paper
+ticks run the FULL roster regardless of agent_state, so a pause never stops
+a G1 evidence clock; `run-paper-tick.sh` runs `hlbot supervisor` every 5m,
+so the clean-guardrails history B-G1SPAN gates on does accrue.
+
+**Changed.**
+- `supervisor/operator.py`: `plan_mode_change` / `apply_mode_change` with
+  the risk asymmetry built in — tightening always applies; loosening
+  (rank-up or becoming live-capable, incl. re-enabling a disabled
+  live_small agent) requires `--confirm`, moves ONE rank at a time
+  (paper→live_small→live, mirroring `_demote`'s ladder down), and re-checks
+  the supervisor's own promotion evidence gates via `_evidence_blockers`
+  (the contract whose promotion targets the requested mode); flipping
+  against failing gates needs `--override-evidence` on top, and the
+  override is recorded verbatim in the audit detail. `--enable` clears
+  pause markers — the missing resume path. Every applied change writes a
+  `goal_evaluations` row (`goal_name='operator'`), shape-proof against the
+  clean-guardrails breach query (which filters `guardrail:%`).
+- `hlbot agent-mode` CLI: no args → roster-wide state table; agent only →
+  evidence readout (which book, span days, 30d pause/demote breaches, last
+  promotion evaluation); with `--set/--enable/--disable` → plan + apply or
+  refuse (exit 1). Known set = roster ∪ config contracts ∪ existing
+  agent_state rows (legacy rows stay tightenable off-roster).
+- GO_LIVE.md: promote + halt sections now lead with the command; raw SQL
+  kept as break-glass. Resume documented for the first time.
+
+**Evidence.** 569 → **585 tests** pass (+16 in test_agent_mode.py: unknown
+agent / invalid mode / noop / rank-skip refused even with all flags;
+tightening applies unconfirmed; loosening needs confirm, thin-span book
+needs override, no-contract blocked, clean book applies + sets
+last_promoted_ms; override lands on the audit row; re-enable into live mode
+re-gates; supervisor `_pause` cleared by `--enable` with reason in the
+audit detail; operator rows never count as guardrail breaches; readout
+prefers paper book; list includes default + legacy rows); ruff clean.
+Live-fired read-only on this checkout: state table renders 11 agents;
+refusal paths exit 1 printing the failing evidence gates ("evidence span
+0.0d < 30d required"). No agent_state row was changed anywhere — the tool
+flips nothing until a human types the flags.
+
+**Live watch.** Health: WARN only on the standing pager nag (tick 1.8m,
+ingest 2.0m, paper tick 5.1m, none paused). pnl_24h: bot $-0.13 (account
+−$235.41, manual −$235.28). Equity $645.06 (was $680.14 Iter 89 —
+account-level, includes the operator's manual book; bot's own 24h ≈ flat).
+
+**What's next (loop).** Per-iteration readouts unchanged (b_edge2b ~Jun 20,
+b_g014 ~Jun 26, b_edge3 + b_edge2_1h ~Jul 10, B-EDGE2f paper readout
+~Jul 12 — the operator's flip tool for that day now exists and is gated).
+Idle queue: B-STOREBKP2 once the operator arms HLBOT_STORE_BACKUP_S3;
+operator nudges — wire HEALTHCHECK_URL, consider arming
+HLBOT_DAILY_LOSS_FLOOR, consider arming the S3 store backup; stale `[~]`
+B4-RUN header near BACKLOG top duplicates the closed item (cosmetic).

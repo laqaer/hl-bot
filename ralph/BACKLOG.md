@@ -226,6 +226,27 @@ Keep it ruthlessly prioritized: the top item should always be the highest-levera
   where a paper DB exists so dev/live-only clones stay silent. Names shared
   with run-paper-tick.sh pinned by test. 7 new tests; live-fired all three
   arms (absent → quiet, stale → warn, fresh → ok).
+- [x] **B-OPSGATE — `hlbot agent-mode`: the GO_LIVE switch as a validated,
+  audited command.** Done (Iter 91): the documented procedure for the most
+  consequential operation in the system — flipping an agent live — was raw
+  SQL against the live DB: no agent-name validation (a typo'd INSERT creates
+  a dead row while the real agent silently stays paper), no evidence
+  readout, no audit trail, and NO unpause path anywhere (`_pause` sets
+  enabled=0; nothing — not even the supervisor's promote upsert — ever sets
+  it back; the operator's only resume was hand-edited sqlite). Now
+  `supervisor/operator.py` + `hlbot agent-mode`: tightening always applies;
+  loosening (rank-up or becoming live-capable) needs `--confirm`, moves ONE
+  rank at a time (paper→live_small→live, mirroring `_demote`'s ladder), and
+  re-checks the supervisor's own promotion evidence gates
+  (`_evidence_blockers`) — flipping against failing gates needs
+  `--override-evidence` on top, and the override lands verbatim on the
+  `goal_evaluations` audit trail (`goal_name='operator'`, shape-proof
+  against the clean-guardrails breach query). `--enable` clears pause
+  markers (the missing resume). Read-only views: roster-wide state table +
+  per-agent evidence readout (book span, 30d breaches, last promotion
+  evaluation). GO_LIVE.md promote/halt sections now lead with the command
+  (SQL kept as break-glass). 16 tests; refusal paths live-fired (exit 1,
+  evidence printed). Ready for the ~Jul 12 promotion-readiness window.
 - [x] **B-G1SPAN — Promotion gates enforce evidence SPAN + clean guardrail
   history (G1 pre-registration, day 0 of the paper books).** Done (Iter 89):
   every promotion block keyed on `window: 30d` metrics, which bound the
