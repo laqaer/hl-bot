@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import contextlib
+import hashlib
 import json
 import logging
+import subprocess
 import time
 from pathlib import Path
 from typing import Any
@@ -1008,12 +1010,31 @@ def confirm(
         raise typer.Exit(1)
 
 
+def _git_rev(anchor: Path) -> str | None:
+    """Best-effort `git rev-parse HEAD` anchored at a repo-resident path.
+
+    The engine/fill-model revision materially changes verdicts (optimistic →
+    resting maker fills flipped signs, Iters 50/51), so a recorded verdict
+    without it is reproducible only by guesswork. Never fails the caller."""
+    try:
+        out = subprocess.run(
+            ["git", "rev-parse", "HEAD"], cwd=anchor, capture_output=True,
+            text=True, timeout=10, check=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    rev = out.stdout.strip()
+    return rev if out.returncode == 0 and rev else None
+
+
 @app.command()
 def experiment(
     spec_path: str,
     check_only: bool = False,
     force: bool = False,
     store_root: str = "",
+    record: bool = True,
+    results_dir: str = "configs/experiments/results",
 ):
     """Run a pre-registered experiment spec — frozen confirm arms, ripeness-gated.
 
@@ -1026,10 +1047,19 @@ def experiment(
     is a corrupted sample, not a ripe one
     (exit 3 = not ripe; --check-only prints the span readout and stops;
     --force runs anyway — an early run is a peek, record it as one, it is
-    NOT the pre-registered verdict). Results are informational: the printed
-    decision rule is applied by the operator, never auto-acted on.
+    NOT the pre-registered verdict). Every run's full verdict (arms, numbers,
+    ripeness, spec sha256, code rev) is persisted to --results-dir, committed
+    beside the specs; forced peeks land as visibly-named .peek files
+    (--no-record opts out). Results are informational: the printed decision
+    rule is applied by the operator, never auto-acted on.
     """
-    from ..backtest.experiments import check_ripeness, load_spec, run_experiment
+    from ..backtest.experiments import (
+        check_ripeness,
+        experiment_record,
+        load_spec,
+        run_experiment,
+        write_experiment_record,
+    )
 
     try:
         spec = load_spec(spec_path)
@@ -1088,6 +1118,17 @@ def experiment(
     if spec.decision:
         console.print("decision rule (frozen with the spec):", style="bold")
         console.print(spec.decision, markup=False)
+    if record:
+        rec = experiment_record(
+            spec, rep, results,
+            ran_at=time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+            spec_sha256=hashlib.sha256(Path(spec_path).read_bytes()).hexdigest(),
+            forced=not rep.ripe,
+            code_rev=_git_rev(Path(spec_path).resolve().parent),
+        )
+        out = write_experiment_record(rec, results_dir)
+        tag = " (forced peek — NOT the pre-registered verdict)" if not rep.ripe else ""
+        console.print(f"verdict recorded: {out}{tag}")
 
 
 def _fmt_bps(v: float | None) -> str:

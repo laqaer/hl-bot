@@ -27,9 +27,12 @@ import pytest
 from hl_bot.backtest.confirm import ConfirmationResult, ScenarioResult
 from hl_bot.backtest.experiments import (
     PERIODS_PER_YEAR,
+    ArmResult,
     check_ripeness,
+    experiment_record,
     load_spec,
     run_experiment,
+    write_experiment_record,
 )
 from hl_bot.backtest.store import save_store, store_path
 
@@ -329,6 +332,80 @@ def test_b_edge2b_spec_pins():
 
 
 # ---------------------------------------------------------------------------
+# experiment_record / write_experiment_record — the verdict must outlive stdout
+# ---------------------------------------------------------------------------
+
+
+def test_experiment_record_is_self_contained_and_serializable(tmp_path):
+    spec = load_spec(_write_spec(
+        tmp_path,
+        min_span_days=2,
+        decision="flip if w240 beats baseline",
+        arms=[
+            {"name": "base"},
+            {"name": "w240-maker", "vwap_window": 240, "prefer": "maker",
+             "maker_fill": "resting", "config": {"stop_loss_pct": 0.03}},
+        ],
+    ))
+    _write_store(tmp_path, "BTC", "1m", 3 * DAY_BARS + 1)
+    _write_store(tmp_path, "ETH", "1m", 3 * DAY_BARS + 1)
+    rep = check_ripeness(spec, root=tmp_path)
+    # one result carries a cost ladder + a None sharpe to pin serialization
+    s = ScenarioResult("base", 0.0, 1.0, 1.0, 30)
+    full = ConfirmationResult(
+        agent="base", confirmed=True, reasons=["ok"], in_sample=s, out_of_sample=s,
+        cost_ladder=[ScenarioResult("taker-2x", -1.0, -2.0, None, 10)],
+        robust_to_2x_slippage=True, n_frames=2,
+    )
+    results = [ArmResult(arm=spec.arms[0], result=full),
+               ArmResult(arm=spec.arms[1], result=_fake_result("w240-maker"))]
+    rec = experiment_record(
+        spec, rep, results,
+        ran_at="2026-06-20T12:03:01Z", spec_sha256="ab" * 32,
+        forced=False, code_rev="deadbeef",
+    )
+    assert json.loads(json.dumps(rec)) == rec  # round-trips losslessly
+    assert rec["spec"]["name"] == "t_spec" and rec["spec"]["sha256"] == "ab" * 32
+    assert rec["spec"]["thresholds"] == {
+        "min_edge_bps": 3.0, "min_sharpe": 1.0, "min_trades": 20}
+    assert rec["spec"]["decision"] == "flip if w240 beats baseline"
+    assert rec["forced"] is False and rec["code_rev"] == "deadbeef"
+    assert rec["ran_at"] == "2026-06-20T12:03:01Z"
+    assert rec["ripeness"]["ripe"] is True
+    assert rec["ripeness"]["min_span_days_required"] == 2
+    assert {sp["coin"] for sp in rec["ripeness"]["spans"]} == {"BTC", "ETH"}
+    assert all(sp["missing_pct"] == 0.0 for sp in rec["ripeness"]["spans"])
+    base, w240 = rec["arms"]
+    # resolved knobs (spec inheritance applied), not the raw arm fields
+    assert base["coins"] == ["BTC", "ETH"] and base["vwap_window"] == 60
+    assert (base["prefer"], base["maker_fill"]) == ("taker", "optimistic")
+    assert base["confirmed"] is True and base["reasons"] == ["ok"]
+    assert base["robust_to_2x_slippage"] is True and base["n_frames"] == 2
+    assert base["in_sample"]["n_trades"] == 30
+    assert base["cost_ladder"][0] == {
+        "name": "taker-2x", "net_pnl": -1.0, "edge_bps": -2.0,
+        "sharpe": None, "n_trades": 10}
+    assert w240["vwap_window"] == 240 and w240["maker_fill"] == "resting"
+    assert w240["config"] == {"stop_loss_pct": 0.03}
+
+
+def test_write_experiment_record_never_overwrites_and_marks_peeks(tmp_path):
+    rec = {"spec": {"name": "b_g014"}, "ran_at": "2026-06-20T12:03:01Z", "forced": False}
+    d = tmp_path / "results"
+    p1 = write_experiment_record(rec, d)
+    assert p1.name == "b_g014.20260620T120301Z.json"
+    assert json.loads(p1.read_text()) == rec
+    p2 = write_experiment_record(rec, d)  # same-second rerun must not clobber
+    assert p2 != p1 and p1.exists() and p2.exists()
+    peek = write_experiment_record({**rec, "forced": True}, d)
+    assert ".peek" in peek.name
+    # a hostile spec name can't escape the results dir
+    hostile = write_experiment_record(
+        {"spec": {"name": "../evil name"}, "ran_at": "", "forced": False}, d)
+    assert hostile.parent == d and "/" not in hostile.name
+
+
+# ---------------------------------------------------------------------------
 # CLI — ripeness gate fires before any frame/network work
 # ---------------------------------------------------------------------------
 
@@ -367,3 +444,74 @@ def test_cli_experiment_bad_spec_exits_1(tmp_path):
     res = CliRunner().invoke(app, ["experiment", str(p)])
     assert res.exit_code == 1
     assert "unknown key" in res.output
+
+
+# ---------------------------------------------------------------------------
+# CLI — every run persists its verdict (peeks visibly flagged)
+# ---------------------------------------------------------------------------
+
+
+def _patch_fake_run(monkeypatch):
+    """Fake the runner (no frames/network); the recording seam is what's under test."""
+    import hl_bot.backtest.experiments as exps
+
+    def fake_run(spec, *, factory_for, load_frames, confirm_fn=None):
+        return [exps.ArmResult(arm=a, result=_fake_result(a.name)) for a in spec.arms]
+
+    monkeypatch.setattr(exps, "run_experiment", fake_run)
+
+
+def test_cli_experiment_records_verdict(tmp_path, monkeypatch):
+    import hashlib
+
+    from typer.testing import CliRunner
+
+    from hl_bot.cli.main import app
+
+    spec_path = _write_spec(tmp_path, min_span_days=2)
+    for c in ("BTC", "ETH"):
+        _write_store(tmp_path, c, "1m", 3 * DAY_BARS + 1)
+    monkeypatch.setenv("HLBOT_DB", str(tmp_path / "t.sqlite"))
+    _patch_fake_run(monkeypatch)
+    rdir = tmp_path / "results"
+    res = CliRunner().invoke(app, [
+        "experiment", str(spec_path), "--store-root", str(tmp_path),
+        "--results-dir", str(rdir)])
+    assert res.exit_code == 0, res.output
+    assert "verdict recorded" in res.output and "peek" not in res.output
+    files = list(rdir.glob("t_spec.*.json"))
+    assert len(files) == 1 and ".peek" not in files[0].name
+    rec = json.loads(files[0].read_text())
+    assert rec["forced"] is False and rec["ripeness"]["ripe"] is True
+    assert [a["name"] for a in rec["arms"]] == ["a1"]
+    # the sha pins WHICH frozen spec produced this verdict
+    assert rec["spec"]["sha256"] == hashlib.sha256(spec_path.read_bytes()).hexdigest()
+    assert rec["code_rev"] is None  # tmp dir isn't a git repo — degrades, never fails
+
+
+def test_cli_experiment_forced_peek_recorded_as_peek_and_no_record_opts_out(
+        tmp_path, monkeypatch):
+    from typer.testing import CliRunner
+
+    from hl_bot.cli.main import app
+
+    spec_path = _write_spec(tmp_path, min_span_days=2)
+    for c in ("BTC", "ETH"):
+        _write_store(tmp_path, c, "1m", DAY_BARS)  # 1d < 2d min: unripe
+    monkeypatch.setenv("HLBOT_DB", str(tmp_path / "t.sqlite"))
+    _patch_fake_run(monkeypatch)
+    rdir = tmp_path / "results"
+    res = CliRunner().invoke(app, [
+        "experiment", str(spec_path), "--store-root", str(tmp_path),
+        "--results-dir", str(rdir), "--force"])
+    assert res.exit_code == 0, res.output
+    files = list(rdir.glob("*.json"))
+    assert len(files) == 1 and ".peek" in files[0].name
+    rec = json.loads(files[0].read_text())
+    assert rec["forced"] is True and rec["ripeness"]["ripe"] is False
+
+    res2 = CliRunner().invoke(app, [
+        "experiment", str(spec_path), "--store-root", str(tmp_path),
+        "--results-dir", str(rdir), "--force", "--no-record"])
+    assert res2.exit_code == 0, res2.output
+    assert len(list(rdir.glob("*.json"))) == 1  # nothing new written

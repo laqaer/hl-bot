@@ -10,7 +10,10 @@ hand every iteration. A spec freezes the whole experiment as JSON in
 ``configs/experiments/`` — agent, universes, interval, every arm's config /
 execution basis / fill model, the pass thresholds, and the decision rule —
 committed BEFORE the deciding sample exists, and ``hlbot experiment`` refuses
-to run it until the store is ripe.
+to run it until the store is ripe. When a spec does run, the full verdict is
+persisted as a JSON record beside the specs (``experiment_record`` /
+``write_experiment_record``) — the evidence the book waits weeks for must not
+live only in terminal scrollback plus hand-transcribed prose.
 
 Pure of network and CLI: frame loading and agent construction are injected,
 so the orchestration is unit-testable offline.
@@ -19,8 +22,9 @@ so the orchestration is unit-testable offline.
 from __future__ import annotations
 
 import json
+import re
 from collections.abc import Callable
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -317,3 +321,93 @@ def run_experiment(
             maker_fill=arm.maker_fill,
         )))
     return results
+
+
+def experiment_record(
+    spec: ExperimentSpec,
+    ripeness: RipenessReport,
+    results: list[ArmResult],
+    *,
+    ran_at: str,
+    spec_sha256: str,
+    forced: bool,
+    code_rev: str | None = None,
+) -> dict[str, Any]:
+    """Self-contained, JSON-serializable record of one experiment run.
+
+    A pre-registered verdict that exists only as stdout + a hand-transcribed
+    PROGRESS line re-opens the side channel the spec froze shut: transcription
+    can drop an arm, round a number, or quietly omit that the run was forced.
+    The record carries the spec's identity (name + sha256 of the frozen file —
+    a post-hoc spec edit changes the hash), the sample's provenance (the
+    ripeness readout the run happened under, gaps included), the honesty bit
+    (``forced`` peeks are recorded AS peeks, so an early look leaves a
+    permanent trace), the code revision (fill-model changes flipped verdict
+    signs in Iters 50/51), and every arm's resolved knobs + full confirm
+    numbers. Pure: timestamp/hash/rev are injected.
+    """
+    return {
+        "spec": {
+            "name": spec.name,
+            "sha256": spec_sha256,
+            "agent": spec.agent,
+            "interval": spec.interval,
+            "source": spec.source,
+            "days": spec.days,
+            "thresholds": {
+                "min_edge_bps": spec.min_edge_bps,
+                "min_sharpe": spec.min_sharpe,
+                "min_trades": spec.min_trades,
+            },
+            "decision": spec.decision,
+        },
+        "ran_at": ran_at,
+        "forced": forced,
+        "code_rev": code_rev,
+        "ripeness": {
+            "ripe": ripeness.ripe,
+            "min_span_days_required": ripeness.min_span_days,
+            "min_span_days": ripeness.min_span,
+            "max_missing_pct": ripeness.max_missing_pct,
+            "spans": [{**asdict(s), "missing_pct": s.missing_pct} for s in ripeness.spans],
+        },
+        "arms": [
+            {
+                "name": ar.arm.name,
+                "coins": spec.arm_coins(ar.arm),
+                "vwap_window": spec.arm_window(ar.arm),
+                "prefer": ar.arm.prefer,
+                "maker_fill": ar.arm.maker_fill,
+                "config": ar.arm.config,
+                "confirmed": ar.result.confirmed,
+                "reasons": list(ar.result.reasons),
+                "robust_to_2x_slippage": ar.result.robust_to_2x_slippage,
+                "n_frames": ar.result.n_frames,
+                "in_sample": asdict(ar.result.in_sample),
+                "out_of_sample": asdict(ar.result.out_of_sample),
+                "cost_ladder": [asdict(s) for s in ar.result.cost_ladder],
+            }
+            for ar in results
+        ],
+    }
+
+
+def write_experiment_record(record: dict[str, Any], results_dir: str | Path) -> Path:
+    """Write a verdict record under ``results_dir``, never overwriting.
+
+    Filename is ``<spec>.<stamp>[.peek].json`` — a forced peek is visible in
+    a directory listing, not just inside the file. Same-second reruns get a
+    ``-2``/``-3`` suffix instead of clobbering the prior record.
+    """
+    d = Path(results_dir)
+    d.mkdir(parents=True, exist_ok=True)
+    name = re.sub(r"[^A-Za-z0-9._-]", "_", str(record["spec"]["name"])) or "experiment"
+    stamp = re.sub(r"[^0-9TZ]", "", str(record.get("ran_at", ""))) or "unknown"
+    base = f"{name}.{stamp}" + (".peek" if record.get("forced") else "")
+    path = d / f"{base}.json"
+    n = 2
+    while path.exists():
+        path = d / f"{base}-{n}.json"
+        n += 1
+    path.write_text(json.dumps(record, indent=2) + "\n", encoding="utf-8")
+    return path

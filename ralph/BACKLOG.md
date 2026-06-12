@@ -253,6 +253,23 @@ Keep it ruthlessly prioritized: the top item should always be the highest-levera
   `maker_fill=resting`, no stop+w240 combo arm, b_edge2b taker-only.
   Informational output; decisions stay operator-gated.
 
+- [x] **B-EXPREC — Persist pre-registered experiment verdicts.** Done (Iter 71):
+  `hlbot experiment` printed its verdict and exited — the evidence
+  B-MAKER-LIVE / B-SCALE / breakout promotion wait weeks for would have lived
+  only in terminal scrollback + hand-transcribed PROGRESS prose
+  (transcription is the side channel pre-registration exists to close: an arm
+  dropped, a number rounded, a forced run quietly unflagged). Now every run
+  writes a self-contained JSON record to `configs/experiments/results/`
+  (committed beside the specs — loop.sh's `git add -A` makes persistence
+  automatic): spec name + sha256 of the frozen file (a post-hoc spec edit
+  changes the hash), the ripeness readout the run happened under (gaps
+  included), best-effort code rev (fill-model changes flipped verdict signs,
+  Iters 50/51), the forced flag, and every arm's resolved knobs + full
+  confirm numbers. Forced peeks land as visibly-named `.peek` files — an
+  early look leaves a permanent trace. Same-second reruns get a suffix, never
+  clobber; `--no-record` opts out. Builder/writer pure + tested; CLI wiring
+  pinned by tests (recorded verdict, peek flagging, opt-out, sha match,
+  git-rev degrade path).
 - [x] **B-RIPE — Gap-aware experiment ripeness.** Done (Iter 70): `check_ripeness`
   judged spans only — `coverage_of` computes interval-aligned holes but the
   ripeness gate discarded them, so a harvester outage >3.5d (permanent 1m data

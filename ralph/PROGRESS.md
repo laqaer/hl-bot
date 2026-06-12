@@ -3754,3 +3754,65 @@ run; b_g014 ~Jun 26) — both now also gap-gated. B-EDGE2f at ≥30d paper
 books (~Jul 8). Idle queue: B-SCALE doc once G2 evidence is real;
 per-agent funding clamp if a funding-collecting agent ever shares the
 live book with a funding-paying one.
+
+## Iteration 71 — 2026-06-12 — B-EXPREC: pre-registered verdicts persist as records
+
+**Ripeness checks** (per-iteration readout): b_edge2b NOT RIPE (15m span
+52.1d < 60d, breadth coins binding, ETA ~Jun 20); b_g014 NOT RIPE (1m span
+3.7d < 14d, ETA ~Jun 26). Store healthy (0 missing bars, all 30 pairs) —
+but found 6h stale at session start with /tmp/ralph_harvest.log empty
+(loop.sh's pre-iteration top-up appears not to have run this session);
+topped up manually via `hlbot harvest-candles` (all pairs ok). Harmless at
+6h against 3.5d retention, but worth watching: if the per-iteration
+guarantee is flaky, the 1m store gap risk B-RIPE gates against is live.
+
+**Why this.** Both headline experiments time-blocked; picked the gap that
+makes those runs more valuable. `hlbot experiment` printed its verdict and
+exited — the single most evidence-bearing output in the program (it gates
+B-MAKER-LIVE, B-SCALE, breakout promotion) would exist only in terminal
+scrollback plus whatever PROGRESS prose the loop hand-transcribes.
+Transcription re-opens the side channel pre-registration froze shut: an
+arm dropped, a number rounded, a forced peek quietly unflagged. The honest
+machinery deserved a durable, tamper-evident output.
+
+**Changed.** `backtest/experiments.py`: `experiment_record` (pure builder —
+spec identity incl. sha256 of the frozen file so a post-hoc spec edit
+changes the hash; the ripeness readout the run happened under, gaps
+included; `forced` honesty bit; injected code rev + timestamp; every arm's
+RESOLVED knobs [coins/window inheritance applied] + full confirm numbers
+incl. cost ladder) and `write_experiment_record` (collision-proof: peeks
+get a visible `.peek` filename, same-second reruns suffix `-2`/`-3`, spec
+names sanitized so a hostile name can't escape the dir). CLI: `hlbot
+experiment` grows `--results-dir` (default `configs/experiments/results/`
+— committed beside the specs; loop.sh's `git add -A` makes persistence
+automatic even if an iteration forgets) and `--no-record`; recording is ON
+by default for ripe runs AND forced peeks — peeking now leaves a permanent
+trace, so "peek early, then present the ripened run as the first look" is
+auditable. `_git_rev` (best-effort `git rev-parse HEAD` anchored at the
+spec dir, degrades to null — the engine/fill-model rev flipped verdict
+signs in Iters 50/51, so a record without it is reproducible only by
+guesswork).
+
+**Evidence.** 453 → **457 tests pass**; ruff clean. New: record builder
+self-containment (resolved arm knobs, thresholds, ripeness spans, None-
+sharpe/cost-ladder serialization, lossless JSON round-trip); writer
+never-overwrite + `.peek` naming + hostile-name containment; CLI wiring
+both directions (ripe run → recorded verdict w/ matching spec sha256 +
+degrade-to-null code_rev in a non-repo tmp dir; unripe `--force` →
+`.peek` file with `forced:true, ripe:false`; `--no-record` writes
+nothing). `_git_rev` success path live-fired against the real repo
+(returns HEAD c80938c). No real-spec run: a `--force` on b_g014/b_edge2b
+would be a peek — deliberately not taken.
+
+**Found.** (a) loop.sh harvest top-up didn't run before this session
+(empty log, 6h-stale store) — single observation, no action beyond the
+manual top-up; if it recurs, instrument loop.sh to date-stamp the log.
+(b) The frozen specs stay byte-identical (sha256 now pinned into every
+future record).
+
+**What's next (loop).** Per-iteration: the two `--check-only` ripeness
+readouts (b_edge2b ~Jun 20 FIRST — after it runs, commit the auto-written
+results JSON and bump its min_span_days; b_g014 ~Jun 26). B-EDGE2f at
+≥30d paper books (~Jul 8). Idle queue: B-SCALE doc once G2 evidence is
+real; per-agent funding clamp if a funding-collecting agent ever shares
+the live book with a funding-paying one.
