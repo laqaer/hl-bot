@@ -406,6 +406,19 @@ Keep it ruthlessly prioritized: the top item should always be the highest-levera
 - [ ] **B-SCALE — Scale twap_mr_v1 as it earns.** Let the 5×/1× risk rule +
   MetaAllocator grow size at each gate; bump caps deliberately, never to chase losses.
   This builds the track record on meaningful size.
+- [x] **B-AGG — Enforce the aggregate 5× portfolio cap in code.** Done (Iter 67):
+  `resolve_agent_caps` documented the two-layer rule but enforced only the
+  per-agent 1× clamp — the 5× *sum* held only while the roster stayed ≤5
+  agents (an accident of roster size, not a rule), and the MetaAllocator's
+  cold-start/negative floors push every agent to its full 1× ceiling exactly
+  when the portfolio shrinks (drawdown = when the aggregate cap must bind
+  hardest). Now the resolved book scales down proportionally when Σ totals
+  exceeds 5× portfolio (per-trade follows its total down, an explicit smaller
+  per-trade is never raised, under-cap books come back byte-identical —
+  tightening-only). 6 new tests incl. an end-to-end `apply_allocator_caps`
+  pin (6 cold agents × $30 1× ceiling vs $150 5× cap → $25 each). No live
+  behavior change today (live roster ≤5 agents); this is the rail B-SCALE's
+  multi-agent growth was missing.
 - [x] **B4-RUN — Confirm carry strategies on real history.** Done across Iters
   20–23 + 47: every confirm FAILS walk-forward (latest: 1h baseline IS
   −43.7bps, 1h beta-neutral IS −19.0bps, 1d thin-sample gated). Nothing

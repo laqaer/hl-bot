@@ -95,3 +95,80 @@ def test_allocator_share_below_ceiling_is_respected():
 
     assert caps["femr_v1"].max_total_notional == pytest.approx(150.0)
     assert isinstance(caps["femr_v1"], AgentCap)
+
+
+def test_aggregate_sum_capped_to_five_x_portfolio():
+    # Eight agents each at the 1x per-position ceiling: per-agent clamps alone
+    # would allow an 8x-portfolio book. The 5x aggregate cap must scale it down.
+    risk = _cap(100.0)  # 5x=500 total, 1x=100 per agent
+    allocs = {f"a{i}": 100.0 for i in range(8)}
+    configured = {f"a{i}": {"max_total_notional": math.inf,
+                            "max_notional_per_trade": math.inf} for i in range(8)}
+
+    caps = resolve_agent_caps(allocs, risk, configured)
+
+    assert sum(c.max_total_notional for c in caps.values()) == pytest.approx(500.0)
+    # Proportional: every agent shrinks by the same factor (100 * 500/800).
+    for c in caps.values():
+        assert c.max_total_notional == pytest.approx(62.5)
+        # Per-trade follows the scaled total down.
+        assert c.max_notional_per_trade == pytest.approx(62.5)
+
+
+def test_aggregate_scaling_preserves_relative_weights():
+    risk = _cap(100.0, mult=2.0)  # total cap 200, per-agent 100
+    allocs = {"big": 100.0, "mid": 80.0, "small": 70.0}  # sum 250 > 200
+    configured = {a: {"max_total_notional": math.inf,
+                      "max_notional_per_trade": math.inf} for a in allocs}
+
+    caps = resolve_agent_caps(allocs, risk, configured)
+
+    # Scale = 200/250 = 0.8, applied uniformly.
+    assert caps["big"].max_total_notional == pytest.approx(80.0)
+    assert caps["mid"].max_total_notional == pytest.approx(64.0)
+    assert caps["small"].max_total_notional == pytest.approx(56.0)
+
+
+def test_aggregate_scaling_never_raises_explicit_per_trade():
+    # Ten agents over-cap by 2x -> totals halve to 50. A per-trade that tracked
+    # the old total (100) clamps to the new total; an explicit $10 stays $10.
+    risk = _cap(100.0)  # 5x=500, 1x=100
+    allocs = {f"a{i}": 100.0 for i in range(10)}
+    configured = {f"a{i}": {"max_total_notional": math.inf,
+                            "max_notional_per_trade": math.inf} for i in range(10)}
+    configured["a0"]["max_notional_per_trade"] = 10.0
+
+    caps = resolve_agent_caps(allocs, risk, configured)
+
+    assert caps["a0"].max_notional_per_trade == pytest.approx(10.0)
+    assert caps["a1"].max_total_notional == pytest.approx(50.0)
+    assert caps["a1"].max_notional_per_trade == pytest.approx(50.0)
+
+
+def test_aggregate_under_cap_is_unchanged():
+    # A book inside the 5x cap must come back byte-identical — the aggregate
+    # layer is tightening-only.
+    risk = _cap(600.0)  # 5x=3000
+    allocs = {"twap_mr_v1": 600.0, "femr_v1": 150.0}
+    configured = {
+        "twap_mr_v1": {"max_total_notional": math.inf, "max_notional_per_trade": 200.0},
+        "femr_v1": {"max_total_notional": 40.0, "max_notional_per_trade": 20.0},
+    }
+
+    caps = resolve_agent_caps(allocs, risk, configured)
+
+    assert caps["twap_mr_v1"] == AgentCap(max_total_notional=600.0, max_notional_per_trade=200.0)
+    assert caps["femr_v1"] == AgentCap(max_total_notional=40.0, max_notional_per_trade=20.0)
+
+
+def test_aggregate_zero_portfolio_yields_zero_caps_without_error():
+    # No portfolio value -> compute_notional_cap returns 0/0; every agent caps
+    # to zero and the aggregate layer must not divide by the zero book.
+    risk = _cap(0.0)
+    allocs = {"a": 50.0, "b": 50.0}
+    configured = {a: {"max_total_notional": math.inf,
+                      "max_notional_per_trade": math.inf} for a in allocs}
+
+    caps = resolve_agent_caps(allocs, risk, configured)
+
+    assert all(c.max_total_notional == 0.0 for c in caps.values())

@@ -152,6 +152,24 @@ def test_apply_allocator_caps_caps_at_per_position_ceiling(conn):
     assert cfg.max_total_notional == 40.0
 
 
+def test_apply_allocator_caps_aggregate_never_exceeds_portfolio_total(conn):
+    # Six cold-start agents on a small book: the allocator floors each at
+    # min_alloc (50) -> clamped to the 1x ceiling (30) -> a 180 book against a
+    # 150 (5x) portfolio cap. Per-agent clamps alone can't bound the sum once
+    # the roster outgrows the multiplier; the aggregate layer must scale all
+    # six down to 25 (30 * 150/180).
+    cfgs = [
+        SimpleNamespace(max_total_notional=float("inf"), max_notional_per_trade=float("inf"))
+        for _ in range(6)
+    ]
+    agents = [_agent(f"a{i}", cfg) for i, cfg in enumerate(cfgs)]
+    out = apply_allocator_caps(conn, agents, _risk_cap(max_total=150.0, max_per_pos=30.0))
+    assert sum(out.effective_caps.values()) == pytest.approx(150.0)
+    for cfg in cfgs:
+        assert cfg.max_total_notional == pytest.approx(25.0)
+        assert cfg.max_notional_per_trade == pytest.approx(25.0)
+
+
 def test_apply_allocator_caps_agent_without_cfg_left_untouched(conn):
     # An agent with no cfg keeps its raw alloc in effective_caps and is not
     # mutated (no cfg to write).

@@ -3,7 +3,11 @@
 The approved live risk rule has two layers:
 
 * The *portfolio* may carry up to ``multiplier`` x (default 5x) live unified
-  portfolio value of aggregate bot-open notional.
+  portfolio value of aggregate bot-open notional. Enforced here as a
+  proportional scale-down when the per-agent caps sum past it — the
+  MetaAllocator's cold-start/negative floors can overshoot its total exactly
+  when the portfolio shrinks, and per-agent clamps alone bound the sum only
+  while the roster stays at <= ``multiplier`` agents.
 * Any *single agent* is limited to 1x portfolio value (``max_per_position``)
   unless it explicitly configures a smaller cap.
 
@@ -52,7 +56,8 @@ def resolve_agent_caps(
             as merged from defaults + overrides. Values may be inf/None.
 
     Returns:
-        agent -> AgentCap with the final, safe numbers.
+        agent -> AgentCap with the final, safe numbers. The totals sum to at
+        most ``risk_cap.max_total_notional`` (the aggregate 5x rule).
     """
     per_agent_ceiling = float(risk_cap.max_per_position_notional)
     out: dict[str, AgentCap] = {}
@@ -82,5 +87,23 @@ def resolve_agent_caps(
             per_trade = per_trade_ceiling
 
         out[name] = AgentCap(max_total_notional=total, max_notional_per_trade=per_trade)
+
+    # Aggregate layer: the loop above bounds each agent individually, so the
+    # sum can reach (number of agents) x 1x-portfolio. Scale the whole book
+    # down proportionally when it exceeds the portfolio cap; a sum already
+    # inside the cap is returned unchanged (tightening-only).
+    portfolio_total = float(risk_cap.max_total_notional)
+    book_total = sum(cap.max_total_notional for cap in out.values())
+    if math.isfinite(portfolio_total) and book_total > portfolio_total:
+        scale = portfolio_total / book_total
+        out = {
+            name: AgentCap(
+                max_total_notional=cap.max_total_notional * scale,
+                max_notional_per_trade=min(
+                    cap.max_notional_per_trade, cap.max_total_notional * scale
+                ),
+            )
+            for name, cap in out.items()
+        }
 
     return out

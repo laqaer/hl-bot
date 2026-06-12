@@ -3498,3 +3498,67 @@ now fully swept — every finding fixed or explicitly dispositioned.
 readouts (b_edge2b ~Jun 20 FIRST, then bump its min_span_days after the
 run; b_g014 ~Jun 26). B-EDGE2f at ≥30d paper books (~Jul 8). Idle queue:
 B-SCALE doc once G2 evidence is real.
+
+## Iteration 67 — 2026-06-12 — B-AGG: the aggregate 5× cap was an accident of roster size; now enforced
+
+**Ripeness checks** (per-iteration readout): b_edge2b NOT RIPE (15m span
+52.1d < 60d, breadth coins binding, ETA ~Jun 20); b_g014 NOT RIPE (1m span
+3.7d < 14d, ETA ~Jun 26). Store healthy (20/20 + 10/10 pairs reporting).
+
+**Why this.** Headline items time-blocked; REVIEW fully swept. The next
+structural milestone is B-SCALE — growing size via "the 5×/1× risk rule +
+MetaAllocator" once G2 evidence lands — so this iteration audited that
+exact spine. It held per-agent but not in aggregate.
+
+**Root cause.** `risk/allocation.py`'s docstring promises a two-layer rule
+(portfolio ≤ 5× unified value; each agent ≤ 1×), but `resolve_agent_caps`
+never reads `risk_cap.max_total_notional` — only the per-agent 1× ceiling.
+The 5× total entered the system solely as the MetaAllocator's
+`total_capital`, which its own floors bypass: cold-start agents get
+min_alloc ($50) and negative-Sharpe agents neg_floor ($25) BEFORE the
+budget check, and step 3 hands every positive-Sharpe agent
+max(min_alloc, share) even when nothing remains. After the step-4 clamp
+each alloc is bounded by 1× portfolio, so the AGGREGATE invariant
+Σ ≤ 5× held only while the roster had ≤5 agents — roster size, not code.
+Worse, the breach is maximal exactly in a drawdown: a shrunken portfolio
+puts every cold/floored agent AT its full 1× ceiling, so an N-agent roster
+could carry N× portfolio. No downstream layer catches it (each agent's
+`decide()` checks only its own cfg cap; there is no portfolio-level check
+at order placement).
+
+**Changed.** `resolve_agent_caps` grew the aggregate layer: after the
+existing per-agent resolution, if Σ totals > `risk_cap.max_total_notional`,
+every agent's total scales down by the same factor (allocator's relative
+weights preserved) and per-trade clamps to min(old per-trade, new total) —
+an explicit smaller configured per-trade is never touched. Under-cap books
+return byte-identical (tightening-only, pinned by test); zero-portfolio
+books short-circuit (no divide-by-zero). One enforcement point, in the
+module already documented as the single source of truth — the
+MetaAllocator's floors stay as-is (cold-start semantics are intentional;
+the overshoot is now caught where the rule lives).
+
+**Evidence.** 435 → **441 tests pass**; `ruff check src tests scripts`
+clean. New: 5 in test_allocation.py (8 agents × 1× → Σ pinned to exactly
+5×, proportionality at uneven weights 100/80/70 → 80/64/56 under a 0.8
+scale, explicit $10 per-trade survives a halving while unconfigured
+per-trade follows the total down, under-cap byte-identity, zero-portfolio
+no-error) + 1 end-to-end in test_tick_harness.py (`apply_allocator_caps`
+with 6 cold agents, $30 1× ceiling, $150 5× cap → six $25 cfg mutations,
+Σ = $150.00). No live-fire needed: pure function, no I/O, and today's live
+roster (≤5 agents) is in the byte-identical branch.
+
+**Found.** (a) MetaAllocator.allocate can still SUGGEST a sum above its
+total_capital (floors + step-3 min) — now harmless, the resolve layer is
+the enforcement point; left deliberately. (b) MetaAllocator docstring says
+fills are attributed by "agent name prefix" but the query is exact-match
+`agent = ?` — actual attribution flows via the cloid convention to exact
+names (ingest/hyperliquid.py), so the code is right and the comment stale;
+not worth a commit on its own, noted here. (c) There is still no
+portfolio-level notional check AT ORDER TIME (caps are applied pre-tick,
+positions drift intra-hold); acceptable while per-trade sizes are small,
+revisit if B-SCALE raises caps materially.
+
+**What's next (loop).** Per-iteration: the two `--check-only` ripeness
+readouts (b_edge2b ~Jun 20 FIRST, then bump its min_span_days after the
+run; b_g014 ~Jun 26). B-EDGE2f at ≥30d paper books (~Jul 8). Idle queue:
+B-SCALE doc once G2 evidence is real.
