@@ -3432,3 +3432,69 @@ real paper-box data exists.
 readouts (b_edge2b ripens ~Jun 20 — FIRST; b_g014 ~Jun 26). B-EDGE2f at
 ≥30d paper books (~Jul 8). Idle queue: B-SCALE doc once G2 evidence is
 real; REVIEW M5 (basis spot scaling) remains the last unpicked finding.
+
+## Iteration 66 — 2026-06-12 — B-M5: the basis spot feed was silently dead; now correct, banded, and tested
+
+**Ripeness checks** (per-iteration readout): b_g014 NOT RIPE (1m span 3.7d
+< 14d, ETA ~Jun 26); b_edge2b NOT RIPE (15m span 52.1d < 60d, breadth coins
+binding, ETA ~Jun 20). Store healthy.
+
+**Why this.** Headline items are time/evidence-blocked. REVIEW M5 (basis
+spot scaling) was the last unpicked review finding — twice deliberately
+skipped as lowest-priority, but the Iter-46 live-fire note ("spot: []  —
+real-world API behavior") said the feed wasn't fragile, it was DEAD, and
+nobody had asked why. Grounding the question in the real API found two
+compounding bugs plus a latent measurement-integrity hole, exactly the
+class this loop exists to close.
+
+**Root cause (empirical, from the live payload).** (1) `enrich_view`'s
+inline parser did `zip(meta.universe, ctxs)` — but the arrays are NOT
+aligned: live API today returns 305 universe rows vs 590 ctxs (delisted
+pairs leave holes; first misalignment at index 71), so UBTC/USDC's "mid"
+was actually some other pair's price (0.000068). (2) It then scaled by
+`10**(base_weiDecimals - 8)` — but midPx is already USDC-quoted (@142 mid
+63668.5 vs perp 63682.5, a true −2bps basis); the scaling mangled correct
+prices ×100. (3) The only thing standing between that garbage and the
+paper book was the sanity band — documented as ±5% in the comment, coded
+as ±50% (`0.5 < ratio < 1.5`). Today the garbage misses even ±50%, so the
+feed degrades to empty and basis_v1 has held since birth. But the failure
+mode was live: any payload drift landing a mis-parsed mid within ±50% of
+perp ⇒ phantom basis up to 50% on an agent that enters at 0.2% ⇒ max-size
+junk entries written into the paper book the track record publishes.
+
+**Changed.** `runtime.normalize_spot_mids` (pure): ctxs joined by their
+`coin` field == universe row `name` (immune to array misalignment), midPx
+used unscaled, adopted only within ±5% of the perp mid (band is the
+documented one, now enforced; parameterized), wrapped-over-plain
+preference kept, every malformed shape (payload/meta/tokens/universe/
+ctx/midPx) degrades to {} — spot is an enrichment, never tick-fatal.
+`enrich_view` keeps only the fetch + call. Constant `SPOT_SANITY_BAND`;
+coin list single-sourced from `agents.basis.BASIS_COINS`.
+
+**Evidence.** 430 → **435 tests pass** (5 new in test_tick_harness.py: the
+misaligned-universe fixture modeled on the live payload — join-by-name +
+unscaled midPx pinned in one assert that both old bugs fail; 5% band
+rejects/adopts + no-perp-anchor never adopts + band=0 disables; wrapped
+beats plain in both orderings; malformed-payload parametrization incl.
+per-row garbage skipped not fatal; enrich_view wiring end-to-end through a
+fake client). `ruff check src tests scripts` clean. Live-fired twice:
+direct call adopts {BTC, ETH, SOL} at +3.8/+5.4/+5.8bps basis (perp vs
+spot — realistic for an arbitraged market); a full paper `femr_tick` on a
+scratch DB shows `spot: ['BTC', 'ETH', 'SOL']` (was `spot: []` in the
+Iter-46 live-fire) and `basis_v1 hold :: no basis>20bps; current(bps):
+{BTC 9.0, ETH 11.3, SOL 12.3}`.
+
+**Found.** (a) basis_v1 now forward-tests for real on the deployed paper
+box — first time ever; it enters only at >20bps divergence (live basis
+runs 4–12bps, so entries should be rare events: dislocations). Its paper
+card is per-agent-isolated, caps $25/trade $50 total, no promotion path —
+REVIEW's "tiny edge, well-arbitraged" verdict stands until a paper card
+says otherwise. (b) Meta-lesson recorded in REVIEW M5's fixed-note: a
+"fragile" data path that yields empty-forever is a dead feed, and a dead
+feed with a 10×-too-loose sanity band is a loaded gun. (c) REVIEW.md is
+now fully swept — every finding fixed or explicitly dispositioned.
+
+**What's next (loop).** Per-iteration: the two `--check-only` ripeness
+readouts (b_edge2b ~Jun 20 FIRST, then bump its min_span_days after the
+run; b_g014 ~Jun 26). B-EDGE2f at ≥30d paper books (~Jul 8). Idle queue:
+B-SCALE doc once G2 evidence is real.

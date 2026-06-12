@@ -124,7 +124,16 @@ tolerate a 5-min loop.
 - **M5 — basis spot scaling is fragile.** The `spotMetaAndAssetCtxs` price
   normalization (wei-decimals, "U"-prefixed wrapped tokens, 5% sanity band) is
   brittle and easy to get silently wrong; basis on BTC/ETH/SOL is also tiny and
-  well-arbitraged, so net-of-taker edge is unlikely.
+  well-arbitraged, so net-of-taker edge is unlikely. *(Fixed, Iter 66: it WAS
+  silently wrong, twice — the parser zipped `universe` with the ctx array
+  positionally (live API: 305 universe rows vs 590 ctxs — delisted pairs leave
+  holes, so UBTC/USDC read another pair's price) and then wei-scaled a midPx
+  that is already USDC-quoted; only the sanity band — coded at ±50%, not the
+  documented ±5% — kept the garbage out of the book, by emptying the feed
+  entirely. Now `runtime.normalize_spot_mids`: by-name ctx join, unscaled
+  midPx, real ±5% band, malformed payloads degrade to `{}`; pinned by tests.
+  The strategy verdict stands — live basis on majors runs +4–12bps, below the
+  20bps entry, so basis_v1 remains a quiet paper-only agent.)*
 - **M6 — Hardcoded trader address** (`0x5C3a…`) in `exec/orders.py` and
   `scripts/daily_scorecard.py`. Fine for one deployment; move to config.
 

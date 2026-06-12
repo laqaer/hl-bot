@@ -40,6 +40,7 @@ from hl_bot.agents.runtime import (
     enrich_view,
     fetch_account_state,
     load_agent_overrides,
+    normalize_spot_mids,
     overlay_ws_snapshot,
     positions_from_clearinghouse,
     reconcile_agents,
@@ -487,6 +488,117 @@ def test_enrich_view_fetches_15m_closes_only_when_asked(monkeypatch):
     enrich_view(view2, "http://fake", {"TST": 1e9}, vwap_window=60)
     assert all(r["interval"] == "1m" for r in _FakeHlClient.requests)
     assert view2.extra["closes_15m"] == {}
+
+
+# ---------------------------------------------------------------------------
+# normalize_spot_mids — spot price normalization for the basis feed (REVIEW M5)
+# ---------------------------------------------------------------------------
+
+
+def _spot_payload():
+    """Realistic spotMetaAndAssetCtxs shape, modeled on the live 2026-06-12
+    payload: the universe array has holes (delisted pairs) while ctxs is dense,
+    so positional zip pairs @3 with @2's ctx — the bug that fed garbage mids
+    to the old inline parser. weiDecimals deliberately differ from USDC's 8 to
+    pin that midPx is used unscaled (the old 10**(wei-8) scaling would have
+    turned 63668.5 into 6,366,850)."""
+    tokens = [
+        {"index": 0, "name": "USDC", "weiDecimals": 8},
+        {"index": 197, "name": "UBTC", "weiDecimals": 10},
+        {"index": 254, "name": "USOL", "weiDecimals": 8},
+        {"index": 300, "name": "ETH", "weiDecimals": 9},
+        {"index": 301, "name": "UNI", "weiDecimals": 9},
+    ]
+    universe = [
+        {"name": "@1", "tokens": [197, 0], "index": 1},   # UBTC/USDC
+        {"name": "@3", "tokens": [254, 0], "index": 3},   # USOL/USDC (hole at @2)
+        {"name": "@4", "tokens": [300, 0], "index": 4},   # plain-named ETH/USDC
+        {"name": "@5", "tokens": [301, 0], "index": 5},   # UNI/USDC: not a basis coin
+        {"name": "@6", "tokens": [254, 300], "index": 6},  # USOL/ETH: quote not USDC
+    ]
+    ctxs = [
+        {"coin": "@0", "midPx": "1.0"},
+        {"coin": "@1", "midPx": "63668.5"},
+        {"coin": "@2", "midPx": "0.000068"},  # what positional zip reads for @3
+        {"coin": "@3", "midPx": "66.778"},
+        {"coin": "@4", "midPx": "1674.35"},
+        {"coin": "@5", "midPx": "7.1"},
+        {"coin": "@6", "midPx": "0.0399"},
+    ]
+    return [{"universe": universe, "tokens": tokens}, ctxs]
+
+
+_PERP_MIDS = {"BTC": 63682.5, "SOL": 66.8025, "ETH": 1674.45, "UNI": 7.1}
+
+
+def test_normalize_spot_mids_joins_by_coin_name_unscaled():
+    got = normalize_spot_mids(_spot_payload(), _PERP_MIDS)
+    # SOL would be 0.000068 under positional zip; 63668.5 would be ×100 under
+    # the old weiDecimals scaling. Both bugs are pinned dead here.
+    assert got == {"BTC": 63668.5, "SOL": 66.778, "ETH": 1674.35}
+
+
+def test_normalize_spot_mids_enforces_5pct_band():
+    # >5% from perp -> rejected (mis-parse, stale book, or no perp anchor);
+    # the basis agent enters at 0.2%, so a loose band = phantom max-size entries.
+    far = dict(_PERP_MIDS, BTC=60000.0)        # spot 63668.5 is +6.1% -> drop
+    assert "BTC" not in normalize_spot_mids(_spot_payload(), far)
+    near = dict(_PERP_MIDS, BTC=63000.0)       # +1.1% -> adopt
+    assert normalize_spot_mids(_spot_payload(), near)["BTC"] == 63668.5
+    # a coin with no perp mid can't be sanity-checked -> never adopted
+    assert "SOL" not in normalize_spot_mids(
+        _spot_payload(), {k: v for k, v in _PERP_MIDS.items() if k != "SOL"})
+    # band is a parameter (0 disables adoption entirely)
+    assert normalize_spot_mids(_spot_payload(), _PERP_MIDS, band=0.0) == {}
+
+
+def test_normalize_spot_mids_prefers_wrapped_over_plain():
+    payload = _spot_payload()
+    meta, ctxs = payload
+    meta["tokens"].append({"index": 400, "name": "BTC", "weiDecimals": 8})
+    plain = {"name": "@9", "tokens": [400, 0], "index": 9}
+    ctxs.append({"coin": "@9", "midPx": "63600.0"})
+    for pos in (0, len(meta["universe"])):  # plain listed before AND after UBTC
+        u = list(_spot_payload()[0]["universe"])
+        u.insert(pos, plain)
+        got = normalize_spot_mids([dict(meta, universe=u), ctxs], _PERP_MIDS)
+        assert got["BTC"] == 63668.5, "wrapped UBTC wins regardless of order"
+
+
+def test_normalize_spot_mids_degrades_on_malformed_input():
+    for bad in ({}, [], [{}], "x", None, [None, None], [{"universe": "x", "tokens": 3}, []]):
+        assert normalize_spot_mids(bad, _PERP_MIDS) == {}
+    # per-row garbage is skipped, not fatal: bad midPx, missing ctx, short pair
+    meta, ctxs = _spot_payload()
+    ctxs[1]["midPx"] = "garbage"          # UBTC mid unparseable
+    ctxs[3]["midPx"] = None               # USOL mid missing
+    meta["universe"].append({"name": "@7", "tokens": [300]})  # one-token pair
+    meta["universe"].append({"name": "@8", "tokens": [300, 0]})  # no ctx row
+    assert normalize_spot_mids([meta, ctxs], _PERP_MIDS) == {"ETH": 1674.35}
+
+
+class _FakeHlClientSpot(_FakeHlClient):
+    """Adds a canned spotMetaAndAssetCtxs payload to the candle fake."""
+
+    spot_payload: list = []
+
+    def post(self, url, json=None):
+        if (json or {}).get("type") == "spotMetaAndAssetCtxs":
+            return _Resp(_FakeHlClientSpot.spot_payload)
+        return super().post(url, json=json)
+
+
+def test_enrich_view_populates_spot_mids(monkeypatch):
+    import httpx
+
+    _FakeHlClient.candles = [{"t": i * 60_000, "c": 100.0, "v": 1.0} for i in range(60)]
+    _FakeHlClient.requests = []
+    _FakeHlClientSpot.spot_payload = _spot_payload()
+    monkeypatch.setattr(httpx, "Client", _FakeHlClientSpot)
+
+    view = MarketView(ts_ms=0, mids=dict(_PERP_MIDS, TST=100.0))
+    enrich_view(view, "http://fake", {"TST": 1e9}, vwap_window=60)
+    assert view.extra["spot_mids"] == {"BTC": 63668.5, "SOL": 66.778, "ETH": 1674.35}
 
 
 # ---------------------------------------------------------------------------

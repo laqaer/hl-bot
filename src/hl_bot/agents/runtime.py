@@ -26,11 +26,13 @@ from pathlib import Path
 import httpx
 
 from ..agents.base import Agent, MarketView
+from ..agents.basis import BASIS_COINS
 from ..agents.decisions import Decision, log_decision
 
 log = logging.getLogger(__name__)
 
 DEFAULT_VWAP_WINDOW = 60  # 1m bars -> 1h rolling VWAP/sigma (historical live config)
+SPOT_SANITY_BAND = 0.05  # adopt a spot mid only within ±5% of the perp mid
 
 
 def resolve_vwap_window(
@@ -241,6 +243,71 @@ def fetch_market_view(base_url: str, coins: list[str]) -> MarketView:
     )
 
 
+def normalize_spot_mids(payload: object, perp_mids: dict[str, float],
+                        band: float = SPOT_SANITY_BAND) -> dict[str, float]:
+    """Extract BTC/ETH/SOL spot mids from a raw ``spotMetaAndAssetCtxs`` payload.
+
+    REVIEW M5 hardening. The previous inline version had two silent-wrongness
+    bugs, both pinned by tests here:
+
+    * It zipped ``meta.universe`` with the ctx array positionally, but the two
+      are NOT aligned (live API 2026-06-12: 305 universe rows vs 590 ctxs —
+      delisted pairs leave holes), so UBTC/USDC was read off another pair's
+      ctx. Ctxs join on their ``coin`` field == the universe row's ``name``.
+    * It scaled midPx by ``10**(base_weiDecimals - quote_weiDecimals)``, but
+      midPx is already quoted in USDC per token (live: @142 midPx 63668.5 vs
+      perp 63682.5, a −2bps basis), so the scaling mangled a correct price.
+      No scaling is applied.
+
+    A candidate is adopted only within ``band`` of the perp mid — the sanity
+    bound the old code documented as 5% but enforced at ±50% (the basis agent
+    enters at 0.2% divergence, so a mis-parsed mid inside a loose band becomes
+    max-size phantom entries). Wrapped (U-prefixed) pairs are preferred over
+    plain-named ones; malformed payloads degrade to ``{}`` (spot is an
+    enrichment, never tick-fatal).
+    """
+    out: dict[str, float] = {}
+    if not (isinstance(payload, list) and len(payload) == 2):
+        return out
+    meta = payload[0] if isinstance(payload[0], dict) else {}
+    ctxs = payload[1] if isinstance(payload[1], list) else []
+    tokens = meta.get("tokens")
+    universe = meta.get("universe")
+    tokens = tokens if isinstance(tokens, list) else []
+    universe = universe if isinstance(universe, list) else []
+    name_by_token = {t.get("index"): t.get("name") for t in tokens if isinstance(t, dict)}
+    ctx_by_pair = {c.get("coin"): c for c in ctxs if isinstance(c, dict)}
+    for u in universe:
+        if not isinstance(u, dict):
+            continue
+        pair_tokens = u.get("tokens")
+        if not isinstance(pair_tokens, list) or len(pair_tokens) < 2:
+            continue
+        base_name = name_by_token.get(pair_tokens[0])
+        if name_by_token.get(pair_tokens[1]) != "USDC":
+            continue
+        wrapped = (isinstance(base_name, str) and base_name.startswith("U")
+                   and base_name[1:] in BASIS_COINS)
+        coin = base_name[1:] if wrapped else base_name
+        if coin not in BASIS_COINS:
+            continue
+        ctx = ctx_by_pair.get(u.get("name"))
+        if not isinstance(ctx, dict):
+            continue
+        try:
+            mid = float(ctx.get("midPx") or 0)
+        except (TypeError, ValueError):
+            continue
+        perp_mid = perp_mids.get(coin)
+        if mid <= 0 or not perp_mid or perp_mid <= 0:
+            continue
+        if not (1 - band) < mid / perp_mid < (1 + band):
+            continue
+        if wrapped or coin not in out:
+            out[coin] = mid
+    return out
+
+
 def enrich_view(view: MarketView, api_url: str, vol: dict[str, float],
                 vwap_window: int = DEFAULT_VWAP_WINDOW,
                 closes_15m_bars: int = 0) -> None:
@@ -309,56 +376,12 @@ def enrich_view(view: MarketView, api_url: str, vol: dict[str, float],
                 except Exception:  # noqa: BLE001
                     continue
 
-        # Spot mids for BTC/ETH/SOL. HL spot pairs use wrapped tokens
-        # (UBTC/USDC=@142, UETH/USDC=@151, USOL/USDC=@156) and the midPx is
-        # quoted in scaled native units. We use allMids @N indices and scale
-        # against the perp mid to detect basis: skip pair if it would produce
-        # a clearly nonsensical (>5%) basis (means we don't have a clean spot).
+        # Spot mids for BTC/ETH/SOL (basis agent input). All parsing, the
+        # by-name ctx join, and the ±5%-of-perp sanity band live in
+        # normalize_spot_mids (REVIEW M5); a fetch failure degrades to {}.
         try:
             spot = cli.post(api_url + "/info", json={"type": "spotMetaAndAssetCtxs"}).json()
-            if isinstance(spot, list) and len(spot) == 2:
-                meta = spot[0] or {}
-                ctxs = spot[1] or []
-                universe = meta.get("universe", []) or []
-                tokens = meta.get("tokens", []) or []
-                name_by_token = {t.get("index"): t.get("name") for t in tokens}
-                # token szDecimals required to normalize price
-                wei_by_token = {t.get("index"): int(t.get("weiDecimals", 0) or 0) for t in tokens}
-                for u, c in zip(universe, ctxs, strict=False):
-                    pair_tokens = u.get("tokens", [])
-                    if len(pair_tokens) < 2:
-                        continue
-                    base_idx = pair_tokens[0]
-                    base_name = name_by_token.get(base_idx)
-                    quote_name = name_by_token.get(pair_tokens[1])
-                    if quote_name != "USDC":
-                        continue
-                    norm = None
-                    if base_name in ("UBTC", "UETH", "USOL"):
-                        norm = base_name[1:]   # strip leading 'U'
-                    elif base_name in ("BTC", "ETH", "SOL"):
-                        norm = base_name
-                    if norm not in ("BTC", "ETH", "SOL"):
-                        continue
-                    try:
-                        raw_mid = float(c.get("midPx") or 0)
-                    except (TypeError, ValueError):
-                        raw_mid = 0
-                    if raw_mid <= 0:
-                        continue
-                    # USDC weiDecimals=8 (standard). base wei from token meta.
-                    base_wei = wei_by_token.get(base_idx, 8)
-                    quote_wei = 8  # USDC
-                    scaled_mid = raw_mid * (10 ** (base_wei - quote_wei))
-                    # only adopt if scaled_mid is within 5% of perp mid (sanity)
-                    perp_mid = view.mids.get(norm)
-                    if (
-                        perp_mid and scaled_mid > 0
-                        and 0.5 < scaled_mid / perp_mid < 1.5
-                        and ((base_name or "").startswith("U") or norm not in spot_mids)
-                    ):
-                        # Prefer wrapped (U-prefixed) over plain if both present.
-                        spot_mids[norm] = scaled_mid
+            spot_mids = normalize_spot_mids(spot, view.mids)
         except Exception:  # noqa: BLE001
             pass
 

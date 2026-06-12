@@ -283,6 +283,19 @@ Keep it ruthlessly prioritized: the top item should always be the highest-levera
   signal the G1–G3 evidence accumulation had no detector for). Live-fired
   both directions on a real paper tick.
 
+- [x] **B-M5 — Spot-mid normalization fixed + tested (REVIEW M5, the last
+  unpicked finding).** Done (Iter 66): the basis feed was silently dead, not
+  merely fragile — the inline parser zipped `universe` with the ctx array
+  positionally (live API: 305 vs 590 rows, misaligned past index ~71) AND
+  wei-scaled a midPx that is already USDC-quoted; the sanity band (coded ±50%
+  vs documented ±5%) rejected the garbage, so `spot: []` forever and basis_v1
+  could never trade — but a payload drift landing mis-parsed mids inside ±50%
+  would have meant max-size phantom paper entries (enter bar is 0.2%). Now
+  `runtime.normalize_spot_mids` (pure, 5 tests): by-name ctx join, unscaled
+  midPx, real ±5% band, degrade-to-{} on malformed payloads. Live-fired:
+  spot mids adopted for BTC/ETH/SOL at +4–12bps basis; paper tick shows
+  basis_v1 holding honestly below its 20bps entry. REVIEW is now fully swept.
+
 - [x] **B10 — WebSocket market view.** Done: `ingest/ws.py` MarketState +
   `hlbot ws` service writes a snapshot; live tick overlays it (HLBOT_WS_SNAPSHOT)
   for sub-second mids, L2 book_top, and a real liquidations feed (fixes C6), with
