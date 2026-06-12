@@ -39,6 +39,20 @@ def _signal_size_mult(z_abs: float, enter: float, floor: float) -> float:
     return max(floor, min(1.0, floor + (1.0 - floor) * t))
 
 
+def funding_allows_fade(z: float, rate: float | None, max_adverse_hourly: float) -> bool:
+    """True unless holding the fade would pay funding above the threshold.
+
+    A fade is short when z > 0, long when z < 0. Longs pay when the (hourly)
+    rate is positive, shorts when it is negative — so the adverse rate is
+    ``rate`` for a long and ``-rate`` for a short. An unknown rate never blocks
+    (live coverage of activeAssetCtx is partial).
+    """
+    if rate is None:
+        return True
+    adverse = -rate if z > 0 else rate
+    return adverse <= max_adverse_hourly
+
+
 @dataclass
 class TwapMrConfig:
     sigma_enter: float = 2.0
@@ -66,6 +80,12 @@ class TwapMrConfig:
     # less capital). Capped by max_notional_per_trade as before.
     size_by_signal: bool = False
     size_floor: float = 0.5
+    # funding_filter: skip fades that adverse funding would tax while held
+    # (short pays when rate < 0, long pays when rate > 0). Threshold is the
+    # HOURLY rate (view.funding units live AND in backtest); 5e-5 = 0.5 bp/hr,
+    # ~4× HL's neutral 1.25e-5. Missing rate never blocks.
+    funding_filter: bool = False
+    funding_max_adverse_hourly: float = 5e-5
 
 
 class TwapMrAgent(Agent):
@@ -95,6 +115,8 @@ class TwapMrAgent(Agent):
             regime_min_consistency=float(c.get("regime_min_consistency", 0.65)),
             size_by_signal=bool(c.get("size_by_signal", False)),
             size_floor=float(c.get("size_floor", 0.5)),
+            funding_filter=bool(c.get("funding_filter", False)),
+            funding_max_adverse_hourly=float(c.get("funding_max_adverse_hourly", 5e-5)),
         )
         self.conn = conn
 
@@ -222,6 +244,16 @@ class TwapMrAgent(Agent):
                     min_move_pct=self.cfg.regime_min_move_pct,
                     min_consistency=self.cfg.regime_min_consistency,
                 )[0]
+            ]
+
+        # Lever: skip fades that adverse funding would tax while held.
+        if self.cfg.funding_filter:
+            candidates = [
+                cand for cand in candidates
+                if funding_allows_fade(
+                    cand[1], view.funding.get(cand[0]),
+                    self.cfg.funding_max_adverse_hourly,
+                )
             ]
 
         for placed, (coin, z, mid, vwap, sigma) in enumerate(candidates):

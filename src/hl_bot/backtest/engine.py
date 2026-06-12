@@ -50,6 +50,7 @@ class Frame:
     ts_ms: int
     mids: dict[str, float]
     funding: dict[str, float] = field(default_factory=dict)          # per-bar rate
+    funding_hourly: dict[str, float] = field(default_factory=dict)   # raw hourly rate
     day_ntl_vlm: dict[str, float] = field(default_factory=dict)
     open_interest: dict[str, float] = field(default_factory=dict)
     candles_1h: dict[str, dict] = field(default_factory=dict)        # coin -> {vwap, sigma}
@@ -194,10 +195,14 @@ class Backtester:
             }
             for coin, pos in self._book.items()
         ]
+        # Live MarketView.funding is the HOURLY rate (activeAssetCtx semantics);
+        # frame.funding is per-bar-scaled for accrual, so agents must see the
+        # hourly series or any rate threshold means 60× less at 1m than live.
+        # Legacy frames (pre-funding_hourly caches) fall back to per-bar.
         return MarketView(
             ts_ms=frame.ts_ms,
             mids=dict(frame.mids),
-            funding=dict(frame.funding),
+            funding=dict(frame.funding_hourly or frame.funding),
             open_interest=dict(frame.open_interest),
             extra={
                 "day_ntl_vlm": dict(frame.day_ntl_vlm),

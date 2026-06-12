@@ -261,6 +261,7 @@ def build_frames(
         candles_1h: dict[str, dict] = {}
         closes_window: dict[str, list[float]] = {}
         funding: dict[str, float] = {}
+        funding_hourly: dict[str, float] = {}
         for coin, idx in by_ts.items():
             k = idx.get(ts)
             if not k:
@@ -294,9 +295,10 @@ def build_frames(
                 fi += 1
             fund_cursor[coin] = fi
             funding[coin] = fund_last[coin] * bar_hours
+            funding_hourly[coin] = fund_last[coin]
         if mids:
             frames.append(Frame(
-                ts_ms=ts, mids=mids, funding=funding,
+                ts_ms=ts, mids=mids, funding=funding, funding_hourly=funding_hourly,
                 day_ntl_vlm=vol, candles_1h=candles_1h, closes=closes_window,
             ))
     return frames
@@ -349,6 +351,22 @@ def load_cached_frames(path: str | Path) -> list[Frame]:
     return [Frame(**d) for d in payload]
 
 
+def ensure_funding_hourly(frames: list[Frame], bar_hours: float) -> list[Frame]:
+    """Backfill ``funding_hourly`` on frames cached before the field existed.
+
+    ``Frame.funding`` is the per-bar rate (hourly × ``bar_hours``), so dividing
+    recovers the hourly series exactly. Without this, a legacy fine-interval
+    cache would feed agents rates 60× (1m) too small via the engine fallback,
+    and any funding-threshold lever would A/B against the wrong units.
+    """
+    if bar_hours <= 0:
+        return frames
+    for f in frames:
+        if f.funding and not f.funding_hourly:
+            f.funding_hourly = {c: r / bar_hours for c, r in f.funding.items()}
+    return frames
+
+
 def default_cache_path(
     coins: list[str], interval: str, days: int, vwap_window: int = 60
 ) -> Path:
@@ -379,7 +397,8 @@ def cached_or_fetch(
     """Return frames from cache if present, else fetch (network) and cache them."""
     p = Path(cache_path) if cache_path else default_cache_path(coins, interval, days, vwap_window)
     if p.exists() and not refresh:
-        return load_cached_frames(p)
+        bar_hours = INTERVAL_MS.get(interval, 3_600_000) / 3_600_000
+        return ensure_funding_hourly(load_cached_frames(p), bar_hours)
     frames = load_frames(coins, interval=interval, days=days,
                          base_url=base_url, vwap_window=vwap_window)
     save_frames(p, frames)

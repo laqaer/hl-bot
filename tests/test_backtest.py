@@ -405,6 +405,75 @@ def test_build_frames_sorts_unsorted_funding():
     assert by_ts[7 * HOUR] == 4e-4      # latest-by-time, not latest-in-list
 
 
+def test_build_frames_funding_hourly_is_unscaled():
+    """frame.funding is per-bar (accrual); frame.funding_hourly is the raw rate.
+
+    Agents read view.funding as an HOURLY rate (live activeAssetCtx semantics),
+    so the builder must carry both series or a rate-threshold lever would see
+    values 60× too small on 1m bars.
+    """
+    candles = [{"t": i * HOUR // 60, "c": 100.0, "v": 10.0} for i in range(8)]
+    funding = [{"time": 0, "fundingRate": 6e-4}]
+    frames = build_frames({"TST": candles}, funding_by_coin={"TST": funding},
+                          vwap_window=4, warmup=2, bar_hours=1 / 60)
+    last = frames[-1]
+    assert last.funding_hourly["TST"] == 6e-4
+    assert abs(last.funding["TST"] - 1e-5) < 1e-15      # 6e-4 / 60
+
+
+class _FundingProbe(TwapMrAgent):
+    """Records the funding rates the engine shows the agent each tick."""
+
+    def __init__(self, conn):
+        super().__init__(config={}, conn=conn)
+        self.seen: list[float] = []
+
+    def decide(self, view):
+        if "TST" in view.funding:
+            self.seen.append(view.funding["TST"])
+        return super().decide(view)
+
+
+def test_engine_view_funding_is_hourly_with_per_bar_fallback():
+    conn = init_db(":memory:")
+    f = _frame(0, 100.0)
+    f.funding = {"TST": 1e-5}                 # per-bar (1m share)
+    f.funding_hourly = {"TST": 6e-4}          # raw hourly
+    legacy = _frame(1, 100.0)
+    legacy.funding = {"TST": 2e-4}            # pre-funding_hourly cache shape
+    probe = _FundingProbe(conn)
+    Backtester(CostModel(maker=True), conn=conn).run(probe, [f, legacy])
+    assert probe.seen == [6e-4, 2e-4]
+
+
+def test_ensure_funding_hourly_backfills_legacy_caches():
+    from dataclasses import replace
+
+    from hl_bot.backtest.data import ensure_funding_hourly
+
+    legacy = _frame(0, 100.0)
+    legacy.funding = {"TST": 1e-5}                       # hourly 6e-4 at 1m bars
+    fresh = replace(legacy, funding_hourly={"TST": 6e-4})
+    out = ensure_funding_hourly([legacy, fresh], bar_hours=1 / 60)
+    assert abs(out[0].funding_hourly["TST"] - 6e-4) < 1e-15
+    assert out[1].funding_hourly == {"TST": 6e-4}        # already-correct frames untouched
+
+
+def test_cached_or_fetch_backfills_funding_hourly(tmp_path, monkeypatch):
+    """A cache written before funding_hourly existed still serves hourly rates."""
+    import hl_bot.config as config
+    from hl_bot.backtest import data
+
+    monkeypatch.setattr(config, "DATA_DIR", tmp_path)
+    legacy = _frame(0, 100.0)
+    legacy.funding = {"TST": 1e-5}
+    legacy.funding_hourly = {}
+    data.save_frames(data.default_cache_path(["TST"], "1m", 3), [legacy])
+
+    got = data.cached_or_fetch(["TST"], interval="1m", days=3)
+    assert abs(got[0].funding_hourly["TST"] - 6e-4) < 1e-15
+
+
 def test_build_frames_scales_to_fine_intervals():
     """20k 1m bars × 2 coins must build fast (was quadratic: minutes, not <2s)."""
     minute = 60_000

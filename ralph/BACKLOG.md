@@ -239,7 +239,17 @@ each on ≥90d real history (`hlbot confirm` / `hlbot backtest --config`) before
   worse on 17d — regime, not cadence; keep 0.5 (0.0 collapses the strategy,
   proving the reversion exit is the profit engine). `max_hold_hours` inert at
   1m and 5m (reversion/stop always fires first); keep 4.
-- [ ] **B-FUND — funding-aware fade suppression** (skip/trim fades funding opposes).
+- [x] **B-FUND — funding-aware fade suppression.** Done (Iter 32, numbers in
+  PROGRESS): `funding_filter` lever ships default-OFF (`funding_allows_fade`,
+  hourly-rate threshold) + a units fix it surfaced — backtest `view.funding` was
+  the per-bar-scaled rate (60× too small at 1m vs live); engine now feeds the
+  hourly series (`Frame.funding_hourly`, legacy caches backfilled). **Verdict:
+  pruned at live cadence** — at the exact live config the filter HURTS at every
+  threshold (maker +5.4→+4.4..+4.6bps; the adverse-funding fades were the
+  profitable ones — extreme funding against a fade marks the crowded positioning
+  the reversion harvests). Helps only on 5m/17d (−1.5→−0.5, clean dose-response,
+  maxDD −15.2→−10.7%) but still G0 FAIL (OOS +1.6bps); inert at 15m/1h. Same
+  window flips sign across cadence (5m/3d helps, 1m/3.5d hurts) → keep OFF.
 - [ ] **B-WIN — VWAP window study** (1h vs 2–4h vs volume-weighted σ).
 - [ ] **B-EDGE2 — hunt a second, low-correlation edge** (carry is pruned) so the
   book isn't single-strategy before raising AUM.

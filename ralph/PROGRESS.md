@@ -1380,3 +1380,64 @@ remainder (femr_tick preamble consolidation) is the standing refactor item.
 B-MAKER-LIVE unchanged, still awaits the operator — note stop 0.03 would make
 even taker entries marginally positive at live cadence, but the maker flip is
 worth ~10× more (+0.5 vs +6.1bps).
+
+## Iteration 32 — 2026-06-12 — B-FUND: funding_filter lever built, A/B'd, pruned at live cadence (+ funding units fix)
+
+**Context.** B-G014 (multi-week store G0) still blocked (~2026-06-26). Per the
+Iter-31 plan, took B-FUND: skip fades that adverse funding would tax while held
+(short pays when hourly rate < 0, long when > 0).
+
+**Units fix the lever surfaced (the durable code value of this iteration).**
+Live `view.funding` is the HOURLY rate (activeAssetCtx); the backtest engine
+was feeding agents `Frame.funding`, the per-bar-scaled accrual rate — 60× too
+small at 1m, 12× at 5m. Any rate-threshold lever would have meant a different
+thing in backtest vs live, and carry agents backtested at fine intervals would
+have read near-zero funding. Fix: `Frame.funding_hourly` (raw rate) populated
+by `build_frames`, engine `_view` now passes `funding_hourly or funding`
+(fallback keeps legacy 1h frames valid), and `ensure_funding_hourly` backfills
+pre-existing fine-interval caches on load (`cached_or_fetch`) by dividing by
+bar_hours — so the Iter-31 datasets A/B in correct units. Accrual still uses
+the per-bar series; nothing changes for 1h frames (scale factor 1.0).
+
+**Lever.** `TwapMrConfig.funding_filter` (default OFF) +
+`funding_max_adverse_hourly` (default 5e-5 = 0.5bp/hr ≈ 4× HL neutral);
+pure helper `funding_allows_fade(z, rate, thr)` — unknown rate never blocks.
+Applied to entry candidates after the regime filter; baseline path untouched.
+
+**A/B results (maker edge bps, all from the same cached real datasets as
+Iter 31; baseline reproduced exactly first: 1m +5.4/+$90.77, taker −0.0).**
+
+| sample                  | base | thr 1.25e-5 | thr 5e-5 | thr 1e-4 |
+|-------------------------|-----:|------------:|---------:|---------:|
+| 1m 3.5d w60 (live cfg)  | +5.4 |        +4.6 |     +4.4 |     +4.5 |
+| 5m 3d w12               | +5.5 |           — |     +5.8 |        — |
+| 5m 17d w12              | −1.5 |    **−0.5** |     −0.7 |     −1.5 |
+| 15m 52d w4              | −1.5 |           — |     −1.6 |        — |
+| 1h 90d (not live-like)  | −5.0 |           — |     −5.1 (inert) | — |
+
+Taker at the live config also degrades (−0.0 → −0.7..−0.9). Walk-forward
+confirm of the best arm (5m/17d, thr 1.25e-5): **G0 FAIL** — IS −1.5, OOS
++1.6bps (< +3 bar), though every cost rung beats baseline and maxDD improves
+−15.2%→−10.7%.
+
+**Verdict: pruned at live cadence; default stays OFF; no live change.**
+The filter removes ~6–13% of entries, and at 1m those skipped fades were
+PROFITABLE: extreme funding leaning against a fade marks exactly the crowded
+positioning whose unwind the reversion harvests — suppressing them trades away
+edge. The 5m/17d gain has a clean dose-response but inverts at the live
+cadence on the same calendar window (5m/3d helps +5.5→+5.8 while 1m/3.5d
+hurts +5.4→+4.4), so it does not transfer to the live strategy. Negative
+result recorded; the lever + correct units stay in the book so B-G014's
+multi-week sample can re-test it for one flag if ever warranted.
+
+**Evidence.** 172 tests pass (7 new: funding_allows_fade directionality,
+filter skips taxed-fade-only, missing-rate never blocks, builder dual funding
+series, engine hourly-view + legacy fallback, ensure_funding_hourly backfill,
+cached_or_fetch backfill integration); ruff clean. All A/B numbers from
+`data/backtest_cache/` on this box today, reproducible offline via the
+`--config` flags shown.
+
+**What's next (loop).** B-G014 still the gate (~2026-06-26, baseline +
+stop-0.03 arms). Interim: B-WIN (VWAP window study — cheap, datasets exist for
+several windows) or the B12 remainder (femr_tick preamble harness). B-MAKER-LIVE
+unchanged, still operator-gated.
