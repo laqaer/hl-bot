@@ -109,6 +109,9 @@ live — so backtest and production numbers can never silently disagree.
 - [`docs/REVIEW.md`](docs/REVIEW.md) — full code/system review and findings.
 - [`docs/ROADMAP_TO_1M.md`](docs/ROADMAP_TO_1M.md) — the numbers-first path to a
   $1M portfolio and the promotion gates.
+- [`docs/MONETIZATION.md`](docs/MONETIZATION.md) — every revenue lever: fee
+  stack (maker + staking + referral), funding carry, Season-2 airdrop posture,
+  vault AUM, builder codes.
 - [`ralph/`](ralph/) — an autonomous loop that works the prioritized
   [`ralph/BACKLOG.md`](ralph/BACKLOG.md): research → backtest → propose. Going
   live stays human-gated.
@@ -148,3 +151,7 @@ End-to-end runbook: [`docs/HOST_QUICKSTART.md`](docs/HOST_QUICKSTART.md). AWS:
 - [ ] Host: first real-history carry confirmation + paper soak → first auto-promotion (`docs/GO_LIVE.md`).
 - [ ] Maker fill telemetry-driven MakerConfig tuning (backlog E1/E2).
 - [ ] liq_cascade calibration from the accumulating liquidation log (backlog S2).
+- [x] Book-aware maker pricing (post at the touch from the WS L2 book) +
+  per-agent execution routing through one audited path (`exec/router.py`).
+- [x] Track-record chart export (`track_record.svg` + shareable `.html`).
+- [ ] LLM-reasoning agent template with auto-captured thought traces.

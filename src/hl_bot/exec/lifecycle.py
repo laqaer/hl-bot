@@ -311,11 +311,15 @@ def submit_entry(
             reasoning=f"MAKER immediate fill {d.coin}", is_paper=False,
         ))
         return f"FILLED {d.agent} {d.coin} @ {res.avg_px}"
-    # Audit the rejection: coin_in_cooldown() and order_rate_ok() count
-    # 'rejected' rows, so an unlogged reject would be retried every cycle
-    # with no cooldown and no rate-limit pressure.
+    # Audit the rejection — an unlogged reject would be retried every cycle
+    # invisibly. A post-only reject ('rejected' from HL) means the touch
+    # moved: logged as maker_reject so the agent may requote next cycle
+    # without tripping coin_in_cooldown, but it still counts in
+    # order_rate_ok so a requote storm hits the rate wall, not the exchange.
+    # Anything else (bad size/px, exception) is a hard 'rejected' -> cooldown.
+    action = "maker_reject" if res.status == "rejected" else "rejected"
     log_decision(conn, Decision(
-        agent=d.agent, action="rejected", coin=d.coin, side=d.side,
+        agent=d.agent, action=action, coin=d.coin, side=d.side,
         sz=d.sz, px=px, cloid=d.cloid,
         reasoning=f"MAKER entry rejected: {res.status}", error=res.error,
         is_paper=False,

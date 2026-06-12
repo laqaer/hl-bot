@@ -52,12 +52,12 @@ class FakeExchange:
         self.cancelled.append((coin, oid))
         return {"response": {"data": {"statuses": ["success"]}}}
 
-    def order(self, *, name, is_buy, sz, limit_px, order_type, reduce_only, cloid):
+    def order(self, *, name, is_buy, sz, limit_px, order_type, reduce_only, cloid, builder=None):
         self.limit_orders.append({"coin": name, "is_buy": is_buy, "sz": sz, "px": limit_px})
         return {"response": {"data": {"statuses": [
             {"resting": {"oid": 11, "cloid": str(cloid)}}]}}}
 
-    def market_close(self, coin, cloid=None):
+    def market_close(self, coin, cloid=None, builder=None):
         self.closed.append(coin)
         return {"response": {"data": {"statuses": [
             {"filled": {"avgPx": "100.0", "totalSz": "1.0", "oid": 12}}]}}}
@@ -195,27 +195,43 @@ def test_fills_by_cloid_aggregates(conn):
     assert out["c1"][1] == pytest.approx(99.12)
 
 
-def test_rejected_entry_is_audited_and_feeds_cooldown(conn):
-    # A post-only reject must leave a 'rejected' audit row — coin_in_cooldown()
-    # and order_rate_ok() count those, so an unlogged reject would be retried
-    # every engine cycle with no cooldown or rate-limit pressure.
+def test_rejected_entries_are_audited(conn):
+    # Rejections must leave audit rows — unlogged rejects would be retried
+    # every engine cycle invisibly. A post-only cross is a benign
+    # 'maker_reject' (rate-limited but NOT cooled down: the agent may requote);
+    # a hard failure is 'rejected' and trips the per-coin cooldown.
     from hl_bot.agents.decisions import Decision
     from hl_bot.exec.lifecycle import submit_entry
-    from hl_bot.exec.orders import coin_in_cooldown
+    from hl_bot.exec.orders import coin_in_cooldown, order_rate_ok
 
-    class RejectingExchange(FakeExchange):
+    class PostOnlyRejectExchange(FakeExchange):
         def order(self, **kw):
             return {"response": {"data": {"statuses": [
                 {"error": "Post only order would have immediately matched"}]}}}
 
+    class BrokenExchange(FakeExchange):
+        def order(self, **kw):
+            raise RuntimeError("boom")
+
     d = Decision(agent="a1", action="place", coin="BTC", side="B", sz=1.0,
-                 cloid="c-rej", is_paper=False)
-    event = submit_entry(conn, RejectingExchange(), view(), d, CFG, now_ms=NOW)
+                 cloid="0x" + "ab" * 16, is_paper=False)
+    event = submit_entry(conn, PostOnlyRejectExchange(), view(), d, CFG, now_ms=NOW)
     assert event.startswith("REJECT")
     row = conn.execute(
         "SELECT action, is_paper, error FROM agent_decisions WHERE agent='a1'"
     ).fetchone()
-    assert row["action"] == "rejected"
+    assert row["action"] == "maker_reject"
     assert row["is_paper"] == 0
     assert row["error"]
-    assert coin_in_cooldown(conn, "BTC", agent="a1", cooldown_s=3600)
+    assert not coin_in_cooldown(conn, "BTC", agent="a1", cooldown_s=3600)
+    _, why = order_rate_ok(conn, "a1", max_per_hour=1, now_ms=NOW + 1)
+    assert "a1 order rate" in why  # maker_reject counts toward the rate wall
+
+    d2 = Decision(agent="a2", action="place", coin="ETH", side="B", sz=1.0,
+                  cloid="0x" + "cd" * 16, is_paper=False)
+    event = submit_entry(conn, BrokenExchange(), view({"ETH": 100.0}), d2, CFG, now_ms=NOW)
+    assert event.startswith("REJECT")
+    row = conn.execute(
+        "SELECT action FROM agent_decisions WHERE agent='a2'").fetchone()
+    assert row["action"] == "rejected"
+    assert coin_in_cooldown(conn, "ETH", agent="a2", cooldown_s=3600)

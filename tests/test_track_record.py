@@ -63,6 +63,8 @@ def test_track_record_structure_and_numbers(conn):
 
 def test_export_writes_files(conn, tmp_path):
     _fill(conn, "femr_v1", int(time.time() * 1000), pnl=1.0)
-    jp, mp = export(conn, tmp_path / "tr")
-    assert jp.exists() and mp.exists()
+    jp, mp, sp, hp = export(conn, tmp_path / "tr")
+    assert jp.exists() and mp.exists() and sp.exists() and hp.exists()
     assert "track record" in mp.read_text().lower()
+    assert "<svg" in sp.read_text()
+    assert "<html" in hp.read_text()

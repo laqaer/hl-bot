@@ -1,5 +1,5 @@
 """Per-agent scorecards (B6 + B7): funding attribution flows into net_pnl and
-Sharpe/maxDD are computed from the agent's synthetic equity curve."""
+Sharpe is computed from daily net PnL and drawdown is reported in dollars."""
 
 from __future__ import annotations
 
@@ -60,7 +60,8 @@ def test_per_agent_sharpe_and_drawdown_computed(conn):
 
     sc = score_agent(conn, "a1", "30d")
     assert sc.sharpe is not None and sc.sharpe > 0
-    assert sc.max_drawdown is not None and -1.0 < sc.max_drawdown <= 0
+    assert sc.max_drawdown is None  # fractional DD is account-only (C5)
+    assert sc.max_drawdown_usd is not None and sc.max_drawdown_usd <= 0
 
 
 def test_sparse_agent_has_no_sharpe(conn):

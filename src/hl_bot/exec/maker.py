@@ -30,6 +30,27 @@ log = logging.getLogger(__name__)
 DEFAULT_MAX_REST_S = 1800  # cancel a maker quote unfilled after 30 min
 
 
+def maker_price(
+    side: str,
+    book: tuple[float, float] | None,
+    fallback_px: float,
+) -> float:
+    """Price a post-only quote off the live book: join the touch.
+
+    Buys post at best bid, sells at best ask — never crosses, so the post-only
+    order can't be rejected for crossing, and the quote sits at the front of
+    the book instead of at a possibly-stale REST mid (the old behavior, which
+    either rested far from touch and never filled, or crossed and got
+    rejected). Falls back to the agent's intended price when no fresh book is
+    available (e.g. WS snapshot stale or coin not subscribed).
+    """
+    if book:
+        bid, ask = book
+        if bid > 0 and ask > 0 and bid <= ask:
+            return bid if side == "B" else ask
+    return fallback_px
+
+
 def log_rest(
     conn: sqlite3.Connection, agent: str, coin: str, side: str, sz: float,
     px: float, cloid: str, oid: int | None,

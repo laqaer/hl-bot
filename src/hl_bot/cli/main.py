@@ -88,11 +88,11 @@ def ingest(funding_days: int = 7):
     n_fills = ingest_fills(conn, s.hl_address, s.hl_api_url)
     n_fund = ingest_funding(conn, s.hl_address, s.hl_api_url, funding_days)
     snapshot_equity(conn, s.hl_address, s.hl_api_url)
-    from ..scoring.positions import refresh_attribution
-    n_pos, n_attr = refresh_attribution(conn)
+    from ..scoring.attribution import replay_positions_table
+    n_pos = replay_positions_table(conn)
     console.print(
-        f"[green]✓[/green] fills:{n_fills} funding:{n_fund} +1 equity snapshot · "
-        f"replayed {n_pos} positions, attributed {n_attr} funding rows"
+        f"[green]✓[/green] fills:{n_fills} funding:{n_fund} +1 equity snapshot "
+        f"· positions replayed:{n_pos}"
     )
 
 
@@ -229,6 +229,8 @@ def tick(coins: str = "BTC,ETH,SOL,HYPE,ZEC"):
     agents = [
         VetoAgent(config={"lookback_days": 30, "min_trades": 20, "veto_threshold_bps": -5.0}, conn=conn),
         FundingArbAgent(config={"coins": coin_list}),
+        FundingCarryAgent(config={}, conn=conn),
+        XFundCarryAgent(config={}, conn=conn),
     ]
     decisions = run_tick(conn, agents, s.hl_api_url, coin_list, force_paper=True)
     console.print(f"[green]✓[/green] {len(decisions)} decisions logged")
@@ -356,15 +358,21 @@ def run(
 
 
 @app.command()
-def femr_tick(live: bool = False, execution: str = "taker"):
-    """DEPRECATED — one-shot tick kept for manual ops; production runs
-    `hlbot run` (consolidated engine, maker execution, paper simulation).
+def femr_tick(live: bool = False, execution: str = "auto"):
+    """DEPRECATED — one-shot tick of the full agent roster, kept for manual
+    ops; production runs `hlbot run` (consolidated engine loop).
 
     paper (default): log decisions only, no orders placed.
     live: place real orders on MAIN account, gated by guardrails.
           Bot only touches positions it itself opened (cloid-tagged).
+    execution: 'auto' (default) routes each agent's entries per its own
+          execution mode — carry/funding agents post maker, momentum agents
+          cross taker; 'maker'/'taker' force one mode for every agent.
+          Exits always go taker.
     """
-    from ..agents.decisions import Decision, log_decision
+    import os as _os
+
+    from ..agents.decisions import log_decision
     from ..agents.runtime import fetch_market_view
     from ..exec.orders import (
         HL_TRADER_ADDRESS,
@@ -372,15 +380,18 @@ def femr_tick(live: bool = False, execution: str = "taker"):
         bot_owned_coins,
         build_exchange,
         check_guardrails,
-        close_position,
-        coin_in_cooldown,
         dynamic_daily_loss_limit,
-        place_market_order,
         reconcile_positions,
         telegram_alert,
     )
+    from ..exec.router import execute_decisions
+
+    if execution not in ("auto", "maker", "taker"):
+        console.print(f"[red]--execution must be auto|maker|taker, got {execution}[/red]")
+        raise typer.Exit(1)
 
     conn, s = _conn()
+    ws_path = _os.environ.get("HLBOT_WS_SNAPSHOT")
 
     # Load auto-tuner overrides if present
     overrides_path = Path(__file__).resolve().parents[3] / "configs" / "agent_overrides.json"
@@ -441,9 +452,16 @@ def femr_tick(live: bool = False, execution: str = "taker"):
         XFundCarryAgent(config=_cfg("xfund_carry_v1", {}), conn=conn),
         FundingCarryAgent(config=_cfg("funding_carry_v1", {}), conn=conn),
         TwapMrRegimeAgent(config=_cfg("twap_mr_regime_v1", {}), conn=conn),
+        BasisAgent(config=_cfg("basis_v1", {}), conn=conn),
+        # liq_cascade is entry-dead without a WS snapshot (its only real signal
+        # source — REVIEW C6) but MUST stay on the roster: its stop/max-hold
+        # exits and position reconciliation manage anything it already holds.
         LiqCascadeAgent(config=_cfg("liq_cascade_v1", {}), conn=conn),
     ]
     paper_sim_agents: list = []
+    if live and not ws_path:
+        console.print("[dim]liq_cascade_v1: no HLBOT_WS_SNAPSHOT — no liquidation "
+                      "signal, entries impossible (exits still managed)[/dim]")
     if live:
         full_roster = agents
         agents, skipped_live = _filter_live_agents_by_state(conn, agents)
@@ -509,14 +527,22 @@ def femr_tick(live: bool = False, execution: str = "taker"):
                       for n, v in allocs.items()
                   ))
 
+    # Entry execution per agent: 'auto' asks each agent (config override or
+    # class default — carry agents post maker, momentum crosses taker);
+    # an explicit --execution maker/taker forces every agent.
+    exec_modes = {
+        a.name: (a.execution_mode() if execution == "auto" else execution)
+        for a in agents
+    }
+    console.print("[bold]execution[/bold]: " +
+                  ", ".join(f"{n}={m}" for n, m in exec_modes.items()))
+
     view = fetch_market_view(s.hl_api_url, [])
     _enrich_view(view, s.hl_api_url, view.extra.get("day_ntl_vlm", {}))
 
     # Overlay a fresh WS snapshot if available (sub-second mids, L2 book, and a
     # REAL liquidations feed for liq_cascade). Purely additive; REST is the
     # fallback when no fresh snapshot exists. Opt-in via HLBOT_WS_SNAPSHOT.
-    import os as _os
-    ws_path = _os.environ.get("HLBOT_WS_SNAPSHOT")
     if ws_path:
         from ..ingest.ws import load_fresh_snapshot
         snap = load_fresh_snapshot(ws_path, max_age_s=30.0)
@@ -650,20 +676,18 @@ def femr_tick(live: bool = False, execution: str = "taker"):
         console.print(f"[green]guardrails[/green]: {why}")
 
     # Maker execution prep: refresh fills, promote filled resting orders to owned,
-    # cancel stale quotes. Entries below then rest post-only instead of crossing.
-    if execution == "maker":
-        from ..exec.maker import (
-            log_cancel,
-            log_rest,
-            reconcile_maker_fills,
-            stale_working,
-            working_orders,
-        )
-        from ..exec.orders import cancel_order, place_limit_order
+    # cancel stale quotes. Runs when any agent quotes maker this tick OR any
+    # agent still has a working quote from a previous tick — flipping an agent
+    # (or the whole tick) to taker must never orphan a live resting order.
+    from ..exec.maker import working_orders
+    working_by_agent = {a.name: working_orders(conn, a.name) for a in agents}
+    if any(m == "maker" for m in exec_modes.values()) or any(working_by_agent.values()):
+        from ..exec.maker import log_cancel, reconcile_maker_fills, stale_working
+        from ..exec.orders import cancel_order
         from ..ingest.hyperliquid import ingest_fills
         ingest_fills(conn, s.hl_address, s.hl_api_url)  # so cloid fills are visible
         for a in agents:
-            working = working_orders(conn, a.name)
+            working = working_by_agent[a.name]
             got = reconcile_maker_fills(conn, a.name, working)
             for o in stale_working(working):
                 if o["coin"] in got or o.get("oid") is None:
@@ -674,76 +698,26 @@ def femr_tick(live: bool = False, execution: str = "taker"):
                 console.print(f"[green]maker fills[/green] {a.name}: {got}")
         conn.commit()
 
-    # Execute
-    agent_names = {a.name for a in agents}
-    for d in all_decisions:
-        if d.agent not in agent_names or d.coin is None:
-            continue
-
-        if d.action == "place" and d.sz and d.side:
-            # Re-checked per order (not just at tick start) so a kill tripped
-            # mid-cycle still stops the remaining placements.
-            kill_reason = kill_active(s.db_path.parent)
-            if kill_reason:
-                console.print(f"[red]SKIP {d.agent} {d.coin}: KILL active — {kill_reason}[/red]")
-                continue
-            if not ok:
-                console.print(f"[dim]SKIP {d.agent} {d.coin}: guardrail blocks new entries[/dim]")
-                continue
-            if coin_in_cooldown(conn, d.coin, agent=d.agent):
-                console.print(f"[dim]SKIP {d.agent} {d.coin}: in cooldown[/dim]")
-                continue
-            is_buy = (d.side == "B")
-            if execution == "maker":
-                # Already have a working quote on this coin? leave it.
-                if d.coin in working_orders(conn, d.agent):
-                    console.print(f"[dim]SKIP {d.agent} {d.coin}: maker quote already resting[/dim]")
-                    continue
-                res = place_limit_order(exchange, d.coin, is_buy, d.sz, d.px or 0,
-                                        post_only=True, cloid=d.cloid)
-                if res.status == "resting":
-                    console.print(f"[cyan]RESTING[/cyan] {d.coin} {'BUY' if is_buy else 'SELL'} {d.sz} @ ${d.px} oid={res.oid}")
-                    log_rest(conn, d.agent, d.coin, d.side, d.sz, d.px or 0, d.cloid, res.oid)
-                elif res.ok:  # filled immediately (rare for post-only)
-                    console.print(f"[bold green]FILLED(maker)[/bold green] {d.coin} @ ${res.avg_px}")
-                    if res.avg_px:
-                        d.px = res.avg_px
-                    log_decision(conn, d)
-                else:
-                    console.print(f"[red]MAKER REJECT[/red] {d.coin}: {res.status} — {res.error}")
-                conn.commit()
-                continue
-            res = place_market_order(exchange, d.coin, is_buy, d.sz,
-                                     slippage_pct=0.01, cloid=d.cloid)
-            if res.ok:
-                console.print(f"[bold green]FILLED[/bold green] {d.coin} {'BUY' if is_buy else 'SELL'} {res.filled_sz} @ ${res.avg_px}")
-                # Log place ONLY after fill confirmed, with the REAL fill px/sz
-                # (not the pre-trade mid) so downstream stops/TPs key off truth.
-                if res.avg_px:
-                    d.px = res.avg_px
-                if res.filled_sz:
-                    d.sz = res.filled_sz
-                log_decision(conn, d)
-            else:
-                console.print(f"[red]REJECT[/red] {d.coin}: {res.status} — {res.error}")
-                log_decision(conn, Decision(
-                    agent=d.agent, action="rejected", coin=d.coin,
-                    reasoning=f"HL rejected: {res.error}", is_paper=False,
-                ))
-                conn.commit()
-
-        elif d.action == "flatten":
-            res = close_position(exchange, d.coin, cloid=d.cloid)
-            if res.ok:
-                console.print(f"[bold]CLOSED[/bold] {d.coin} @ ${res.avg_px}")
-                # Log the flatten immediately so ownership clears this tick rather
-                # than waiting for next-tick reconciliation. Record the real exit px.
-                if res.avg_px:
-                    d.px = res.avg_px
-                log_decision(conn, d)
-                conn.commit()
-            else:
-                console.print(f"[red]CLOSE FAILED[/red] {d.coin}: {res.error}")
+    # Execute through the single audited router (exec/router.py): per-agent
+    # maker/taker entries (maker quotes priced off the live book), taker exits,
+    # guardrail/cooldown gates, fill-confirmed decision logging.
+    outcomes = execute_decisions(
+        conn, exchange, all_decisions,
+        exec_modes=exec_modes, entries_allowed=ok, book_top=view.book_top,
+    )
+    for oc in outcomes:
+        if oc.status == "filled":
+            console.print(f"[bold green]FILLED[/bold green] {oc.agent} {oc.coin} {oc.sz} @ ${oc.px} [{oc.mode}]")
+        elif oc.status == "resting":
+            console.print(f"[cyan]RESTING[/cyan] {oc.agent} {oc.coin} {oc.sz} @ ${oc.px} {oc.detail}")
+        elif oc.status == "closed":
+            console.print(f"[bold]CLOSED[/bold] {oc.agent} {oc.coin} @ ${oc.px}")
+        elif oc.status == "rejected":
+            console.print(f"[red]REJECT[/red] {oc.agent} {oc.coin}: {oc.detail}")
+        elif oc.status == "close_failed":
+            console.print(f"[red]CLOSE FAILED[/red] {oc.agent} {oc.coin}: {oc.detail}")
+        else:
+            console.print(f"[dim]SKIP {oc.agent} {oc.coin}: {oc.detail}[/dim]")
 
 
 @app.command()
@@ -839,8 +813,8 @@ def backtest(
                         starting_capital=starting_capital)
         res = bt.run(factories[agent](conn), frames)
         # recompute curve stats at the right cadence
-        from ..backtest.engine import _curve_stats
-        sh, dd, _ = _curve_stats(res.equity_curve, periods_per_year=per_year)
+        from ..scoring.curves import curve_stats
+        sh, dd, _ = curve_stats(res.equity_curve, periods_per_year=per_year)
         sc = res.scorecard
         table.add_row(
             "maker" if is_maker else "taker",
@@ -1036,9 +1010,9 @@ def track_record(out: Path = Path("data/track_record")):
     from ..reports.track_record import export
 
     conn, _ = _conn()
-    jp, mp = export(conn, out)
+    jp, mp, sp, hp = export(conn, out)
     console.print(mp.read_text())
-    console.print(f"[green]✓[/green] wrote {jp} and {mp}")
+    console.print(f"[green]✓[/green] wrote {jp}, {mp}, {sp}, {hp}")
 
 
 @app.command()

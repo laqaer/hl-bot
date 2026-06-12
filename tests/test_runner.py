@@ -36,12 +36,12 @@ class FakeExchange:
         self.limit_orders: list[str] = []
         self.closed: list[str] = []
 
-    def market_open(self, *, name, is_buy, sz, slippage, cloid):
+    def market_open(self, *, name, is_buy, sz, slippage, cloid, builder=None):
         self.market_opens.append(name)
         return {"response": {"data": {"statuses": [
             {"filled": {"avgPx": "100.0", "totalSz": str(sz), "oid": 5}}]}}}
 
-    def order(self, *, name, is_buy, sz, limit_px, order_type, reduce_only, cloid):
+    def order(self, *, name, is_buy, sz, limit_px, order_type, reduce_only, cloid, builder=None):
         self.limit_orders.append(name)
         return {"response": {"data": {"statuses": [
             {"resting": {"oid": 6, "cloid": str(cloid)}}]}}}

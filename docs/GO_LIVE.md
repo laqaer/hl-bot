@@ -47,6 +47,7 @@ systemctl restart hlbot-run
 #    sizing caps (~$75 total / $25 per trade). WATCH THE FIRST FILLS:
 journalctl -u hlbot-run -f      # RESTING/FILLED/REPRICED events
 uv run hlbot ingest && uv run hlbot score
+uv run hlbot track-record    # the shareable artifact starts here
 ```
 
 ## What auto-promotion will and won't do
@@ -106,8 +107,9 @@ Live trading signs with an API wallet — **never the funded key**:
 ## Current readiness (2026-06-11, post-overhaul)
 
 Code-ready, **evidence-pending**: the engine, measurement, auto-promotion,
-safeguards and sleeve are built and tested (160 tests). The remaining blockers
-are host-side facts, not code: run step 2 above (first-ever real-history
+safeguards and sleeve are built and tested (198 tests). The remaining blockers
+are host-side facts, not code (api.hyperliquid.xyz returns 403 from CI and
+sandboxes, so a networked host is required): run step 2 above (first-ever real-history
 confirmation of the carry class), then the paper soak. If carry confirms, the
 system takes itself live and scales as gates pass; if it doesn't, the research
 pipeline is the next move and no capital goes live on an unconfirmed strategy.

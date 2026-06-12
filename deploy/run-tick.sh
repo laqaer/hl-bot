@@ -9,7 +9,7 @@ cd "${HLBOT_HOME:-/opt/hl-bot}" || exit 1
 run() { echo "[$(date -u +%H:%M:%S)] $*"; "$@" || echo "  (step failed: $*)"; }
 
 run uv run hlbot ingest
-# HLBOT_TICK_ARGS is intentionally unquoted so "" => paper, or "--live --execution maker".
+# HLBOT_TICK_ARGS is intentionally unquoted so "" => paper, or "--live" (entries route per-agent: carry posts maker, momentum crosses taker).
 # shellcheck disable=SC2086
 run uv run hlbot femr_tick ${HLBOT_TICK_ARGS:-}
 run uv run hlbot supervisor

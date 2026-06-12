@@ -28,6 +28,20 @@ leverage *unblocked* thing. Add new findings as you discover them.
   scorecards show non-None sharpe, and `goal_evaluations` records promotion
   blockers (min-days/G0) instead of silence. Fix anything dishonest.
 
+- [x] **B6 — Per-agent funding attribution.** Done: `scoring/attribution.py`
+  replays fills into position timelines and attributes each funding payment to
+  the holder (proportional split); wired into `score_agent` so funding is in
+  each agent's net. (REVIEW C4; iteration 7.)
+- [x] **B7 — Per-agent equity curves + Sharpe/DD.** Done: per-agent Sharpe from
+  daily net PnL (fills + attributed funding) and `max_drawdown_usd` on every
+  Scorecard; curve math shared via `scoring/curves.py` (backtester imports the
+  same code). (REVIEW C5; iteration 7.)
+- [x] **B8 — Record actual fill price.** Done: `femr_tick` now logs the confirmed
+  `res.avg_px`/`res.filled_sz` on fill so stops/TPs key off the real entry. (M1.)
+- [x] **B9 — fills→positions replay.** Done:
+  `attribution.replay_positions_table` rebuilds `positions` from fills
+  (add/reduce/flip), runs on every `hlbot ingest`. (REVIEW M2; iteration 7.)
+
 ## P1 — execution quality (every bp saved is pure edge)
 
 - [ ] **E1 — Maker fill telemetry.** From `maker_orders` + fills: fill rate,
@@ -41,6 +55,28 @@ leverage *unblocked* thing. Add new findings as you discover them.
 - [ ] **E4 — Reduce-only maker exits.** Normal (non-stop) exits currently
   cross as takers; route them through the lifecycle's reduce-only post-only
   path with `exit` urgency once E1 proves fills come fast enough.
+
+- [x] **B10 — WebSocket market view.** Done: `ingest/ws.py` MarketState +
+  `hlbot ws` service writes a snapshot; live tick overlays it (HLBOT_WS_SNAPSHOT)
+  for sub-second mids, L2 book_top, and a real liquidations feed (fixes C6), with
+  REST fallback. Next: userFills WS for instant maker-fill detection. (Iteration 5.)
+- [x] **B-book — Book-aware maker pricing.** Done: `exec/maker.py::maker_price`
+  joins the touch from the WS book (REST-mid fallback); used by the router for
+  every maker entry. (Iteration 7.)
+- [x] **B11 — Retire or feed liq_cascade.** Resolved: the agent stays on the
+  roster (so its stops/exits keep managing any held position) but is entry-dead
+  by construction without a WS snapshot — its only real liquidation source. The
+  live tick prints an explicit notice when HLBOT_WS_SNAPSHOT is unset.
+  (REVIEW C6; iteration 7.)
+- [x] **B12 — Consolidate execution paths.** Done: all live order routing goes
+  through `exec/router.py::execute_decisions` (per-agent maker/taker entries,
+  taker exits, gates, fill-confirmed logging) — unit-tested with a fake
+  exchange. (REVIEW M3; iteration 7.)
+- [ ] **B13 — Move hardcoded trader address to config.** (REVIEW M6.)
+- [x] **B14 — Go-live runbook in-repo.** `docs/GO_LIVE.md`: gated checklist,
+  secrets/env, promote/kill-switch/rollback, monitoring. (REVIEW D3.)
+- [ ] **B14a — Deploy automation.** Codify the EC2/systemd/Hermes cron + DB sync
+  (without secrets) so the live loop is reproducible from the repo.
 
 ## P2 — strategy pipeline
 
@@ -56,10 +92,16 @@ leverage *unblocked* thing. Add new findings as you discover them.
 
 ## P3 — capital formation (Path C)
 
-- [ ] **B16 — Hyperliquid vault evaluation.** Spike: requirements, fees, risks
-  of running an HL vault; gate behind a real track record (G3).
-- [ ] **B15b — Track-record chart export** (equity-curve PNG/SVG for the
-  public track record).
+- [x] **B15 — Public-grade track-record export.** Done: `reports/track_record.py`
+  + `hlbot track-record` → track_record.{json,md,svg,html} (equity curve chart,
+  Sharpe/DD/edge, per-agent incl. attributed funding). (Iterations 2, 7.)
+- [x] **B16 — Hyperliquid vault evaluation.** Done as spec:
+  `docs/MONETIZATION.md` — leader earns 10% of depositor profit, ≥5% own stake,
+  10k USDC creation; hard-gated behind G3. Adapter code deferred until G3.
+- [x] **B-MON — Monetization levers doc + builder-code plumbing.** Done:
+  `docs/MONETIZATION.md` (fee stack, airdrop posture, vault, referral) and
+  optional builder field on all orders (`exec/orders.py::_builder_info`,
+  env-gated, off by default). (Iteration 7.)
 
 ## Done (overhaul, 2026-06)
 

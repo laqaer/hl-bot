@@ -8,7 +8,7 @@
 #   1) put an API wallet at ~hlbot/.config/hermes/hl-bot-api-wallet.env (chmod 600)
 #   2) confirm a strategy: `sudo -u hlbot uv run hlbot confirm --agent <a> --prefer maker`
 #   3) enable it: agent_state -> live_small (see docs/GO_LIVE.md)
-#   4) set HLBOT_TICK_ARGS="--live --execution maker" in /etc/hl-bot/env
+#   4) set HLBOT_TICK_ARGS="--live" in /etc/hl-bot/env
 set -euo pipefail
 
 HLBOT_USER="${HLBOT_USER:-hlbot}"
