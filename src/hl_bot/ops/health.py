@@ -21,6 +21,7 @@ worse than ok also fires a Telegram alert. Pure logic here; side effects are thi
 from __future__ import annotations
 
 import contextlib
+import json
 import os
 import sqlite3
 import time
@@ -139,6 +140,62 @@ class PaperSignals:
 
     present: bool                   # a separate paper DB exists beside this one
     beat_age_s: float | None        # age of its newest paper tick_heartbeat
+    empty_feeds: dict[str, float] = field(default_factory=dict)  # feed → hours empty
+
+
+def empty_feeds(
+    conn: sqlite3.Connection,
+    *,
+    now_ms: int,
+    window_ms: int = 7_200_000,     # 2 h of beats must ALL read 0 to flag
+    min_beats: int = 3,             # one bad tick is an API hiccup, not an outage
+    mode: str | None = None,
+) -> dict[str, float]:
+    """Feeds the latest tick required that have been empty for the whole window.
+
+    A dead candle feed is invisible to the liveness checks: enrich_view
+    degrades every fetch per-coin to "skip", so the loop keeps beating while
+    the agents on that feed see no bars and hold forever — for weeks that
+    reads exactly like "no signal" (B-FEEDHB). This inspects the feed-coverage
+    JSON heartbeats now carry: a feed key present in the NEWEST beat (i.e.
+    still required by the current roster) whose coin count is 0 across every
+    beat in the window (≥ ``min_beats`` observations) is returned, mapped to
+    hours since the oldest such observation. Legacy NULL/unparseable rows are
+    ignored; a key the roster dropped disappears from new beats and stops
+    being judged. Read-only and exception-safe: any failure returns ``{}``
+    (the freshness checks own "no heartbeats at all").
+    """
+    try:
+        sql = "SELECT ts_ms, feeds FROM tick_heartbeats WHERE ts_ms >= ?"
+        args: list[object] = [now_ms - window_ms]
+        if mode is not None:
+            sql += " AND mode = ?"
+            args.append(mode)
+        rows = conn.execute(sql + " ORDER BY ts_ms DESC", args).fetchall()
+    except sqlite3.OperationalError:   # pre-migration DB: no feeds column
+        return {}
+    parsed: list[tuple[int, dict]] = []
+    for ts, raw in rows:
+        if raw is None:
+            continue
+        try:
+            d = json.loads(raw)
+        except (TypeError, ValueError):
+            continue
+        if isinstance(d, dict):
+            parsed.append((int(ts), d))
+    if not parsed:
+        return {}
+    latest = parsed[0][1]
+    out: dict[str, float] = {}
+    for key, val in latest.items():
+        if val:
+            continue
+        obs = [(ts, d[key]) for ts, d in parsed if key in d]
+        if len(obs) < min_beats or any(v for _, v in obs):
+            continue
+        out[key] = (now_ms - min(ts for ts, _ in obs)) / 3_600_000
+    return out
 
 
 def read_paper_signals(
@@ -165,6 +222,7 @@ def read_paper_signals(
     except OSError:
         return PaperSignals(present=False, beat_age_s=None)
     beat_age: float | None = None
+    feeds_gap: dict[str, float] = {}
     with contextlib.suppress(Exception):
         pconn = sqlite3.connect(f"file:{paper_path}?mode=ro", uri=True)
         try:
@@ -173,9 +231,10 @@ def read_paper_signals(
             ).fetchone()
             if row and row[0] is not None:
                 beat_age = (now_ms - int(row[0])) / 1000
+            feeds_gap = empty_feeds(pconn, now_ms=now_ms, mode="paper")
         finally:
             pconn.close()
-    return PaperSignals(present=True, beat_age_s=beat_age)
+    return PaperSignals(present=True, beat_age_s=beat_age, empty_feeds=feeds_gap)
 
 
 def _read_git_head(repo_dir: Path) -> str | None:
@@ -304,6 +363,21 @@ def assess_health(
             level = "warn" if age > max_decision_age_s else "ok"
             checks.append(("activity", level, f"last decision {age/3600:.1f} h ago"))
 
+    # --- feed coverage (is the beating loop actually seeing the market?) ---
+    # A dead candle feed never trips the freshness checks: enrich_view degrades
+    # per-coin to "skip", the tick completes, the heartbeat lands — and the
+    # agents on that feed hold forever, indistinguishable from "no signal"
+    # (B-FEEDHB). Warn-only: flags a feed the latest tick still required whose
+    # coverage has been 0 coins across every beat in the window.
+    if last_beat is not None:
+        gaps = empty_feeds(conn, now_ms=now_ms)
+        if gaps:
+            detail = ", ".join(
+                f"{k} empty for {h:.1f} h" for k, h in sorted(gaps.items()))
+            checks.append(("feeds", "warn",
+                           f"{detail} — agents on it see no bars "
+                           "(candle API outage?)"))
+
     # --- ingest freshness ---
     last_fill = _max_ts(conn, "fills", "time_ms")
     last_eq = _max_ts(conn, "equity_snapshots", "ts_ms")
@@ -412,6 +486,15 @@ def assess_health(
         else:
             checks.append(("paper", "ok",
                            f"last paper tick {paper.beat_age_s/60:.1f} min ago"))
+        # Same blindness check for the paper loop's own feeds: its beats live
+        # in the paper DB, so the main-DB check above can't see them. A blind
+        # paper agent accrues "0 trades" instead of G1 evidence for weeks.
+        if paper.empty_feeds:
+            detail = ", ".join(
+                f"{k} empty for {h:.1f} h"
+                for k, h in sorted(paper.empty_feeds.items()))
+            checks.append(("paper_feeds", "warn",
+                           f"{detail} — paper agents on it see no bars"))
 
     # --- 24h realized PnL (bot vs whole account — B-PNL-SPLIT) ---
     # The trading address is shared with the operator's manual trading, so the

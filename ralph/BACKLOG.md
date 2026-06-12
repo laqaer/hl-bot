@@ -255,6 +255,23 @@ Keep it ruthlessly prioritized: the top item should always be the highest-levera
   where a paper DB exists so dev/live-only clones stay silent. Names shared
   with run-paper-tick.sh pinned by test. 7 new tests; live-fired all three
   arms (absent → quiet, stale → warn, fresh → ok).
+- [x] **B-FEEDHB — health warns when a candle feed dies under a beating
+  loop.** Done (Iter 94, idle-queue find): every `enrich_view` fetch degrades
+  per-coin to "skip", so a TOTAL feed outage (rate-limit, API regression)
+  leaves the tick completing and the heartbeat landing while the agents on
+  that feed see no bars and hold forever — for weeks indistinguishable from
+  "no signal" (breakout/xmom would accrue "0 trades" instead of G1 evidence;
+  the only trace was an unread per-tick stdout line). Now heartbeats carry
+  per-feed coverage (`tick_heartbeats.feeds` JSON — first real schema
+  migration: idempotent ALTER in `init_db`, legacy rows stay NULL),
+  `empty_feeds()` flags a feed the latest tick still required that read
+  0 coins across every beat in a 2h window (≥3 obs; recovery, roster-dropped
+  keys, legacy rows, pre-migration DBs all stay quiet), and `assess_health`
+  warns for the box's own loop (`feeds`) and for the paper loop via
+  `PaperSignals.empty_feeds` (`paper_feeds`). Warn-only by design. 10 new
+  tests; live-fired: pre-migration deploy DBs degrade to quiet, deploy main
+  DB migrated in place under the running old-code loop (additive nullable
+  column; named-column INSERTs unaffected).
 - [x] **B-OPSGATE — `hlbot agent-mode`: the GO_LIVE switch as a validated,
   audited command.** Done (Iter 91): the documented procedure for the most
   consequential operation in the system — flipping an agent live — was raw

@@ -5206,3 +5206,63 @@ b_g014 ~Jun 26, b_edge3 + b_edge2_1h reruns ~Jul 10, B-EDGE2f paper readout
 ~Jul 12). Idle queue: B-STOREBKP2 once the operator arms
 HLBOT_STORE_BACKUP_S3; operator nudges — wire HEALTHCHECK_URL, consider
 arming HLBOT_DAILY_LOSS_FLOOR + the S3 store backup.
+
+## Iteration 94 — 2026-06-12 — B-FEEDHB: a dead candle feed can no longer hide under a beating heartbeat
+
+**Ripeness checks** (per-iteration readout): b_edge2b NOT RIPE (15m span
+52.7d < 60d, ~Jun 20); b_g014 NOT RIPE (1m span 4.3d < 14d, ~Jun 26). Store
+fresh (worst lag 5.0m, harvest skipped; peer sync +0/+0).
+
+**The work.** Idle-queue iteration (every backlog item time-/evidence-/
+operator-gated), so I audited the critical path everything is waiting on:
+the paper G1 evidence pipeline. Good news first — it works end-to-end
+(deploy paper DB: 40 heartbeats, decisions replaying into scorecards;
+twap_mr paper +$0.31/27 trades, xmom_v1 holding its 4-leg dollar-neutral
+book; empty paper `fills` is by design, B-PAPER3 replays decisions). But the
+audit surfaced a real hole: **every `enrich_view` candle fetch degrades
+per-coin to `except: continue`** — a TOTAL feed outage (rate-limit ban, API
+regression) leaves the tick completing, the heartbeat landing, and health
+green while every agent on that feed sees no bars and holds forever. For
+breakout (closes_15m) and xmom (closes_1h) that reads as "0 trades" for
+weeks — burning the G1 calendar clock with no evidence and no alarm. Only
+trace was a per-tick stdout line nobody reads.
+
+**Changed:**
+- `db/schema.py`: `tick_heartbeats.feeds` TEXT (JSON `{feed_key: n_coins}`)
+  + the repo's first real migration — idempotent `ALTER TABLE` in `init_db`
+  (CREATE IF NOT EXISTS never alters deployed DBs).
+- `agents/runtime.py::record_tick_heartbeat`: optional `feeds` mapping,
+  NULL for legacy callers.
+- `cli/main.py` tick loop: both heartbeat sites record coverage —
+  `candles_1h` always, `closes_15m`/`closes_1h` when the roster requires
+  them (early-abort beat stays legacy: no roster, no required feeds).
+- `ops/health.py::empty_feeds()`: flags a feed the LATEST beat still
+  requires that read 0 coins across every beat in a 2h window (≥3 obs).
+  Recovery inside the window, roster-dropped keys, legacy NULL rows,
+  pre-migration DBs (no column) all stay quiet. `assess_health` warns for
+  the box's own loop (`feeds`); `read_paper_signals` carries
+  `PaperSignals.empty_feeds` so the paper loop's separate DB gets the same
+  check (`paper_feeds`). Warn-only — a blind feed costs evidence-days, not
+  money; it must not page or block ticks.
+
+**Evidence.** 591 → **601 tests** pass (+10: migration adds the column and
+keeps legacy rows; feeds JSON round-trip; sustained outage flagged with
+hours; recovery/thin-history/dropped-key/legacy/mode-filter all quiet;
+pre-migration DB degrades; assess_health warn + quiet arms; paper-signals
+wiring), ruff clean. Live-fired: pre-migration deploy DBs → `{}` quietly;
+`hlbot health` against the deploy DB unchanged output (and migrated the
+main DB in place — additive nullable column under the running old-code
+loop, whose named-column INSERTs are unaffected; paper DB migrates on its
+first new-code tick). Feed-coverage rows start landing when the deploy
+updates to this commit.
+
+**Live watch.** Health: WARN only on the standing pager nag (tick 3.7m,
+ingest 3.9m, paper tick 2.0m, none paused). pnl_24h: bot $-0.89 (account
+−$212.04, manual −$211.15). Equity $632.39 (account-level, includes the
+operator's manual book).
+
+**What's next (loop).** Per-iteration readouts unchanged (b_edge2b ~Jun 20,
+b_g014 ~Jun 26, b_edge3 + b_edge2_1h reruns ~Jul 10, B-EDGE2f paper readout
+~Jul 12). Idle queue: B-STOREBKP2 once the operator arms
+HLBOT_STORE_BACKUP_S3; operator nudges — wire HEALTHCHECK_URL, consider
+arming HLBOT_DAILY_LOSS_FLOOR + the S3 store backup.

@@ -107,7 +107,9 @@ CREATE TABLE IF NOT EXISTS tick_heartbeats (
     ts_ms           INTEGER NOT NULL,
     mode            TEXT NOT NULL,            -- 'paper' / 'live'
     agents          INTEGER NOT NULL DEFAULT 0,  -- roster size this tick
-    decisions       INTEGER NOT NULL DEFAULT 0   -- decisions returned (incl. holds)
+    decisions       INTEGER NOT NULL DEFAULT 0,  -- decisions returned (incl. holds)
+    feeds           TEXT                      -- JSON {feed_key: n_coins} per tick
+                                              -- (B-FEEDHB); NULL on legacy rows
 );
 CREATE INDEX IF NOT EXISTS idx_heartbeats_ts ON tick_heartbeats(ts_ms);
 
@@ -150,8 +152,22 @@ def connect(db_path: str | Path) -> sqlite3.Connection:
     return conn
 
 
+# Idempotent column additions for DBs created before the column existed —
+# CREATE TABLE IF NOT EXISTS never alters an existing table, so a deployed DB
+# only picks up new columns here. (table, column, DDL); checked on every
+# init_db, applied at most once.
+_MIGRATIONS: tuple[tuple[str, str, str], ...] = (
+    ("tick_heartbeats", "feeds",
+     "ALTER TABLE tick_heartbeats ADD COLUMN feeds TEXT"),
+)
+
+
 def init_db(db_path: str | Path) -> sqlite3.Connection:
     """Initialize the schema. Idempotent."""
     conn = connect(db_path)
     conn.executescript(SCHEMA)
+    for table, column, ddl in _MIGRATIONS:
+        cols = {r[1] for r in conn.execute(f"PRAGMA table_info({table})")}
+        if cols and column not in cols:
+            conn.execute(ddl)
     return conn

@@ -945,6 +945,7 @@ def record_tick_heartbeat(
     agents: int,
     decisions: int,
     now_ms: int | None = None,
+    feeds: Mapping[str, int] | None = None,
 ) -> None:
     """Mark a tick loop as having run to completion (liveness ground truth).
 
@@ -954,10 +955,19 @@ def record_tick_heartbeat(
     but quiet book is indistinguishable from a dead loop. Written at the END of
     a tick (after the execution loop on the live path), so a tick that aborts
     mid-way does not beat — which is the point of a dead-man switch.
+
+    ``feeds`` records per-feed coverage this tick (``{feed_key: n_coins}``,
+    e.g. ``{"candles_1h": 20, "closes_15m": 18}``) so health can spot a feed
+    that died while the loop kept beating — every enrich_view fetch degrades
+    per-coin to "skip", so a total candle-API outage leaves the agents on that
+    feed silently holding forever (B-FEEDHB). None (legacy callers/tests)
+    stores NULL and is ignored by the health check.
     """
     conn.execute(
-        "INSERT INTO tick_heartbeats(ts_ms, mode, agents, decisions) VALUES(?,?,?,?)",
-        (now_ms or int(time.time() * 1000), mode, agents, decisions),
+        "INSERT INTO tick_heartbeats(ts_ms, mode, agents, decisions, feeds)"
+        " VALUES(?,?,?,?,?)",
+        (now_ms or int(time.time() * 1000), mode, agents, decisions,
+         json.dumps(dict(feeds)) if feeds is not None else None),
     )
     conn.commit()
 

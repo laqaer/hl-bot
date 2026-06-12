@@ -19,6 +19,7 @@ from hl_bot.ops.health import (
     PagerSignals,
     PaperSignals,
     assess_health,
+    empty_feeds,
     read_deploy_signals,
     read_pager_signals,
     read_paper_signals,
@@ -554,6 +555,162 @@ def test_health_cli_reports_paper(monkeypatch, tmp_path):
     res = CliRunner().invoke(app, ["health", "--no-heartbeat"])
     assert res.exit_code == 0, res.output
     assert "paper" in res.output and "no paper tick" in res.output
+
+
+def _beat_feeds(conn, t_ms, feeds, mode="paper"):
+    from hl_bot.agents.runtime import record_tick_heartbeat
+    record_tick_heartbeat(
+        conn, mode=mode, agents=3, decisions=5, now_ms=t_ms, feeds=feeds)
+
+
+def test_init_db_adds_feeds_column_to_legacy_db(tmp_path):
+    # B-FEEDHB migration: CREATE TABLE IF NOT EXISTS never alters a deployed
+    # DB, so init_db must ALTER the old heartbeats table in place — and keep
+    # its rows, which read back as legacy (feeds NULL).
+    import sqlite3 as sq
+
+    db = tmp_path / "old.sqlite"
+    raw = sq.connect(db)
+    raw.execute(
+        """CREATE TABLE tick_heartbeats (
+               id INTEGER PRIMARY KEY AUTOINCREMENT,
+               ts_ms INTEGER NOT NULL, mode TEXT NOT NULL,
+               agents INTEGER NOT NULL DEFAULT 0,
+               decisions INTEGER NOT NULL DEFAULT 0)""")
+    raw.execute(
+        "INSERT INTO tick_heartbeats(ts_ms, mode, agents, decisions)"
+        " VALUES(1, 'paper', 3, 5)")
+    raw.commit()
+    raw.close()
+
+    conn = init_db(db)
+    cols = {r[1] for r in conn.execute("PRAGMA table_info(tick_heartbeats)")}
+    assert "feeds" in cols
+    ts, feeds = conn.execute(
+        "SELECT ts_ms, feeds FROM tick_heartbeats").fetchone()
+    assert (ts, feeds) == (1, None)
+    _beat_feeds(conn, 2, {"candles_1h": 20})  # post-migration writes work
+    assert init_db(db) is not None  # re-running the migration is a no-op
+
+
+def test_record_tick_heartbeat_stores_feeds(conn):
+    _beat_feeds(conn, 1000, {"candles_1h": 20, "closes_15m": 0})
+    _beat(conn, 2000)  # legacy caller: no feeds
+    rows = dict(conn.execute("SELECT ts_ms, feeds FROM tick_heartbeats"))
+    import json
+    assert json.loads(rows[1000]) == {"candles_1h": 20, "closes_15m": 0}
+    assert rows[2000] is None
+
+
+def test_empty_feeds_flags_sustained_outage(conn):
+    # The B-FEEDHB shape: loop beating fine, candles flowing, but the 15m
+    # feed has delivered 0 coins for every beat in the window — breakout
+    # holds forever and nothing else would notice.
+    now = int(time.time() * 1000)
+    for i in range(24):  # every 5 min for 2 h
+        _beat_feeds(conn, now - i * 300_000,
+                    {"candles_1h": 20, "closes_15m": 0})
+    gaps = empty_feeds(conn, now_ms=now)
+    assert set(gaps) == {"closes_15m"}
+    assert gaps["closes_15m"] == pytest.approx(23 * 300_000 / 3_600_000)
+
+
+def test_empty_feeds_recovery_and_thin_history_not_flagged(conn):
+    now = int(time.time() * 1000)
+    # One in-window beat with coverage → outage shorter than the window.
+    for i in range(10):
+        _beat_feeds(conn, now - i * 300_000, {"closes_1h": 0})
+    _beat_feeds(conn, now - 11 * 300_000, {"closes_1h": 18})
+    assert empty_feeds(conn, now_ms=now) == {}
+    # Fewer than min_beats zero observations → could be an API hiccup.
+    c2 = init_db(":memory:")
+    _beat_feeds(c2, now, {"closes_1h": 0})
+    _beat_feeds(c2, now - 300_000, {"closes_1h": 0})
+    assert empty_feeds(c2, now_ms=now) == {}
+
+
+def test_empty_feeds_dropped_keys_legacy_rows_and_mode(conn):
+    now = int(time.time() * 1000)
+    # Roster stopped requiring the 15m feed: the key is gone from the newest
+    # beat, so stale zeros behind it are not judged.
+    for i in range(1, 6):
+        _beat_feeds(conn, now - i * 300_000, {"candles_1h": 20, "closes_15m": 0})
+    _beat_feeds(conn, now, {"candles_1h": 20})
+    assert empty_feeds(conn, now_ms=now) == {}
+    # Legacy NULL rows only → nothing to judge.
+    c2 = init_db(":memory:")
+    _beat(c2, now - 60_000)
+    assert empty_feeds(c2, now_ms=now) == {}
+    # Mode filter: another loop's zeros in the same DB don't bleed through.
+    for i in range(5):
+        _beat_feeds(c2, now - i * 300_000, {"closes_1h": 0}, mode="live")
+    assert empty_feeds(c2, now_ms=now, mode="paper") == {}
+    assert set(empty_feeds(c2, now_ms=now, mode="live")) == {"closes_1h"}
+
+
+def test_empty_feeds_premigration_db_degrades(tmp_path):
+    # A not-yet-migrated DB (no feeds column) must read as "no signal",
+    # never crash `hlbot health`.
+    import sqlite3 as sq
+
+    raw = sq.connect(tmp_path / "pre.sqlite")
+    raw.execute(
+        """CREATE TABLE tick_heartbeats (
+               id INTEGER PRIMARY KEY AUTOINCREMENT,
+               ts_ms INTEGER NOT NULL, mode TEXT NOT NULL,
+               agents INTEGER NOT NULL DEFAULT 0,
+               decisions INTEGER NOT NULL DEFAULT 0)""")
+    assert empty_feeds(raw, now_ms=int(time.time() * 1000)) == {}
+
+
+def test_health_feed_outage_warns(conn):
+    now = int(time.time() * 1000)
+    _fresh(conn, now)
+    for i in range(24):
+        _beat_feeds(conn, now - i * 300_000,
+                    {"candles_1h": 20, "closes_15m": 0}, mode="live")
+    rep = assess_health(conn, now_ms=now)
+    assert rep.status == "warn"
+    assert any(n == "feeds" and lvl == "warn" and "closes_15m empty for" in d
+               for n, lvl, d in rep.checks)
+
+
+def test_health_healthy_feeds_stay_quiet(conn):
+    now = int(time.time() * 1000)
+    _fresh(conn, now)
+    for i in range(24):
+        _beat_feeds(conn, now - i * 300_000,
+                    {"candles_1h": 20, "closes_15m": 18}, mode="live")
+    rep = assess_health(conn, now_ms=now)
+    assert rep.status == "ok"
+    assert not any(n == "feeds" for n, _, _ in rep.checks)
+
+
+def test_health_paper_feed_outage_warns(conn):
+    # A fresh-beating paper loop whose 1h feed died: xmom accrues "0 trades"
+    # instead of G1 evidence, for weeks, unless this warns.
+    now = int(time.time() * 1000)
+    _fresh(conn, now)
+    rep = assess_health(conn, now_ms=now, paper=PaperSignals(
+        present=True, beat_age_s=120.0, empty_feeds={"closes_1h": 3.4}))
+    assert rep.status == "warn"
+    assert any(n == "paper_feeds" and lvl == "warn"
+               and "closes_1h empty for 3.4 h" in d
+               for n, lvl, d in rep.checks)
+
+
+def test_read_paper_signals_reports_empty_feeds(tmp_path):
+    now = int(time.time() * 1000)
+    live_db = tmp_path / "data" / "hlbot.sqlite"
+    init_db(live_db).close()
+    pc = init_db(live_db.parent / PAPER_DB_BASENAME)
+    for i in range(5):
+        _beat_feeds(pc, now - i * 300_000, {"candles_1h": 20, "closes_15m": 0})
+    pc.commit()
+    pc.close()
+    sig = read_paper_signals(live_db, now_ms=now, env={})
+    assert sig.present
+    assert set(sig.empty_feeds) == {"closes_15m"}
 
 
 def test_paper_db_names_match_script():

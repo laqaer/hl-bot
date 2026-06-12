@@ -679,10 +679,21 @@ def femr_tick(live: bool = False, execution: str = "taker", vwap_window: int = 0
         end = "" if d.action != "hold" else "[/dim]"
         console.print(f"  {tag}{d.agent} {d.action} {d.coin or ''} :: {d.reasoning}{end}")
 
+    # Per-feed coverage for the heartbeat: which candle feeds this roster
+    # required and how many coins each delivered. Health flags a feed stuck at
+    # 0 while the loop keeps beating (B-FEEDHB — enrich_view degrades per-coin,
+    # so a total feed outage is otherwise invisible).
+    feeds = {"candles_1h": len(view.extra.get("candles_1h", {}))}
+    if bars_15m:
+        feeds["closes_15m"] = len(view.extra.get("closes_15m", {}))
+    if bars_1h:
+        feeds["closes_1h"] = len(view.extra.get("closes_1h", {}))
+
     if not live:
         console.print("[yellow]PAPER MODE[/yellow]")
         record_tick_heartbeat(
-            conn, mode="paper", agents=len(agents), decisions=len(all_decisions))
+            conn, mode="paper", agents=len(agents), decisions=len(all_decisions),
+            feeds=feeds)
         return
 
     try:
@@ -753,7 +764,8 @@ def femr_tick(live: bool = False, execution: str = "taker", vwap_window: int = 0
         console.print(ev.message)
 
     record_tick_heartbeat(
-        conn, mode="live", agents=len(agents), decisions=len(all_decisions))
+        conn, mode="live", agents=len(agents), decisions=len(all_decisions),
+        feeds=feeds)
 
 
 def parse_agent_config(config: str) -> dict[str, Any]:
