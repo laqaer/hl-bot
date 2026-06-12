@@ -50,7 +50,7 @@ def test_mean_reversion_is_profitable_without_costs():
     assert res.edge_bps is not None and res.edge_bps > 0
     # fills actually landed in the DB and score from the same path
     n_fills = conn.execute("SELECT COUNT(*) FROM fills WHERE agent='twap_mr_v1'").fetchone()[0]
-    assert n_fills == res.scorecard.n_trades
+    assert n_fills == res.scorecard.n_fills
 
 
 def test_taker_costs_reduce_pnl():
