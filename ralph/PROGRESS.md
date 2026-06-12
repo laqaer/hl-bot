@@ -5266,3 +5266,90 @@ b_g014 ~Jun 26, b_edge3 + b_edge2_1h reruns ~Jul 10, B-EDGE2f paper readout
 ~Jul 12). Idle queue: B-STOREBKP2 once the operator arms
 HLBOT_STORE_BACKUP_S3; operator nudges — wire HEALTHCHECK_URL, consider
 arming HLBOT_DAILY_LOSS_FLOOR + the S3 store backup.
+
+## Iteration 95 — 2026-06-12 — B-PAPERDB: the promotion readout was pointed at the wrong database
+
+**Ripeness checks** (per-iteration readout): b_edge2b NOT RIPE (15m span
+52.7d < 60d, ~Jun 20); b_g014 NOT RIPE (1m span 4.3d < 14d, ~Jun 26). Store
+fresh (worst lag 19.3m, harvest skipped; peer sync +0/+0). Backup still
+unarmed (no HLBOT_STORE_BACKUP_S3 in /etc/hl-bot/env → B-STOREBKP2 stays
+blocked); pager envs still empty.
+
+**The work.** Idle-queue iteration; audited the consumers of the paper
+evidence that B-PAPERLOOP (Iter 85) moved into its own DB. Found a split-
+brain hole dead-center on the ~Jul-12 promotion path: `hlbot gates`,
+`hlbot agent-mode`, `score --paper`, and the track record's paper section
+all open ONE connection (HLBOT_DB = the live DB), so on the live box every
+G1 readout judged an EMPTY paper book. Concretely: `gates` printed "no
+evidence yet" for every candidate forever; `agent-mode`'s evidence re-check
+(`_has_paper_book` on the live conn) saw no paper book, so a legitimate
+30d-clean promotion would be refused with "evidence span 0.0d" — training
+the operator to reach for `--override-evidence` (normalizing the override
+is exactly what B-OPSGATE built two flags to prevent). And the "obvious"
+workaround — `HLBOT_DB=data/hlbot_paper.sqlite hlbot agent-mode ... --set
+live_small` — is worse: the flip lands in the PAPER DB's agent_state, which
+the live tick never reads; the operator believes the agent is live while
+`filter_live_agents` keeps dropping it. Evidence is genuinely split (paper
+book + paper audit trail in hlbot_paper.sqlite; fills, equity, and the
+authoritative agent_state in the live DB), so no env value can make one
+conn see both.
+
+**Changed:**
+- `ops/health.py`: paper-DB resolution extracted to public
+  `resolve_paper_db_path` (HLBOT_PAPER_DB env, else hlbot_paper.sqlite
+  beside the live DB — run-paper-tick.sh's exact rule; None when missing or
+  self-referential). `read_paper_signals` now uses it.
+- `supervisor/gates.py`: `evaluate_roadmap_gates(paper_conn=)` — G1 judged
+  on the paper conn; `evaluate_g1(breach_conns=)` sums guardrail breaches
+  from BOTH audit trails (paper supervisor writes to the paper DB, live
+  demotions to the live DB; each stream counted once).
+- `supervisor/goals.py`: clean-guardrails arm factored out of
+  `_evidence_blockers` into `_clean_guardrail_blockers` (single-conn
+  behavior unchanged) so the operator path can run it against the other DB.
+- `supervisor/operator.py`: `evidence_readout(paper_conn=)` (book/span from
+  the paper conn, breaches summed across both, newest promotion evaluation
+  across both) and `plan_mode_change(paper_conn=)` — paper book detected in
+  the paper DB, evidence blockers judged there, and a pause/demote breach
+  in the OTHER trail blocks too, labeled "(live book)"/"(paper book)" (a
+  live demotion must gate a paper-evidence re-promotion). The applied
+  change always lands on the main conn — the DB the live tick obeys.
+- `cli/main.py`: `_paper_evidence_conn` (read-only open — evidence readers
+  structurally cannot write the paper book; unreadable paper DB degrades to
+  main-conn with a warning) wired into `gates` and `agent-mode`; both print
+  which paper DB supplied evidence. Default None on single-DB boxes ⇒
+  byte-identical behavior (all prior tests pass untouched).
+- Docs: GO_LIVE.md promote section (run agent-mode with the DEFAULT
+  HLBOT_DB; pointing it at the paper DB sends the flip where the live tick
+  never looks) + deploy/README §Paper book (gates/agent-mode need no
+  override).
+
+**Evidence.** 601 → **611 tests** pass (+10: resolver beside-db/env/self-ref
+arms; G1 judged from paper conn — and the no-paper_conn arm pins the hole's
+shape; live-trail breach fails G1; readout book=paper + summed breaches;
+plan passes on a 31d clean paper book and the apply lands in the LIVE DB
+with the paper DB untouched; pre-fix shape raises "evidence span 0.0d";
+live breach blocks paper promotion with "(live book)" label + override
+records it; two CLI wiring tests on real split env vars). Ruff clean.
+Live-fired read-only on the deploy box's real DBs: `gates` header names
+the paper DB, twap_mr_v1's G1 now shows the real paper book (0.2d span,
+33 trades) AND its 13 live-trail breaches; xmom_v1 `agent-mode` readout
+reads book=paper span 0.0d, and the refusal path names the true blocker
+(`evidence span 0.0d < 30d`) instead of pretending no book exists. Exit 1,
+nothing written.
+
+**Filed.** B-PAPERDB2: same split for `score --paper` + the track record's
+paper section (the public artifact currently can't show live + paper books
+together on the live box); lower stakes, pure readouts.
+
+**Live watch.** Health: WARN only on the standing pager nag (tick 2.1m,
+ingest 2.2m, paper tick 0.4m, none paused). pnl_24h: bot $-0.87 (account
+−$212.02, manual −$211.15). Equity $625.79 (account-level, includes the
+operator's manual book).
+
+**What's next (loop).** Per-iteration readouts unchanged (b_edge2b ~Jun 20,
+b_g014 ~Jun 26, b_edge3 + b_edge2_1h reruns ~Jul 10, B-EDGE2f paper readout
+~Jul 12 — agent-mode/gates now read the right book for it). Idle queue:
+B-PAPERDB2 (split-DB paper evidence for score/track-record);
+B-STOREBKP2 once the operator arms HLBOT_STORE_BACKUP_S3; operator nudges —
+wire HEALTHCHECK_URL, consider arming HLBOT_DAILY_LOSS_FLOOR + the S3
+store backup.

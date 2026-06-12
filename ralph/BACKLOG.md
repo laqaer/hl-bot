@@ -293,6 +293,41 @@ Keep it ruthlessly prioritized: the top item should always be the highest-levera
   evaluation). GO_LIVE.md promote/halt sections now lead with the command
   (SQL kept as break-glass). 16 tests; refusal paths live-fired (exit 1,
   evidence printed). Ready for the ~Jul 12 promotion-readiness window.
+- [x] **B-PAPERDB — gates/agent-mode read paper evidence from the paper DB
+  (split-book coherence).** Done (Iter 95): B-PAPERLOOP moved the real paper
+  book + the paper supervisor's audit trail into `data/hlbot_paper.sqlite`,
+  but every paper-evidence reader still opened ONE conn (HLBOT_DB = the live
+  DB) — on the live box `hlbot gates` judged an empty paper book ("no
+  evidence yet" for every candidate forever) and `hlbot agent-mode`'s
+  evidence re-check saw no paper book at all, so the ~Jul-12 promotion would
+  either be bogusly refused (normalizing --override-evidence) or, if the
+  operator pointed HLBOT_DB at the paper DB to "fix" it, the mode flip would
+  land in the PAPER DB where the live tick never looks. Now: one shared
+  resolver (`ops.health.resolve_paper_db_path`, the rule run-paper-tick.sh
+  uses), read-only paper conn in the CLI; `evaluate_roadmap_gates(paper_conn=)`
+  judges G1 from the paper book with breach history counted from BOTH audit
+  trails; `evidence_readout`/`plan_mode_change(paper_conn=)` judge paper
+  evidence from the paper DB while every state write stays on the live conn;
+  a pause/demote breach in EITHER trail blocks a loosening flip (live
+  demotion gates a paper re-promotion and vice versa). Single-DB setups
+  byte-identical (paper_conn=None). 10 tests; live-fired read-only on the
+  deploy DBs (G1 rows now show the real paper book; twap_mr_v1's 13 live
+  breaches count against its G1; xmom refusal names the true day-0 span).
+  GO_LIVE.md + deploy/README updated — run agent-mode with the DEFAULT
+  HLBOT_DB.
+- [ ] **B-PAPERDB2 — split-DB paper evidence for `score --paper` and the
+  track record's paper section.** Same hole, lower stakes (pure readouts
+  with a documented HLBOT_DB override): on the live box `hlbot track-record`
+  reads live fills from the live DB but its "Paper agents (NOT live)"
+  section replays the live DB's near-empty paper rows — the real forward-
+  test evidence in hlbot_paper.sqlite is invisible in the public artifact,
+  and no env override can show both books at once. Wire
+  `_paper_evidence_conn` into `score --paper` (replacing the README's
+  override recipe) and `build_track_record` (paper sections read the paper
+  conn). Also `hlbot supervisor` on the live box evaluates paper-mode agents
+  from the live DB (sees no book → fills path) — harmless today because the
+  paper loop runs its own supervisor against the paper DB, but worth a
+  comment or the same plumbing when touched.
 - [x] **B-G1SPAN — Promotion gates enforce evidence SPAN + clean guardrail
   history (G1 pre-registration, day 0 of the paper books).** Done (Iter 89):
   every promotion block keyed on `window: 30d` metrics, which bound the

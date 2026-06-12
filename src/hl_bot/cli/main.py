@@ -56,6 +56,34 @@ def _conn():
     return init_db(s.db_path), s
 
 
+def _paper_evidence_conn(s) -> tuple[Any, Path | None]:
+    """Read-only connection to the separate paper DB beside the live DB.
+
+    (None, None) on single-DB setups — callers fall back to the main conn.
+    B-PAPERLOOP keeps the paper book + paper audit trail in their own DB
+    (data/hlbot_paper.sqlite, HLBOT_PAPER_DB override), so any command that
+    judges paper evidence on the live box must read it from there; opening
+    read-only guarantees evidence readouts can never write the paper book.
+    """
+    import sqlite3
+
+    from ..ops.health import resolve_paper_db_path
+
+    p = resolve_paper_db_path(s.db_path)
+    if p is None:
+        return None, None
+    try:
+        pconn = sqlite3.connect(f"file:{p}?mode=ro", uri=True)
+        pconn.row_factory = sqlite3.Row
+    except sqlite3.Error as e:
+        console.print(
+            f"[yellow]warn:[/yellow] paper DB {p} unreadable ({e}); "
+            "paper evidence judged from the main DB"
+        )
+        return None, None
+    return pconn, p
+
+
 def _fetch_paper_funding(conn, s) -> dict[str, list[dict[str, Any]]]:
     """Funding-rate history covering every paper hold, for modeled accrual.
 
@@ -300,7 +328,11 @@ def agent_mode(
         plan_mode_change,
     )
 
-    conn, _ = _conn()
+    conn, s = _conn()
+    # Split-book deployments (B-PAPERLOOP) keep the paper evidence in its own
+    # DB: judge it from there; every state write still lands on the main conn
+    # — the DB the live tick obeys.
+    pconn, ppath = _paper_evidence_conn(s)
     contracts = []
     for p in sorted(Path(configs).glob("*.yaml")):
         contracts.extend(load_goals(p))
@@ -327,7 +359,9 @@ def agent_mode(
 
     if set_mode is None and enable is None:
         st = current_state(conn, agent)
-        ev = evidence_readout(conn, agent)
+        ev = evidence_readout(conn, agent, paper_conn=pconn)
+        if ppath is not None:
+            console.print(f"[dim]paper evidence: {ppath} (separate paper DB)[/dim]")
         console.print(
             f"[bold]{agent}[/bold]: mode={st.mode} "
             f"enabled={'on' if st.enabled else 'OFF'}"
@@ -350,6 +384,7 @@ def agent_mode(
             conn, agent, known_agents=known, contracts=contracts,
             mode=set_mode, enabled=enable,
             confirm=confirm, override_evidence=override_evidence,
+            paper_conn=pconn,
         )
     except OperatorError as e:
         console.print(f"[red]refused[/red]: {e}")
@@ -1658,6 +1693,10 @@ def gates(
     from ..supervisor.goals import AgentGoals, load_goals
 
     conn, s = _conn()
+    pconn, ppath = _paper_evidence_conn(s)
+    paper_evidence = pconn if pconn is not None else conn
+    if ppath is not None:
+        console.print(f"[dim]paper evidence: {ppath} (separate paper DB)[/dim]")
     cfg_by_agent: dict[str, AgentGoals] = {}
     for p in sorted(Path(CONFIG_DIR).glob("*.yaml")):
         try:
@@ -1665,7 +1704,7 @@ def gates(
                 cfg_by_agent[g.agent] = g
         except Exception as e:  # noqa: BLE001
             console.print(f"[yellow]warn:[/yellow] skipping {p.name}: {e}")
-    evidence_agents = {a for a in list_paper_agents(conn)} | {
+    evidence_agents = {a for a in list_paper_agents(paper_evidence)} | {
         r[0] for r in conn.execute(
             "SELECT DISTINCT agent FROM fills WHERE agent IS NOT NULL")
     }
@@ -1676,7 +1715,7 @@ def gates(
             console.print(f"[red]no config or evidence for agent '{agent}'[/red]")
             raise typer.Exit(1)
 
-    funding_by_coin = _fetch_paper_funding(conn, s) if funding else {}
+    funding_by_coin = _fetch_paper_funding(paper_evidence, s) if funding else {}
     table = Table(title="Roadmap gates (read-only; promotion is human-gated)")
     for col in ("agent", "mode", "gate", "verdict", "unlocks", "blockers"):
         table.add_column(col)
@@ -1685,9 +1724,9 @@ def gates(
         mode = effective_mode(conn, name, default=cfg.mode if cfg else "paper")
         results = evaluate_roadmap_gates(
             conn, name, capital=cfg.capital if cfg else None,
-            funding_by_coin=funding_by_coin or None)
+            funding_by_coin=funding_by_coin or None, paper_conn=pconn)
         if not results:
-            no_paper = paper_span_ms(conn, name) is None
+            no_paper = paper_span_ms(paper_evidence, name) is None
             no_fills = fills_span_ms(conn, name) is None
             if no_paper and no_fills:
                 table.add_row(name, mode, "—", "[dim]no evidence yet[/dim]", "", "")

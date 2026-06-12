@@ -198,6 +198,28 @@ def empty_feeds(
     return out
 
 
+def resolve_paper_db_path(
+    db_path: Path | str, env: Mapping[str, str] | None = None
+) -> Path | None:
+    """The *separate* paper DB beside ``db_path``, or None.
+
+    One resolution rule for everyone who needs the split paper book
+    (B-PAPERLOOP keeps paper evidence in its own DB): HLBOT_PAPER_DB env,
+    else ``hlbot_paper.sqlite`` beside the live DB — exactly what
+    deploy/run-paper-tick.sh exports. None when the file is missing or
+    resolves to ``db_path`` itself (single-DB setup: the main conn already
+    holds whatever paper book exists).
+    """
+    env = os.environ if env is None else env
+    paper_path = Path(env.get(PAPER_DB_ENV) or Path(db_path).parent / PAPER_DB_BASENAME)
+    try:
+        if not paper_path.is_file() or paper_path.resolve() == Path(db_path).resolve():
+            return None
+    except OSError:
+        return None
+    return paper_path
+
+
 def read_paper_signals(
     db_path: Path | str,
     *,
@@ -213,13 +235,9 @@ def read_paper_signals(
     covers that DB). Read-only open; any read failure degrades to "present but
     never beat" — warn-territory, never a crash inside ``hlbot health``.
     """
-    env = os.environ if env is None else env
     now_ms = now_ms or int(time.time() * 1000)
-    paper_path = Path(env.get(PAPER_DB_ENV) or Path(db_path).parent / PAPER_DB_BASENAME)
-    try:
-        if not paper_path.is_file() or paper_path.resolve() == Path(db_path).resolve():
-            return PaperSignals(present=False, beat_age_s=None)
-    except OSError:
+    paper_path = resolve_paper_db_path(db_path, env=env)
+    if paper_path is None:
         return PaperSignals(present=False, beat_age_s=None)
     beat_age: float | None = None
     feeds_gap: dict[str, float] = {}

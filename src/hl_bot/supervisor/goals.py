@@ -163,6 +163,30 @@ def _evidence_span_days(conn: sqlite3.Connection, agent: str, use_paper: bool) -
     return (row["hi"] - row["lo"]) / 86_400_000.0
 
 
+def _clean_guardrail_blockers(
+    conn: sqlite3.Connection, agent: str, promo: Promotion
+) -> list[str]:
+    """The clean-guardrails arm of the evidence gates, against one audit
+    trail. Split out so the operator path can also run it against the OTHER
+    evidence DB when paper and live books live in separate databases
+    (B-PAPERLOOP) — a breach recorded in either stream must block."""
+    if promo.clean_guardrails_days <= 0:
+        return []
+    cutoff = int(time.time() * 1000 - promo.clean_guardrails_days * 86_400_000)
+    row = conn.execute(
+        """SELECT COUNT(*) AS n FROM goal_evaluations
+           WHERE agent=? AND goal_name LIKE 'guardrail:%' AND status='fail'
+             AND action_taken IN ('pause','demote') AND ts_ms >= ?""",
+        (agent, cutoff),
+    ).fetchone()
+    if row is not None and row["n"]:
+        return [
+            f"{row['n']} pause/demote guardrail breach(es) on record "
+            f"in last {promo.clean_guardrails_days:g}d"
+        ]
+    return []
+
+
 def _evidence_blockers(
     conn: sqlite3.Connection, agent: str, promo: Promotion, use_paper: bool
 ) -> list[str]:
@@ -180,19 +204,7 @@ def _evidence_blockers(
             blockers.append(
                 f"evidence span {span:.1f}d < {promo.min_span_days:g}d required"
             )
-    if promo.clean_guardrails_days > 0:
-        cutoff = int(time.time() * 1000 - promo.clean_guardrails_days * 86_400_000)
-        row = conn.execute(
-            """SELECT COUNT(*) AS n FROM goal_evaluations
-               WHERE agent=? AND goal_name LIKE 'guardrail:%' AND status='fail'
-                 AND action_taken IN ('pause','demote') AND ts_ms >= ?""",
-            (agent, cutoff),
-        ).fetchone()
-        if row is not None and row["n"]:
-            blockers.append(
-                f"{row['n']} pause/demote guardrail breach(es) on record "
-                f"in last {promo.clean_guardrails_days:g}d"
-            )
+    blockers.extend(_clean_guardrail_blockers(conn, agent, promo))
     return blockers
 
 

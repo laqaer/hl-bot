@@ -143,6 +143,9 @@ runs only promoted agents — paper evidence for a candidate accumulates only
 where paper ticks actually run, and a live-mode box without this timer accrues
 NONE (found Iter 85). Read the book with
 `HLBOT_DB=data/hlbot_paper.sqlite uv run hlbot score --paper`.
+`hlbot gates` and `hlbot agent-mode` need no override: they resolve the
+paper DB beside the live DB themselves (read-only) and judge paper evidence
+from it while agent_state stays in the live DB.
 
 One-off manual paper tick (same DB the unit uses):
 

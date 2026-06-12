@@ -59,6 +59,13 @@ that pass `_filter_live_agents_by_state`.
 1. Confirm the gates above. Re-read the agent's latest backtest + paper numbers
    (`uv run hlbot agent-mode <agent>` prints the evidence book span, recorded
    guardrail breaches, and the supervisor's latest promotion evaluation).
+   On a deployed box `agent-mode` and `hlbot gates` read the paper book and
+   the paper audit trail from the separate paper DB automatically
+   (`data/hlbot_paper.sqlite` beside the live DB / `HLBOT_PAPER_DB`); breach
+   history is counted from BOTH books, and state changes always land in the
+   live DB — the one the live tick obeys. Run them with the default
+   `HLBOT_DB`; do NOT point `HLBOT_DB` at the paper DB for a mode change, or
+   the flip lands where the live tick never looks.
 2. Set the agent live-small (one agent at a time):
    ```bash
    uv run hlbot agent-mode <agent> --set live_small --enable --confirm

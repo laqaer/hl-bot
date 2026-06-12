@@ -148,13 +148,17 @@ def evaluate_g1(
     agent: str,
     now_ms: int | None = None,
     funding_by_coin: dict[str, list[dict[str, Any]]] | None = None,
+    breach_conns: list[sqlite3.Connection] | None = None,
 ) -> GateResult | None:
     """G1 Paper: ≥30d paper, edge ≥ +5bps, ≥150 trades, no guardrail breach.
 
     Returns None when the agent has no paper book (gate not applicable).
     The 30d paper scorecard uses the supervisor's cost semantics (modeled
     taker costs; modeled funding when ``funding_by_coin`` is supplied — do not
-    judge a funding strategy on a funding=0 card).
+    judge a funding strategy on a funding=0 card). ``breach_conns`` lets a
+    split-DB deployment count guardrail breaches from BOTH audit trails (the
+    paper supervisor writes to the paper DB, live demotions to the live DB);
+    default = ``conn`` only.
     """
     span = paper_span_ms(conn, agent)
     if span is None:
@@ -162,7 +166,10 @@ def evaluate_g1(
     now_ms = now_ms if now_ms is not None else int(time.time() * 1000)
     card = score_paper_agent(
         conn, agent, "30d", now_ms=now_ms, funding_by_coin=funding_by_coin)
-    breaches = guardrail_breaches(conn, agent, since_ms=now_ms - 30 * DAY_MS)
+    breaches = sum(
+        guardrail_breaches(c, agent, since_ms=now_ms - 30 * DAY_MS)
+        for c in (breach_conns or [conn])
+    )
     if card.edge_bps is None:
         edge = GateCheck("edge_bps_30d", None, None,
                          "edge N/A (no paper fills in the last 30d)")
@@ -237,13 +244,22 @@ def evaluate_roadmap_gates(
     capital: float | None = None,
     now_ms: int | None = None,
     funding_by_coin: dict[str, list[dict[str, Any]]] | None = None,
+    paper_conn: sqlite3.Connection | None = None,
 ) -> list[GateResult]:
     """Every gate the agent has evidence for: G1 needs a paper book, G2/G3
     need exchange fills. An agent with both books gets all three — the readout
     reports evidence, it doesn't police which ladder rung the agent 'should'
-    be on."""
+    be on.
+
+    ``paper_conn`` is where the paper book lives when the deployment splits
+    evidence across two DBs (B-PAPERLOOP's run-paper-tick.sh writes paper
+    decisions + the paper audit trail to ``data/hlbot_paper.sqlite`` while
+    fills/agent_state stay in the live DB). Default None = single DB,
+    behavior unchanged. G1 breach history is counted from both trails."""
+    pconn = paper_conn if paper_conn is not None else conn
     results = [
-        evaluate_g1(conn, agent, now_ms=now_ms, funding_by_coin=funding_by_coin),
+        evaluate_g1(pconn, agent, now_ms=now_ms, funding_by_coin=funding_by_coin,
+                    breach_conns=[pconn] if pconn is conn else [pconn, conn]),
         evaluate_g2(conn, agent, capital=capital),
         evaluate_g3(conn, agent, capital=capital),
     ]

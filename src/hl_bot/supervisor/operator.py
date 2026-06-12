@@ -34,7 +34,13 @@ import sqlite3
 import time
 from dataclasses import dataclass
 
-from .goals import AgentGoals, _evidence_blockers, _evidence_span_days, _has_paper_book
+from .goals import (
+    AgentGoals,
+    _clean_guardrail_blockers,
+    _evidence_blockers,
+    _evidence_span_days,
+    _has_paper_book,
+)
 
 MODE_RANK = {"paper": 0, "live_small": 1, "live": 2}
 
@@ -124,26 +130,44 @@ class EvidenceReadout:
     last_promotion_ts_ms: int | None
 
 
-def evidence_readout(conn: sqlite3.Connection, agent: str) -> EvidenceReadout:
+def evidence_readout(
+    conn: sqlite3.Connection,
+    agent: str,
+    paper_conn: sqlite3.Connection | None = None,
+) -> EvidenceReadout:
+    """What the evidence gates see right now. ``paper_conn`` is the separate
+    paper DB on split-book deployments (B-PAPERLOOP) — the paper book and the
+    paper supervisor's audit trail live there while agent_state stays in
+    ``conn``; breach counts and the last promotion evaluation are read from
+    BOTH trails. Default None = single DB, behavior unchanged."""
+    pconn = paper_conn if paper_conn is not None else conn
+    conns = [conn] if pconn is conn else [conn, pconn]
     state = current_state(conn, agent)
-    use_paper = state.mode == "paper" and _has_paper_book(conn, agent)
+    use_paper = state.mode == "paper" and _has_paper_book(pconn, agent)
     cutoff = int(time.time() * 1000 - 30 * 86_400_000)
-    breaches = conn.execute(
-        """SELECT COUNT(*) AS n FROM goal_evaluations
-           WHERE agent=? AND goal_name LIKE 'guardrail:%' AND status='fail'
-             AND action_taken IN ('pause','demote') AND ts_ms >= ?""",
-        (agent, cutoff),
-    ).fetchone()
-    promo = conn.execute(
-        """SELECT ts_ms, detail FROM goal_evaluations
-           WHERE agent=? AND goal_name='promotion'
-           ORDER BY ts_ms DESC LIMIT 1""",
-        (agent,),
-    ).fetchone()
+    breaches = 0
+    for c in conns:
+        row = c.execute(
+            """SELECT COUNT(*) AS n FROM goal_evaluations
+               WHERE agent=? AND goal_name LIKE 'guardrail:%' AND status='fail'
+                 AND action_taken IN ('pause','demote') AND ts_ms >= ?""",
+            (agent, cutoff),
+        ).fetchone()
+        breaches += int(row["n"]) if row is not None else 0
+    promo = None
+    for c in conns:
+        row = c.execute(
+            """SELECT ts_ms, detail FROM goal_evaluations
+               WHERE agent=? AND goal_name='promotion'
+               ORDER BY ts_ms DESC LIMIT 1""",
+            (agent,),
+        ).fetchone()
+        if row is not None and (promo is None or row["ts_ms"] > promo["ts_ms"]):
+            promo = row
     return EvidenceReadout(
         book="paper" if use_paper else "fills",
-        span_days=_evidence_span_days(conn, agent, use_paper),
-        breaches_30d=int(breaches["n"]) if breaches is not None else 0,
+        span_days=_evidence_span_days(pconn if use_paper else conn, agent, use_paper),
+        breaches_30d=breaches,
         last_promotion_detail=promo["detail"] if promo is not None else None,
         last_promotion_ts_ms=int(promo["ts_ms"]) if promo is not None else None,
     )
@@ -169,6 +193,7 @@ def plan_mode_change(
     enabled: bool | None = None,
     confirm: bool = False,
     override_evidence: bool = False,
+    paper_conn: sqlite3.Connection | None = None,
 ) -> ModeChange:
     """Validate a requested agent_state change; raise OperatorError to refuse.
 
@@ -177,6 +202,11 @@ def plan_mode_change(
     a typo waiting to strand the real agent in paper while a dead row goes
     live. ``contracts`` are the loaded configs/*.yaml goals; the contract
     whose promotion targets the requested mode supplies the evidence gates.
+
+    ``paper_conn`` is the separate paper DB on split-book deployments
+    (B-PAPERLOOP): the paper book + paper audit trail are judged there, and
+    a pause/demote breach recorded in EITHER trail blocks. The applied
+    change always lands on ``conn`` — the DB the live tick obeys.
     """
     if agent not in known_agents:
         raise OperatorError(
@@ -213,16 +243,29 @@ def plan_mode_change(
     blockers: list[str] = []
     overrode = False
     if loosening:
+        pconn = paper_conn if paper_conn is not None else conn
         contract = _entry_contract(contracts, agent, new_mode)
         if contract is None or contract.promotion is None:
             blockers.append(
                 f"no promotion contract gates entry to {new_mode} in configs/"
             )
         else:
-            use_paper = old.mode == "paper" and _has_paper_book(conn, agent)
+            use_paper = old.mode == "paper" and _has_paper_book(pconn, agent)
+            evidence_conn = pconn if use_paper else conn
             blockers.extend(
-                _evidence_blockers(conn, agent, contract.promotion, use_paper)
+                _evidence_blockers(evidence_conn, agent, contract.promotion, use_paper)
             )
+            if pconn is not conn:
+                # A breach recorded in the OTHER trail blocks too: a live
+                # demotion must gate a paper-evidence re-promotion, and a
+                # paper-book breach must gate a fills-evidence rank-up.
+                other = conn if use_paper else pconn
+                other_label = "live" if use_paper else "paper"
+                blockers.extend(
+                    f"{b} ({other_label} book)"
+                    for b in _clean_guardrail_blockers(
+                        other, agent, contract.promotion)
+                )
         if not confirm:
             raise OperatorError(
                 f"{agent}: {old.mode}/{'on' if old.enabled else 'off'} -> "
