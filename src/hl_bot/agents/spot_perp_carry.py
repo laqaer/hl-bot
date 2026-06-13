@@ -41,10 +41,12 @@ class SpotPerpCarryConfig:
     lookback_h: float = 24.0             # mean funding over this trailing window
     min_daily_volume_usd: float = 10_000_000.0
     basis_stop_bps: float = 50.0         # unwind if |spot-perp|/perp exceeds this
-    max_hold_hours: float = 336.0        # 14d
+    max_hold_hours: float = 2160.0       # 90d: baseline carry holds; the
+                                         # 14d default churned taker exits
     max_notional_per_trade: float = 25.0     # PER LEG
     max_total_notional: float = 75.0         # across perp legs (the risk-bearing side)
-    max_concurrent_positions: int = 3        # logical positions
+    max_concurrent_positions: int = 5        # more concurrent holds = enough
+                                             # round trips to clear the G0 min-trade gate
 
 
 class SpotPerpCarryAgent(Agent):
@@ -64,10 +66,10 @@ class SpotPerpCarryAgent(Agent):
             lookback_h=float(c.get("lookback_h", 24.0)),
             min_daily_volume_usd=float(c.get("min_daily_volume_usd", 10_000_000.0)),
             basis_stop_bps=float(c.get("basis_stop_bps", 50.0)),
-            max_hold_hours=float(c.get("max_hold_hours", 336.0)),
+            max_hold_hours=float(c.get("max_hold_hours", 2160.0)),
             max_notional_per_trade=float(c.get("max_notional_per_trade", 25.0)),
             max_total_notional=float(c.get("max_total_notional", 75.0)),
-            max_concurrent_positions=int(c.get("max_concurrent_positions", 3)),
+            max_concurrent_positions=int(c.get("max_concurrent_positions", 5)),
         )
         self.conn = conn
         # coin -> trailing list of (ts_ms, hourly_funding_rate); the lookback mean.
