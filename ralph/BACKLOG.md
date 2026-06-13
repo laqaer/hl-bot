@@ -11,11 +11,38 @@ leverage *unblocked* thing. Add new findings as you discover them.
 > sweep harness. Superseded items moved to Done. New center of gravity:
 > **make a strategy pass its gates on real evidence.**
 
-## P0 — review remediation (2026-06-12 four-track audit)
+## P0 — build the edges the data points to (2026-06-13 funding finding)
+
+> The 2026-06-13 real-history study (docs/ALPHA_ROADMAP.md §0.5) proved HL
+> funding is baseline-pinned (~11% APR), killing the spike-threshold thesis
+> and pointing hard at baseline-harvest + sentiment edges. These are now the
+> top of the book.
+
+- [ ] **S4 — Spot↔perp baseline carry (THE #1 build).** Spec:
+  `docs/research/S4_spot_perp_carry.md`. Harvests the ever-present ~11% APR
+  baseline market-neutral (no spike needed). Needs: spot order support in
+  `exec/` (the Exchange client takes a spot pair name; extend
+  `place_limit_order` asset/szDecimals resolution for spot), a spot/perp pair
+  agent with leg-sequencing (perp leg only after spot leg confirmed) +
+  basis-stop + unwind rule, spot candle fetch in `backtest-fetch`, and a sweep
+  spec. This is the foundation of the track-record → vault path — build it
+  first, build it carefully.
+- [ ] **S8 — Crowding-reversal (the operator's sentiment edge, done +EV).**
+  Spec: `docs/research/S8_crowding_reversal.md`. Fade multi-signal sentiment
+  extremes (price-move + OI-spike + funding-extreme) with a hard stop. Needs:
+  OI plumbed into MarketView from `metaAndAssetCtxs`, the agent + sweep spec.
+  Note OI history isn't in the candle cache — phase 1 likely paper-soaks for
+  real evidence rather than backtesting (accrue OI forward via the WS feed).
+- [ ] **S5 — Cross-venue funding signal.** Spec:
+  `docs/research/S5_xvenue_funding.md`. Now MORE valuable given the baseline
+  finding: Binance/Bybit funding tells us when HL's *spike* is idiosyncratic
+  (fade-able, feeds S8) vs market-wide. Phase-1 offline study first.
+
+## P0b — review remediation (2026-06-12 four-track audit)
 
 > A full product audit (execution, measurement, strategies, ops) found and
-> fixed critical defects on the PR branch. These follow-ups were deliberately
-> deferred — they are the highest-leverage items after the fixes merge.
+> fixed critical defects. These follow-ups are the highest-leverage items
+> after the audit fixes (now merged).
 
 - [ ] **V1 — Verify the liquidation feed on the host.** The WS `trades`
   handler reads a `liquidation` flag that HL's public schema may not carry,

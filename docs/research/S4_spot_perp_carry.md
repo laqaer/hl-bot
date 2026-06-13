@@ -1,7 +1,22 @@
 # Strategy Spec: spot_perp_carry_v1 (S4)
 
-> Priority 1 in docs/ALPHA_ROADMAP.md §2. Single-venue cash-and-carry on
-> Hyperliquid: the cleanest funding capture available to this book.
+> **#1 PRIORITY BUILD** — now data-backed, not just plausible. The 2026-06-13
+> funding study (docs/ALPHA_ROADMAP.md §0.5) proved HL funding is pinned at a
+> steady ~11% APR baseline for nearly every coin, nearly all the time. The
+> threshold strategies (xfund/funding_carry) are starved because they wait for
+> rare spikes; THIS strategy harvests the baseline that is *always there*.
+> Single-venue cash-and-carry: the cleanest, most reliable funding capture
+> available to this book, and the foundation of the track-record → vault path.
+
+## Why this is the one (read before building)
+The whole carry thesis nearly died on 2026-06-13 when both threshold-based
+agents returned 0 confirmable trades. The reason was not "no edge" — it was
+that funding rarely leaves its ~11% APR baseline, so any strategy gated on
+*extreme* funding almost never trades. Spot-perp carry inverts that: it does
+not need a spike. Holding long-spot/short-perp through the baseline collects
+~11%/yr market-neutral, continuously, on every coin with a spot pair. At $25–
+500 clips the only real questions are (a) execution cost vs. hold length and
+(b) spot-leg liquidity — both answered in the validation plan below.
 
 ## Thesis
 Perp funding is a cash flow paid by the levered crowd to whoever will hold
