@@ -13,6 +13,7 @@ from rich.console import Console
 from rich.table import Table
 
 from ..agents.basis import BasisAgent
+from ..agents.dislocation_reversion import DislocationReversionAgent
 from ..agents.femr import FemrAgent
 from ..agents.funding_arb import FundingArbAgent
 from ..agents.funding_carry import FundingCarryAgent
@@ -841,6 +842,7 @@ def backtest(
         "spot_perp_carry_v1": lambda conn: SpotPerpCarryAgent(config={}, conn=conn),
         "xfund_carry_v1": lambda conn: XFundCarryAgent(config={}, conn=conn),
         "liq_cascade_v1": lambda conn: LiqCascadeAgent(config={}, conn=conn),
+        "dislocation_reversion_v1": lambda conn: DislocationReversionAgent(config={}, conn=conn),
         "basis_v1": lambda conn: BasisAgent(config={}, conn=conn),
     }
     if agent not in factories:
@@ -923,6 +925,7 @@ def confirm(
         "spot_perp_carry_v1": lambda conn: SpotPerpCarryAgent(config={}, conn=conn),
         "xfund_carry_v1": lambda conn: XFundCarryAgent(config={}, conn=conn),
         "liq_cascade_v1": lambda conn: LiqCascadeAgent(config={}, conn=conn),
+        "dislocation_reversion_v1": lambda conn: DislocationReversionAgent(config={}, conn=conn),
         "basis_v1": lambda conn: BasisAgent(config={}, conn=conn),
     }
     if agent not in factories:
