@@ -1,10 +1,13 @@
 # Nightly sweep: dislocation reversion — fade volatility-normalized overshoots
-# on fine (5m) candles with maker-resting entries. Grid keys MUST match the
-# DislocationReversionConfig dataclass field names exactly.
+# on fine (5m) candles. prefer: TAKER — the honest execution for reversion
+# (maker-resting has adverse selection: fills on continuation, misses
+# reverting fills). The earlier maker sweep (+7bps) assumed 100% fills at mid,
+# an upper bound; this tests whether the edge survives real entry cost.
+# Grid keys MUST match the DislocationReversionConfig dataclass field names.
 agent: dislocation_reversion_v1
 interval: 5m
 days: 90
-prefer: maker
+prefer: taker
 universes:
   - [BTC, ETH, SOL, HYPE]
   - [BTC, ETH, SOL, HYPE, DOGE, XRP, WIF, kPEPE]

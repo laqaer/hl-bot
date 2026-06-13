@@ -10,8 +10,10 @@ fade the EXTREME of that move on fine-grained (5m) candles:
     into us; go LONG (buy the dislocation),
   * mid gaps far ABOVE (z >= +z_enter) -> go SHORT.
 
-Maker-resting entry (the cascade fills you at the wick). A tight stop bounds the
-"it kept going" tail; a short max-hold caps the decay of the edge. This is a
+TAKER entry (cross the spread to get in NOW): a reversion strategy that rests
+a maker bid below mid suffers adverse selection — it fills only when the move
+continues against it and misses the reverting fills it wants. A tight stop
+bounds the "it kept going" tail; a short max-hold caps the decay of the edge. This is a
 tuned variant of ``twap_mr_regime`` (extreme z, tight stop, short hold, maker
 entry) and reads its vwap/sigma signal the same way:
 ``view.extra['candles_1h'][coin] = {'vwap': float, 'sigma': float}``.
@@ -49,7 +51,8 @@ class DislocationReversionConfig:
 
 
 class DislocationReversionAgent(Agent):
-    default_execution = "maker"  # the cascade fills the resting quote at the wick
+    default_execution = "taker"  # reversion must get in now; maker-resting has
+                                 # adverse selection (fills on continuation)
 
     def __init__(
         self,
