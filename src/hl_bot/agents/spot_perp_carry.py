@@ -180,16 +180,42 @@ class SpotPerpCarryAgent(Agent):
                                      "held_hrs": held_hrs},
                 ))
 
-        # ---- entries (leg-sequenced: spot first, perp only after spot fills) ----
-        # Logical positions in flight = held perp legs + spot-only legs still
-        # awaiting their perp; reserve a clip's worth of perp room for each.
+        # ---- complete pending hedges FIRST (leg-out control) ----
+        # A spot leg that has already filled MUST get its perp hedge, regardless
+        # of the entry threshold. Gating completion on enter_apr would leave us
+        # long spot UNHEDGED whenever the entry signal eases between the two legs
+        # (Codex review). If we no longer want the position at all, the exit
+        # block above already flattened the spot leg (it's in `flattening`).
         perp_held = {c for c in open_pos if not c.endswith(SPOT_SUFFIX)}
         spot_only = {c[: -len(SPOT_SUFFIX)] for c in open_pos if c.endswith(SPOT_SUFFIX)} - perp_held
+        for coin in sorted(spot_only - flattening):
+            perp_mid = view.mids.get(coin)
+            f = funding.get(coin)
+            if not perp_mid or perp_mid <= 0 or f is None or f <= 0:
+                # funding no longer positive -> never short a perp into it; the
+                # exit block unwinds the dangling spot leg instead.
+                continue
+            spot_leg = open_pos[f"{coin}{SPOT_SUFFIX}"]
+            spot_mid = self._spot_mid(view, coin) or spot_leg["entry_px"]
+            # size the perp to the spot leg's live notional -> true dollar-neutral
+            sz = round(spot_leg["sz"] * spot_mid / perp_mid, 5)
+            if sz <= 0:
+                continue
+            apr = self._funding_apr(view, coin)
+            out.append(Decision(
+                agent=self.name, action="place", coin=coin, side="A", sz=sz,
+                px=perp_mid, cloid=make_cloid(self.name),
+                reasoning=(f"S4 HEDGE perp {coin} @ ${perp_mid:.4f} short "
+                           f"({(apr or 0)*100:.0f}% APR) [leg 2/2]"),
+                market_snapshot={"leg": "perp", "apr": apr, "spot_mid": spot_mid,
+                                 "perp_mid": perp_mid, "hedge": True},
+            ))
+
+        # ---- open NEW positions (spot leg first; the hedge above completes it
+        #      next tick). Logical positions in flight = held perp legs + spot-
+        #      only legs awaiting their perp; reserve a clip of perp room each. ----
         active_logical = (perp_held | spot_only) - flattening
         room = self.cfg.max_concurrent_positions - len(active_logical)
-
-        # Perp-leg notional in use (the risk-bearing side). Spot-only-awaiting
-        # legs reserve a clip so we don't oversize while a perp leg is pending.
         active_perp_notional = sum(
             p["sz"] * (view.mids.get(c) or p["entry_px"])
             for c, p in open_pos.items()
@@ -202,6 +228,8 @@ class SpotPerpCarryAgent(Agent):
         for coin in funding:
             if coin in flattening or coin.endswith(SPOT_SUFFIX):
                 continue
+            if coin in open_pos or f"{coin}{SPOT_SUFFIX}" in open_pos:
+                continue                      # already in a position (or hedging)
             perp_mid = view.mids.get(coin)
             spot_mid = self._spot_mid(view, coin)
             if not perp_mid or perp_mid <= 0 or spot_mid is None or spot_mid <= 0:
@@ -218,51 +246,26 @@ class SpotPerpCarryAgent(Agent):
         candidates.sort(key=lambda kv: kv[1], reverse=True)
 
         for coin, apr in candidates:
-            spot_open = f"{coin}{SPOT_SUFFIX}" in open_pos
-            perp_open = coin in open_pos
-            if spot_open and perp_open:
-                continue
-            perp_mid = view.mids[coin]
+            if room <= 0 or room_notional < 5.0:
+                break
             spot_mid = self._spot_mid(view, coin)  # checked non-None above
-
-            if not spot_open and not perp_open:
-                # NEITHER leg open -> place ONLY the spot leg this cycle.
-                if room <= 0:
-                    continue
-                clip = min(self.cfg.max_notional_per_trade, room_notional)
-                if clip < 5.0:
-                    continue
-                sz = round(clip / spot_mid, 5)
-                out.append(Decision(
-                    agent=self.name, action="place", coin=f"{coin}{SPOT_SUFFIX}",
-                    side="B", sz=sz, px=spot_mid, cloid=make_cloid(self.name),
-                    reasoning=(
-                        f"S4 ENTER spot {coin}{SPOT_SUFFIX} @ ${spot_mid:.4f} "
-                        f"({apr*100:.0f}% APR), notional ${clip:.2f} [leg 1/2]"
-                    ),
-                    market_snapshot={"leg": "spot", "apr": apr, "spot_mid": spot_mid,
-                                     "perp_mid": perp_mid, "notional": clip},
-                ))
-                room -= 1
-                room_notional -= clip
-            elif spot_open and not perp_open:
-                # Spot confirmed last cycle -> place the PERP leg (short).
-                clip = min(self.cfg.max_notional_per_trade, room_notional + self.cfg.max_notional_per_trade)
-                # The reserved clip for this spot-only leg is now being committed.
-                if clip < 5.0:
-                    continue
-                sz = round(clip / perp_mid, 5)
-                out.append(Decision(
-                    agent=self.name, action="place", coin=coin,
-                    side="A", sz=sz, px=perp_mid, cloid=make_cloid(self.name),
-                    reasoning=(
-                        f"S4 ENTER perp {coin} @ ${perp_mid:.4f} short "
-                        f"({apr*100:.0f}% APR), notional ${clip:.2f} [leg 2/2]"
-                    ),
-                    market_snapshot={"leg": "perp", "apr": apr, "spot_mid": spot_mid,
-                                     "perp_mid": perp_mid, "notional": clip},
-                ))
-                room_notional -= self.cfg.max_notional_per_trade
+            perp_mid = view.mids[coin]
+            clip = min(self.cfg.max_notional_per_trade, room_notional)
+            if clip < 5.0:
+                continue
+            sz = round(clip / spot_mid, 5)
+            out.append(Decision(
+                agent=self.name, action="place", coin=f"{coin}{SPOT_SUFFIX}",
+                side="B", sz=sz, px=spot_mid, cloid=make_cloid(self.name),
+                reasoning=(
+                    f"S4 ENTER spot {coin}{SPOT_SUFFIX} @ ${spot_mid:.4f} "
+                    f"({apr*100:.0f}% APR), notional ${clip:.2f} [leg 1/2]"
+                ),
+                market_snapshot={"leg": "spot", "apr": apr, "spot_mid": spot_mid,
+                                 "perp_mid": perp_mid, "notional": clip},
+            ))
+            room -= 1
+            room_notional -= clip
 
         if not out:
             out.append(Decision(

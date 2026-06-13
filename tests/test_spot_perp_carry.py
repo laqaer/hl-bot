@@ -186,3 +186,30 @@ def test_no_spot_mid_skips_coin():
     ).fetchone()[0]
     assert placed == 0
     assert res.scorecard.n_trades == 0
+
+
+def test_spot_only_leg_hedged_even_after_apr_slips_below_enter():
+    # Regression (Codex P2): the spot leg fills at funding above enter_apr, then
+    # next tick funding eases to between exit_apr and enter_apr. The perp hedge
+    # MUST still be placed — never leave long-spot unhedged because the *entry*
+    # signal faded. (enter_apr default 0.10, exit_apr default 0.0.)
+    hi = 0.12 / 8760.0      # 12% APR — above enter
+    lo = 0.05 / 8760.0      # 5% APR — below enter, above exit(0), still positive
+    frames = []
+    for i in range(6):
+        f = hi if i == 0 else lo   # spike on the entry tick, then ease
+        frames.append(Frame(
+            ts_ms=i * HOUR,
+            mids={"HYPE": 30.0, "HYPE-SPOT": 30.0},
+            funding={"HYPE": f},
+            day_ntl_vlm={"HYPE": 50_000_000.0},
+            spot_mids={"HYPE": 30.0},
+        ))
+    conn = init_db(":memory:")
+    bt = Backtester(CostModel(maker=True), conn=conn)
+    bt.run(SpotPerpCarryAgent(config={"lookback_h": 1.0}, conn=conn),
+           frames, liquidate_at_end=False)   # inspect open legs mid-run
+    legs = _open_legs(conn)
+    # Both legs open and opposite-signed = hedged/market-neutral.
+    assert legs.get("HYPE-SPOT") == "B", f"spot leg missing: {legs}"
+    assert legs.get("HYPE") == "A", f"perp hedge not placed (unhedged spot!): {legs}"

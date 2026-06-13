@@ -7,7 +7,12 @@ description: >-
   is backtest + paper capable; live spot-order execution is a later PR. Must
   pass the G0 confirmation gate on real history before live wiring.
 mode: paper
-roster: live
+# PAPER-ONLY until the live spot-order adapter exists: the agent emits a
+# synthetic "{coin}-SPOT" leg which the live runner would route through the
+# perp order adapters (no spot mapping) and reject. roster:paper still accrues
+# paper evidence and is G0-confirmable; flip to live ONLY once exec/ can place
+# spot orders. (Codex review.)
+roster: paper
 
 goals:
   primary:
