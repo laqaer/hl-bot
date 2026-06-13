@@ -1,6 +1,11 @@
 # Nightly sweep: single-venue spot-perp cash-and-carry (S4), maker both legs.
 # Every enter band sits AT/BELOW the ~11% APR funding baseline by design — a
 # grid above baseline would re-create the starvation the threshold agents hit.
+#
+# 2026-06-13 first real confirm: mechanism works (60 trades, market-neutral)
+# but ~breakeven — the 14d max-hold churned taker exits. This grid varies
+# max_hold_hours to find the churn-vs-sample balance (long holds harvest the
+# baseline continuously; but holds too long starve the G0 min-trade gate).
 agent: spot_perp_carry_v1
 interval: 1h
 days: 180
@@ -8,7 +13,8 @@ prefer: maker
 universes:
   - [BTC, ETH, SOL, HYPE]
   - [BTC, ETH, SOL, HYPE, DOGE, XRP]
+  - [BTC, ETH, SOL, HYPE, DOGE, XRP, WIF, kPEPE]
 grid:
-  enter_apr: [0.06, 0.10, 0.14]
-  lookback_h: [8, 24, 72]
+  enter_apr: [0.06, 0.10]
   exit_apr: [0.0, 0.03]
+  max_hold_hours: [720, 2160, 4320]
