@@ -1,0 +1,14 @@
+# Nightly sweep: dislocation reversion — fade volatility-normalized overshoots
+# on fine (5m) candles with maker-resting entries. Grid keys MUST match the
+# DislocationReversionConfig dataclass field names exactly.
+agent: dislocation_reversion_v1
+interval: 5m
+days: 90
+prefer: maker
+universes:
+  - [BTC, ETH, SOL, HYPE]
+  - [BTC, ETH, SOL, HYPE, DOGE, XRP, WIF, kPEPE]
+grid:
+  z_enter: [2.5, 3.0, 4.0]
+  stop_pct: [0.01, 0.02]
+  max_hold_bars: [6, 12, 24]
