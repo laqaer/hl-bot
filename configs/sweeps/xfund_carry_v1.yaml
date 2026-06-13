@@ -10,6 +10,9 @@ universes:
   - [BTC, ETH, SOL, HYPE, DOGE, XRP]
   - [BTC, ETH, SOL, HYPE, DOGE, XRP, WIF, kPEPE]
 grid:
-  enter_funding_per_hr: [0.00008, 0.0001, 0.00015]
-  exit_funding_per_hr: [0.00002, 0.00003]
+  # Recalibrated 2026-06-13 to the actual funding distribution (most coins
+  # pinned at the ~11% APR baseline; xfund is structurally weak here —
+  # spot-perp carry (S4) is the better expression — but sweep it honestly).
+  enter_funding_per_hr: [0.00002, 0.00003, 0.00005]
+  exit_funding_per_hr: [0.00001, 0.000015]
   top_k: [2, 3]

@@ -7,5 +7,7 @@ universes:
   - [BTC, ETH, SOL, HYPE]
   - [BTC, ETH, SOL, HYPE, DOGE, XRP]
 grid:
-  funding_enter_per_hr: [0.0001, 0.00015, 0.0002]
-  funding_exit_per_hr: [0.00003, 0.00005]
+  # Recalibrated to HL's baseline-dominated regime (2026-06-13): enter
+  # above the 11% APR baseline to catch spikes, exit near it.
+  funding_enter_per_hr: [0.00002, 0.00003, 0.00005]
+  funding_exit_per_hr: [0.00001, 0.000015]
