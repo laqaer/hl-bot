@@ -35,8 +35,8 @@ from .decisions import Decision
 
 @dataclass
 class XFundCarryConfig:
-    enter_funding_per_hr: float = 0.0001       # |rate| to be eligible for a leg
-    exit_funding_per_hr: float = 0.00003       # exit when |rate| falls below this
+    enter_funding_per_hr: float = 0.00003      # above HL 11% baseline (26% APR)
+    exit_funding_per_hr: float = 0.000015      # exit near baseline (13% APR)
     top_k: int = 2                             # legs per side
     min_daily_volume_usd: float = 10_000_000.0
     max_notional_per_trade: float = 25.0
@@ -60,8 +60,8 @@ class XFundCarryAgent(Agent):
         super().__init__(name, config)
         c = config or {}
         self.cfg = XFundCarryConfig(
-            enter_funding_per_hr=float(c.get("enter_funding_per_hr", 0.0001)),
-            exit_funding_per_hr=float(c.get("exit_funding_per_hr", 0.00003)),
+            enter_funding_per_hr=float(c.get("enter_funding_per_hr", 0.00003)),
+            exit_funding_per_hr=float(c.get("exit_funding_per_hr", 0.000015)),
             top_k=int(c.get("top_k", 2)),
             min_daily_volume_usd=float(c.get("min_daily_volume_usd", 10_000_000.0)),
             max_notional_per_trade=float(c.get("max_notional_per_trade", 25.0)),

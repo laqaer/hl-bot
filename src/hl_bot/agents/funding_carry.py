@@ -27,8 +27,11 @@ from .decisions import Decision
 
 @dataclass
 class FundingCarryConfig:
-    enter_funding_per_hr: float = 0.00015
-    exit_funding_per_hr: float = 0.00005
+    # HL funding is baseline-pinned ~11% APR (0.0000126/hr); these catch
+    # genuine spikes ABOVE baseline (26% / 13% APR). See the 2026-06-13
+    # funding-distribution finding in docs/ALPHA_ROADMAP.md.
+    enter_funding_per_hr: float = 0.00003
+    exit_funding_per_hr: float = 0.000015
     min_daily_volume_usd: float = 10_000_000.0
     stop_loss_pct: float = 0.03                 # wide: we're holding for carry
     max_hold_hours: float = 36.0
@@ -50,8 +53,8 @@ class FundingCarryAgent(Agent):
         super().__init__(name, config)
         c = config or {}
         self.cfg = FundingCarryConfig(
-            enter_funding_per_hr=float(c.get("enter_funding_per_hr", 0.00015)),
-            exit_funding_per_hr=float(c.get("exit_funding_per_hr", 0.00005)),
+            enter_funding_per_hr=float(c.get("enter_funding_per_hr", 0.00003)),
+            exit_funding_per_hr=float(c.get("exit_funding_per_hr", 0.000015)),
             min_daily_volume_usd=float(c.get("min_daily_volume_usd", 10_000_000.0)),
             stop_loss_pct=float(c.get("stop_loss_pct", 0.03)),
             max_hold_hours=float(c.get("max_hold_hours", 36.0)),

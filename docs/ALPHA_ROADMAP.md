@@ -40,6 +40,35 @@ maximizes the three things that compound toward it, in order of controllability:
 Monthly checkpoint (operator + loop): actual vs. target compounding, kill or
 scale strategies by evidence, revisit capital strategy.
 
+## 0.5. The funding-regime finding (2026-06-13, real 180d data)
+
+First-ever confirm + sweep on real history produced **0 trades** for both carry
+agents — and the diagnosis is the most important empirical result we have:
+
+**Hyperliquid funding is baseline-dominated.** Over 180d the median funding for
+nearly every coin (BTC, HYPE, DOGE, WIF, kPEPE) is pinned at **~11% APR** — the
+exchange's interest-rate baseline (≈0.01%/8h) — escaping it only during rare
+directional spikes (WIF→112%, HYPE→93%, kPEPE→79% APR, a handful of hours each).
+The old thresholds (≈88% APR entry) sat at the p99.9 of what occurs, so the
+strategies were eligible to trade ~3 hours in 4,321. Not unprofitable — starved.
+(Volume gate exonerated: BTC shows $13B/day; the day_ntl_vlm fix is correct.)
+
+Consequences (these reshape the strategy priority):
+
+1. **Cross-sectional carry (xfund) is structurally weak here.** With every coin
+   pinned at the same 11% baseline, there is no persistent dispersion to harvest
+   — shorting one at 11% and longing another at 11% nets ~0 before 4 legs of
+   fees. Dispersion exists only in the rare spikes. **Demoted from flagship.**
+2. **The 11% baseline IS the harvestable prize — via spot↔perp (S4).** Long spot
+   + short perp collects the ever-present baseline continuously, market-neutral,
+   no spike required; ~6bps of round-trip cost amortized over a multi-week hold
+   is trivial against 11%/yr. The data proves the baseline is rock-steady. **S4
+   is now the #1 EV build, not just a nice-to-have.**
+3. **Single-name spike capture (funding_carry) is the cheap interim test.** Short
+   the one coin whose funding spikes above baseline; recalibrated to enter at
+   ~26% APR (0.00003/hr), exit near baseline. A few high-value, negative-skew
+   trades — re-sweeping to see if they beat costs. Live candidate or clean kill.
+
 ## 1. Verdict discipline: is there alpha today?
 
 Nothing is "alpha" until `hlbot confirm` passes on real history **and** paper
