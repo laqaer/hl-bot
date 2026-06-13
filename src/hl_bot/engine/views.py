@@ -171,3 +171,9 @@ def enrich_view(view: MarketView, api_url: str, vol: dict[str, float]) -> None:
     view.extra["closes"] = closes_by_coin
     view.extra["spot_mids"] = spot_mids
     view.extra["liquidations"] = liquidations
+    # Also surface each spot mid under a "<coin>-SPOT" key in view.mids so the
+    # spot-perp carry (S4) agent prices its spot leg identically in paper and
+    # backtest (the backtest puts spot in mids[-SPOT] too). extra["spot_mids"]
+    # stays the canonical source for basis.py and friends.
+    for coin, smid in spot_mids.items():
+        view.mids[f"{coin}-SPOT"] = smid

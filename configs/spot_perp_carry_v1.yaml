@@ -1,0 +1,57 @@
+agent: spot_perp_carry_v1
+description: >-
+  Single-venue spot-perp cash-and-carry (S4). Long HL spot + short the same
+  coin's HL perp, 1:1 notional, to harvest the ~11% APR funding baseline
+  market-neutral and continuously — no spike needed. Maker-first both legs;
+  exit on funding stopping/flipping, basis blowout, or max-hold. This increment
+  is backtest + paper capable; live spot-order execution is a later PR. Must
+  pass the G0 confirmation gate on real history before live wiring.
+mode: paper
+roster: live
+
+goals:
+  primary:
+    metric: edge_bps
+    window: 7d
+    op: ">="
+    threshold: 0
+  secondary:
+    - {metric: net_pnl, window: 30d, op: ">=", threshold: 0}
+
+guardrails:
+  - {metric: net_pnl,  window: 24h, op: ">=", threshold: -20,
+     action: pause,  reason: "24h realized loss > $20"}
+  - {metric: edge_bps, window: 7d,  op: ">=", threshold: -10,
+     action: demote, reason: "7d realized edge < -10 bps after costs"}
+
+# Auto-promotion ladder: paper -> live_small on simulated (paper-source)
+# evidence + a fresh G0 confirmation on real history; live_small -> live ONLY
+# on real-fill evidence. The supervisor flips agent_state automatically; the
+# kill switch (`hlbot kill`) suppresses all promotions.
+sizing:
+  live_small_max_total: 75
+  live_small_max_per_trade: 25
+
+# n_trades counts CLOSE events (round trips), not fills. A logical S4 position
+# is two legs (spot + perp), so 40 close-events ~= ~10 round trips.
+promotion_ladder:
+  - from: paper
+    to: live_small
+    min_days_in_mode: 5
+    require_g0: true
+    persist_days: 3
+    persist_evals: 12
+    conditions:
+      # recent-window risk gate: don't promote an agent that's bleeding NOW
+      - {metric: net_pnl,  window: 7d,  op: ">=", threshold: 0, source: paper}
+      - {metric: edge_bps, window: 30d, op: ">=", threshold: 3, source: paper}
+      - {metric: n_trades, window: 30d, op: ">=", threshold: 40, source: paper}
+  - from: live_small
+    to: live
+    min_days_in_mode: 14
+    persist_days: 3
+    conditions:
+      - {metric: edge_bps, window: 30d, op: ">=", threshold: 3, source: live}
+      - {metric: net_pnl,  window: 30d, op: ">=", threshold: 0, source: live}
+      - {metric: sharpe,   window: 30d, op: ">=", threshold: 1.0, source: live}
+      - {metric: n_trades, window: 30d, op: ">=", threshold: 20, source: live}

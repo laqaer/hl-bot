@@ -33,6 +33,7 @@ from ..agents.funding_arb import FundingArbAgent
 from ..agents.funding_carry import FundingCarryAgent
 from ..agents.liq_cascade import LiqCascadeAgent
 from ..agents.meta_allocator import MetaAllocator, MetaAllocatorConfig
+from ..agents.spot_perp_carry import SpotPerpCarryAgent
 from ..agents.twap_mr import TwapMrAgent
 from ..agents.twap_mr_regime import TwapMrRegimeAgent
 from ..agents.xfund_carry import XFundCarryAgent
@@ -73,6 +74,7 @@ AGENT_FACTORIES: dict[str, Callable[[sqlite3.Connection | None, dict], Agent]] =
     "twap_mr_v1": lambda conn, cfg: TwapMrAgent(config=cfg, conn=conn),
     "twap_mr_regime_v1": lambda conn, cfg: TwapMrRegimeAgent(config=cfg, conn=conn),
     "funding_carry_v1": lambda conn, cfg: FundingCarryAgent(config=cfg, conn=conn),
+    "spot_perp_carry_v1": lambda conn, cfg: SpotPerpCarryAgent(config=cfg, conn=conn),
     "xfund_carry_v1": lambda conn, cfg: XFundCarryAgent(config=cfg, conn=conn),
     "liq_cascade_v1": lambda conn, cfg: LiqCascadeAgent(config=cfg, conn=conn),
     "basis_v1": lambda conn, cfg: BasisAgent(config=cfg, conn=conn),

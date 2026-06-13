@@ -1,0 +1,14 @@
+# Nightly sweep: single-venue spot-perp cash-and-carry (S4), maker both legs.
+# Every enter band sits AT/BELOW the ~11% APR funding baseline by design — a
+# grid above baseline would re-create the starvation the threshold agents hit.
+agent: spot_perp_carry_v1
+interval: 1h
+days: 180
+prefer: maker
+universes:
+  - [BTC, ETH, SOL, HYPE]
+  - [BTC, ETH, SOL, HYPE, DOGE, XRP]
+grid:
+  enter_apr: [0.06, 0.10, 0.14]
+  lookback_h: [8, 24, 72]
+  exit_apr: [0.0, 0.03]
