@@ -19,6 +19,7 @@ from ..agents.funding_carry import FundingCarryAgent
 from ..agents.liq_cascade import LiqCascadeAgent
 from ..agents.meta_allocator import MetaAllocator, MetaAllocatorConfig
 from ..agents.runtime import run_tick
+from ..agents.spot_perp_carry import SpotPerpCarryAgent
 from ..agents.twap_mr import TwapMrAgent
 from ..agents.twap_mr_regime import TwapMrRegimeAgent
 from ..agents.veto import VetoAgent
@@ -837,6 +838,7 @@ def backtest(
         "twap_mr_regime_v1": lambda conn: TwapMrRegimeAgent(config={}, conn=conn),
         "femr_v1": lambda conn: FemrAgent(config={}, conn=conn),
         "funding_carry_v1": lambda conn: FundingCarryAgent(config={}, conn=conn),
+        "spot_perp_carry_v1": lambda conn: SpotPerpCarryAgent(config={}, conn=conn),
         "xfund_carry_v1": lambda conn: XFundCarryAgent(config={}, conn=conn),
         "liq_cascade_v1": lambda conn: LiqCascadeAgent(config={}, conn=conn),
         "basis_v1": lambda conn: BasisAgent(config={}, conn=conn),
@@ -918,6 +920,7 @@ def confirm(
         "twap_mr_regime_v1": lambda conn: TwapMrRegimeAgent(config={}, conn=conn),
         "femr_v1": lambda conn: FemrAgent(config={}, conn=conn),
         "funding_carry_v1": lambda conn: FundingCarryAgent(config={}, conn=conn),
+        "spot_perp_carry_v1": lambda conn: SpotPerpCarryAgent(config={}, conn=conn),
         "xfund_carry_v1": lambda conn: XFundCarryAgent(config={}, conn=conn),
         "liq_cascade_v1": lambda conn: LiqCascadeAgent(config={}, conn=conn),
         "basis_v1": lambda conn: BasisAgent(config={}, conn=conn),
