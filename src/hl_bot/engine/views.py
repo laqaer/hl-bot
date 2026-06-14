@@ -54,42 +54,53 @@ def enrich_view(view: MarketView, api_url: str, vol: dict[str, float]) -> None:
     top_coins = [c for c, _ in top]
 
     candles_1h: dict[str, dict] = {}
+    candles_5m: dict[str, dict] = {}
     closes_by_coin: dict[str, list[float]] = {}
     spot_mids: dict[str, float] = {}
     liquidations: list[dict] = []
 
-    with httpx.Client(timeout=15) as cli:
-        # 60 × 1m candles -> vwap & sigma per top coin
+    def _vwap_sigma(cli, coin, interval, span_ms):
+        """(stats, closes) for ``coin`` over the last 60 ``interval`` bars, or
+        (None, None). stats = {vwap, sigma, n}; sigma is the std of closes."""
         end_ms = int(time.time() * 1000)
-        start_ms = end_ms - 60 * 60_000
+        cs = cli.post(api_url + "/info", json={
+            "type": "candleSnapshot",
+            "req": {"coin": coin, "interval": interval,
+                    "startTime": end_ms - span_ms, "endTime": end_ms},
+        }).json() or []
+        if not isinstance(cs, list) or len(cs) < 10:
+            return None, None
+        pxs, vols = [], []
+        for k in cs:
+            try:
+                c_px, c_vol = float(k.get("c", 0)), float(k.get("v", 0))
+                if c_px > 0:
+                    pxs.append(c_px)
+                    vols.append(c_vol)
+            except (TypeError, ValueError):
+                continue
+        if len(pxs) < 10:
+            return None, None
+        tot_vol = sum(vols)
+        vwap = sum(p * v for p, v in zip(pxs, vols, strict=False)) / tot_vol if tot_vol > 0 else sum(pxs) / len(pxs)
+        mean = sum(pxs) / len(pxs)
+        sigma = (sum((p - mean) ** 2 for p in pxs) / len(pxs)) ** 0.5
+        return {"vwap": vwap, "sigma": sigma, "n": len(pxs)}, pxs
+
+    with httpx.Client(timeout=15) as cli:
         for coin in top_coins:
             try:
-                cs = cli.post(api_url + "/info", json={
-                    "type": "candleSnapshot",
-                    "req": {"coin": coin, "interval": "1m",
-                            "startTime": start_ms, "endTime": end_ms},
-                }).json() or []
-                if not isinstance(cs, list) or len(cs) < 10:
-                    continue
-                pxs, vols = [], []
-                for k in cs:
-                    try:
-                        c_px = float(k.get("c", 0))
-                        c_vol = float(k.get("v", 0))
-                        if c_px > 0:
-                            pxs.append(c_px)
-                            vols.append(c_vol)
-                    except (TypeError, ValueError):
-                        continue
-                if len(pxs) < 10:
-                    continue
-                tot_vol = sum(vols)
-                vwap = sum(p * v for p, v in zip(pxs, vols, strict=False)) / tot_vol if tot_vol > 0 else sum(pxs) / len(pxs)
-                mean = sum(pxs) / len(pxs)
-                var = sum((p - mean) ** 2 for p in pxs) / len(pxs)
-                sigma = var ** 0.5
-                candles_1h[coin] = {"vwap": vwap, "sigma": sigma, "n": len(pxs)}
-                closes_by_coin[coin] = pxs
+                # twap_mr family: 60×1m = 1h window (candles_1h).
+                stats1, closes1 = _vwap_sigma(cli, coin, "1m", 60 * 60_000)
+                if stats1:
+                    candles_1h[coin] = stats1
+                    closes_by_coin[coin] = closes1
+                # dislocation_reversion: 60×5m = 5h window (candles_5m). MUST
+                # match its backtest basis (interval 5m, vwap_window 60) or live
+                # trades a different signal than confirmed (the twap_mr lesson).
+                stats5, _ = _vwap_sigma(cli, coin, "5m", 60 * 5 * 60_000)
+                if stats5:
+                    candles_5m[coin] = stats5
             except Exception:  # noqa: BLE001
                 continue
 
@@ -168,6 +179,7 @@ def enrich_view(view: MarketView, api_url: str, vol: dict[str, float]) -> None:
             pass
 
     view.extra["candles_1h"] = candles_1h
+    view.extra["candles_5m"] = candles_5m
     view.extra["closes"] = closes_by_coin
     view.extra["spot_mids"] = spot_mids
     view.extra["liquidations"] = liquidations

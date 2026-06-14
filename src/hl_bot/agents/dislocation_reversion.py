@@ -16,7 +16,7 @@ continues against it and misses the reverting fills it wants. A tight stop
 bounds the "it kept going" tail; a short max-hold caps the decay of the edge. This is a
 tuned variant of ``twap_mr_regime`` (extreme z, tight stop, short hold, maker
 entry) and reads its vwap/sigma signal the same way:
-``view.extra['candles_1h'][coin] = {'vwap': float, 'sigma': float}``.
+``view.extra['candles_5m'][coin]`` (5m/5h, matching its backtest).
 
 Perp-only (single leg) — ``coin`` is the plain perp coin, prices from
 ``view.mids[coin]``, funding accrues normally (negligible over short holds).
@@ -38,8 +38,8 @@ from .decisions import Decision
 class DislocationReversionConfig:
     z_enter: float = 3.0            # fade when |(mid-vwap)/sigma| >= this
     z_exit: float = 0.5            # take profit when z reverts within this of vwap
-    stop_pct: float = 0.015        # 1.5% adverse -> stop out
-    max_hold_bars: int = 12        # ~1h at 5m; dislocation edges decay fast
+    stop_pct: float = 0.02         # confirmed combo (taker sweep 2026-06-14)
+    max_hold_bars: int = 24        # ~2h at 5m; the confirmed hold (z=3/stop=2%)
     bar_seconds: int = 300         # 5m; for converting max_hold_bars to a time check
     min_daily_volume_usd: float = 10_000_000.0
     max_notional_per_trade: float = 25.0
@@ -65,8 +65,8 @@ class DislocationReversionAgent(Agent):
         self.cfg = DislocationReversionConfig(
             z_enter=float(c.get("z_enter", 3.0)),
             z_exit=float(c.get("z_exit", 0.5)),
-            stop_pct=float(c.get("stop_pct", 0.015)),
-            max_hold_bars=int(c.get("max_hold_bars", 12)),
+            stop_pct=float(c.get("stop_pct", 0.02)),
+            max_hold_bars=int(c.get("max_hold_bars", 24)),
             bar_seconds=int(c.get("bar_seconds", 300)),
             min_daily_volume_usd=float(c.get("min_daily_volume_usd", 10_000_000.0)),
             max_notional_per_trade=float(c.get("max_notional_per_trade", 25.0)),
@@ -101,9 +101,9 @@ class DislocationReversionAgent(Agent):
         """Return ``(z, vwap)`` for ``coin`` or ``None`` if unavailable.
 
         Reads vwap/sigma the SAME way twap_mr_regime/twap_mr does:
-        ``view.extra['candles_1h'][coin] = {'vwap': ..., 'sigma': ...}``.
+        ``view.extra['candles_5m'][coin] = {'vwap': ..., 'sigma': ...}``.
         """
-        candles: dict[str, dict] = view.extra.get("candles_1h", {}) or {}
+        candles: dict[str, dict] = view.extra.get("candles_5m", {}) or {}
         stats = candles.get(coin) or {}
         vwap = stats.get("vwap")
         sigma = stats.get("sigma")
