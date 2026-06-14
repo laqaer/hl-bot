@@ -1,0 +1,21 @@
+# Nightly sweep: funding-gated crowding fade (D2a). Fade a vol-normalized 5m
+# overshoot that the funding rate confirms is crowded. prefer: TAKER (a reversion
+# must get in now; resting maker has adverse selection — same as dislocation).
+#
+# Grid keys MUST match the FundingCrowdingFadeConfig dataclass field names.
+# NOTE ON `days`: HL serves ≤~5000 candles/interval, so 5m `days: 90` is really
+# ~17.5d of evidence (the report + a fetch-time WARNING state the actual span).
+# Funding history is fetched alongside (recent window, hourly). Thin sample —
+# the G0 min-trade-count + 2x-slip gate is the real test; do not read "90d".
+agent: funding_crowding_fade_v1
+interval: 5m
+days: 90
+prefer: taker
+universes:
+  - [BTC, ETH, SOL, HYPE]
+  - [BTC, ETH, SOL, HYPE, DOGE, XRP, WIF, kPEPE]
+grid:
+  funding_min_apr: [15, 20, 30]
+  z_enter: [1.0, 1.5, 2.0]
+  max_hold_bars: [6, 12]
+  stop_pct: [0.02]

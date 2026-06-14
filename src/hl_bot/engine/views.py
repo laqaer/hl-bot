@@ -183,6 +183,10 @@ def enrich_view(view: MarketView, api_url: str, vol: dict[str, float]) -> None:
     view.extra["closes"] = closes_by_coin
     view.extra["spot_mids"] = spot_mids
     view.extra["liquidations"] = liquidations
+    # Unscaled 1h funding as a signal, mirroring the backtest frame's
+    # funding_hourly (live view.funding is already the 1h rate). Lets
+    # funding-threshold agents read identical units in paper/live and backtest.
+    view.extra["funding_hourly"] = dict(view.funding)
     # Also surface each spot mid under a "<coin>-SPOT" key in view.mids so the
     # spot-perp carry (S4) agent prices its spot leg identically in paper and
     # backtest (the backtest puts spot in mids[-SPOT] too). extra["spot_mids"]

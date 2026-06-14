@@ -57,6 +57,7 @@ class Frame:
     closes: dict[str, list[float]] = field(default_factory=dict)     # coin -> trailing closes
     spot_mids: dict[str, float] = field(default_factory=dict)
     liquidations: list[dict] = field(default_factory=list)
+    funding_hourly: dict[str, float] = field(default_factory=dict)   # unscaled 1h rate (signal)
 
 
 @dataclass(frozen=True)
@@ -226,6 +227,11 @@ class Backtester:
                 "spot_mids": dict(frame.spot_mids),
                 "liquidations": list(frame.liquidations),
                 "live_positions": live_positions,
+                # Unscaled 1h funding rate as a SIGNAL (frame.funding is the
+                # per-bar rate used for PnL accrual; funding_hourly is hourly in
+                # both backtest and live, so a funding-threshold agent reads the
+                # same units either way — the twap_mr window-mismatch lesson).
+                "funding_hourly": dict(frame.funding_hourly),
             },
         )
 
