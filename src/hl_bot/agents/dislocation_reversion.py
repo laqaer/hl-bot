@@ -16,7 +16,7 @@ continues against it and misses the reverting fills it wants. A tight stop
 bounds the "it kept going" tail; a short max-hold caps the decay of the edge. This is a
 tuned variant of ``twap_mr_regime`` (extreme z, tight stop, short hold, maker
 entry) and reads its vwap/sigma signal the same way:
-``view.extra['candles_1h'][coin] = {'vwap': float, 'sigma': float}``.
+``view.extra['candles_5m'][coin]`` (5m/5h, matching its backtest).
 
 Perp-only (single leg) — ``coin`` is the plain perp coin, prices from
 ``view.mids[coin]``, funding accrues normally (negligible over short holds).
@@ -101,9 +101,9 @@ class DislocationReversionAgent(Agent):
         """Return ``(z, vwap)`` for ``coin`` or ``None`` if unavailable.
 
         Reads vwap/sigma the SAME way twap_mr_regime/twap_mr does:
-        ``view.extra['candles_1h'][coin] = {'vwap': ..., 'sigma': ...}``.
+        ``view.extra['candles_5m'][coin] = {'vwap': ..., 'sigma': ...}``.
         """
-        candles: dict[str, dict] = view.extra.get("candles_1h", {}) or {}
+        candles: dict[str, dict] = view.extra.get("candles_5m", {}) or {}
         stats = candles.get(coin) or {}
         vwap = stats.get("vwap")
         sigma = stats.get("sigma")

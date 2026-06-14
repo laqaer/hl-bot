@@ -219,6 +219,9 @@ class Backtester:
             extra={
                 "day_ntl_vlm": dict(frame.day_ntl_vlm),
                 "candles_1h": dict(frame.candles_1h),
+                # dislocation reads candles_5m; in a 5m backtest the frame's
+                # candle signal IS the 5m/5h basis, so alias it through.
+                "candles_5m": dict(frame.candles_1h),
                 "closes": {k: list(v) for k, v in frame.closes.items()},
                 "spot_mids": dict(frame.spot_mids),
                 "liquidations": list(frame.liquidations),

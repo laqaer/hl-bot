@@ -8,8 +8,8 @@ each exit reason (take-profit / stop / max-hold), and that a fade-and-revert
 round trip is net positive through the engine with real maker costs.
 
 The agent reads vwap/sigma exactly like twap_mr_regime:
-``view.extra['candles_1h'][coin] = {'vwap': float, 'sigma': float}``, which the
-backtest engine plumbs from ``Frame.candles_1h``.
+``view.extra['candles_5m'][coin] = {'vwap': float, 'sigma': float}``, which the
+backtest engine plumbs from ``Frame.candles_5m``.
 """
 
 from __future__ import annotations
@@ -31,7 +31,9 @@ def _view(mid: float, vwap: float, sigma: float, ts_ms: int = 0) -> MarketView:
         funding={COIN: 0.0},
         extra={
             "day_ntl_vlm": {COIN: VOL},
-            "candles_1h": {COIN: {"vwap": vwap, "sigma": sigma, "n": 60}},
+            # the agent reads candles_5m (5m/5h); the engine aliases Frame.candles_1h
+            # to it for backtests, but the direct-decide helper builds the view by hand.
+            "candles_5m": {COIN: {"vwap": vwap, "sigma": sigma, "n": 60}},
             "closes": {COIN: [vwap, mid]},
         },
     )
