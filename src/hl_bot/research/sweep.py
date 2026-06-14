@@ -116,13 +116,43 @@ def run_sweep(
     return rows
 
 
-def render_markdown(spec: SweepSpec, rows: list[SweepRow], *, date: str | None = None) -> str:
-    """Ranked, human/agent-readable sweep report for research/results/."""
+def _coverage_note(spec: SweepSpec, coverage_by_universe: dict[str, float] | None) -> str:
+    """Header annotation stating the ACTUAL data window when it's short.
+
+    Reports EVERY universe's span (limiting span first) rather than a single
+    aggregate: universes can differ (a newly-listed coin, or one load that
+    failed → 0d), and a long-history universe must not mask a short one — that
+    would reintroduce the evidence-overstatement this whole change prevents.
+    """
+    if not coverage_by_universe:
+        return ""
+    spans = list(coverage_by_universe.values())
+    if not spans or min(spans) >= spec.days * 0.9:
+        return ""
+    ordered = sorted(coverage_by_universe.items(), key=lambda kv: kv[1])
+    per = "; ".join(f"{u or '(none)'} ~{c:.1f}d" for u, c in ordered)
+    return (f" — ACTUAL coverage (HL retains ≤~5000 candles/interval; the evidence "
+            f"window is the SHORTEST span, not {spec.days}d): {per}")
+
+
+def render_markdown(
+    spec: SweepSpec, rows: list[SweepRow], *, date: str | None = None,
+    coverage_by_universe: dict[str, float] | None = None,
+) -> str:
+    """Ranked, human/agent-readable sweep report for research/results/.
+
+    ``coverage_by_universe`` ({universe_label: actual_days}, supplied by the
+    caller that loaded the frames) is the real wall-clock span each universe's
+    data covered. HL retains ≤~5000 candles/interval, so a fine-interval sweep's
+    real window is often far shorter than ``spec.days`` — we say so explicitly,
+    per universe, rather than print a misleading "90d".
+    """
     date = date or time.strftime("%Y-%m-%d")
+    cov_note = _coverage_note(spec, coverage_by_universe)
     lines = [
         f"# Sweep: {spec.agent} — {date}",
         "",
-        f"- dataset: {spec.days}d of {spec.interval} candles, prefer={spec.prefer}",
+        f"- dataset: {spec.days}d of {spec.interval} candles, prefer={spec.prefer}{cov_note}",
         f"- gate: OOS edge ≥ {spec.min_edge_bps} bps, sharpe ≥ {spec.min_sharpe}, 2x-slippage robust",
         f"- combos: {len(rows)} (ranked by IN-SAMPLE edge; OOS columns are a "
         f"one-shot readout, never the selection key)",
@@ -160,6 +190,7 @@ def render_markdown(spec: SweepSpec, rows: list[SweepRow], *, date: str | None =
 def write_outputs(
     spec: SweepSpec, rows: list[SweepRow], *,
     json_dir: str | Path, md_dir: str | Path, date: str | None = None,
+    coverage_by_universe: dict[str, float] | None = None,
 ) -> tuple[Path, Path]:
     date = date or time.strftime("%Y-%m-%d")
     jd, md = Path(json_dir), Path(md_dir)
@@ -168,5 +199,6 @@ def write_outputs(
     jpath = jd / f"{date}_{spec.agent}.json"
     jpath.write_text(json.dumps([r.__dict__ for r in rows], indent=1, default=str))
     mpath = md / f"{date}_{spec.agent}.md"
-    mpath.write_text(render_markdown(spec, rows, date=date))
+    mpath.write_text(render_markdown(spec, rows, date=date,
+                                     coverage_by_universe=coverage_by_universe))
     return jpath, mpath
