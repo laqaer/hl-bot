@@ -16,8 +16,13 @@ REMOTE="$(sudo -u hlbot git -C "$HOME_DIR" rev-parse origin/main)"
 if [ -n "$(sudo -u hlbot git -C "$HOME_DIR" status --porcelain)" ]; then
   log "working tree dirty — skipping (manual/local state present)"; exit 0
 fi
-log "$LOCAL -> $REMOTE"
-sudo -u hlbot git -C "$HOME_DIR" reset --hard origin/main
+# FAST-FORWARD ONLY: if HEAD has local commits not on main (an operator
+# hotfix), HEAD is not an ancestor of origin/main — skip rather than discard.
+if ! sudo -u hlbot git -C "$HOME_DIR" merge-base --is-ancestor HEAD origin/main; then
+  log "live HEAD has local commits not on main — skipping (won\x27t clobber)"; exit 0
+fi
+log "fast-forward $LOCAL -> $REMOTE"
+sudo -u hlbot git -C "$HOME_DIR" merge --ff-only origin/main
 ( cd "$HOME_DIR" && sudo -u hlbot uv sync --frozen )
 systemctl restart hlbot-run hlbot-ws
 log "live engine updated + restarted"

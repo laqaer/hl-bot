@@ -60,6 +60,14 @@ sed "s|/opt/hl-bot-ralph|$RHOME_ESC|g" "$LIVE_HOME/deploy/systemd/hlbot-ralph.se
   > /etc/systemd/system/hlbot-ralph.service
 systemctl disable --now hlbot-loop 2>/dev/null || true   # the live-tree loop, if it was on
 systemctl daemon-reload
+
+# 5. enable auto-deploy of reviewed main into the live engine (the other
+#    half of full autonomy). Idempotent; ff-only; clean-tree-only.
+install -m644 "$LIVE_HOME/deploy/systemd/hlbot-deploy.service" /etc/systemd/system/hlbot-deploy.service
+install -m644 "$LIVE_HOME/deploy/systemd/hlbot-deploy.timer"   /etc/systemd/system/hlbot-deploy.timer
+systemctl daemon-reload
+systemctl enable --now hlbot-deploy.timer
+log "auto-deploy timer enabled (polls reviewed main every 10m)"
 log "done. The live engine ($LIVE_HOME) is untouched and on main."
 log "start the loop:  sudo systemctl enable --now hlbot-ralph"
 log "watch it:        sudo journalctl -u hlbot-ralph -f"
