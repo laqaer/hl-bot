@@ -58,6 +58,9 @@ class Frame:
     spot_mids: dict[str, float] = field(default_factory=dict)
     liquidations: list[dict] = field(default_factory=list)
     funding_hourly: dict[str, float] = field(default_factory=dict)   # unscaled 1h rate (signal)
+    # coin -> {age_bars, ref_px, vol_usd, recent_closes} for coins newly listed
+    # within the window (absent for established coins); see build_frames.
+    new_listings: dict[str, dict] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -232,6 +235,10 @@ class Backtester:
                 # both backtest and live, so a funding-threshold agent reads the
                 # same units either way — the twap_mr window-mismatch lesson).
                 "funding_hourly": dict(frame.funding_hourly),
+                # Newly-listed coins this frame (day-1 reversion sleeve); empty
+                # for established coins. LIVE views don't populate this yet —
+                # new_listing_reversion holds until it's wired live.
+                "new_listings": {k: dict(v) for k, v in frame.new_listings.items()},
             },
         )
 

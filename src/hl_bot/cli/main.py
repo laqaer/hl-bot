@@ -20,6 +20,7 @@ from ..agents.funding_carry import FundingCarryAgent
 from ..agents.funding_crowding_fade import FundingCrowdingFadeAgent
 from ..agents.liq_cascade import LiqCascadeAgent
 from ..agents.meta_allocator import MetaAllocator, MetaAllocatorConfig
+from ..agents.new_listing_reversion import NewListingReversionAgent
 from ..agents.runtime import run_tick
 from ..agents.spot_perp_carry import SpotPerpCarryAgent
 from ..agents.twap_mr import TwapMrAgent
@@ -846,6 +847,7 @@ def backtest(
         "liq_cascade_v1": lambda conn: LiqCascadeAgent(config={}, conn=conn),
         "dislocation_reversion_v1": lambda conn: DislocationReversionAgent(config={}, conn=conn),
         "funding_crowding_fade_v1": lambda conn: FundingCrowdingFadeAgent(config={}, conn=conn),
+        "new_listing_reversion_v1": lambda conn: NewListingReversionAgent(config={}, conn=conn),
         "basis_v1": lambda conn: BasisAgent(config={}, conn=conn),
     }
     if agent not in factories:
@@ -930,6 +932,7 @@ def confirm(
         "liq_cascade_v1": lambda conn: LiqCascadeAgent(config={}, conn=conn),
         "dislocation_reversion_v1": lambda conn: DislocationReversionAgent(config={}, conn=conn),
         "funding_crowding_fade_v1": lambda conn: FundingCrowdingFadeAgent(config={}, conn=conn),
+        "new_listing_reversion_v1": lambda conn: NewListingReversionAgent(config={}, conn=conn),
         "basis_v1": lambda conn: BasisAgent(config={}, conn=conn),
     }
     if agent not in factories:

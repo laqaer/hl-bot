@@ -35,6 +35,7 @@ from ..agents.funding_carry import FundingCarryAgent
 from ..agents.funding_crowding_fade import FundingCrowdingFadeAgent
 from ..agents.liq_cascade import LiqCascadeAgent
 from ..agents.meta_allocator import MetaAllocator, MetaAllocatorConfig
+from ..agents.new_listing_reversion import NewListingReversionAgent
 from ..agents.spot_perp_carry import SpotPerpCarryAgent
 from ..agents.twap_mr import TwapMrAgent
 from ..agents.twap_mr_regime import TwapMrRegimeAgent
@@ -78,6 +79,7 @@ AGENT_FACTORIES: dict[str, Callable[[sqlite3.Connection | None, dict], Agent]] =
     "funding_carry_v1": lambda conn, cfg: FundingCarryAgent(config=cfg, conn=conn),
     "dislocation_reversion_v1": lambda conn, cfg: DislocationReversionAgent(config=cfg, conn=conn),
     "funding_crowding_fade_v1": lambda conn, cfg: FundingCrowdingFadeAgent(config=cfg, conn=conn),
+    "new_listing_reversion_v1": lambda conn, cfg: NewListingReversionAgent(config=cfg, conn=conn),
     "spot_perp_carry_v1": lambda conn, cfg: SpotPerpCarryAgent(config=cfg, conn=conn),
     "xfund_carry_v1": lambda conn, cfg: XFundCarryAgent(config=cfg, conn=conn),
     "liq_cascade_v1": lambda conn, cfg: LiqCascadeAgent(config=cfg, conn=conn),

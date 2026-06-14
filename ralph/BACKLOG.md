@@ -74,6 +74,18 @@ leverage *unblocked* thing. Add new findings as you discover them.
   > 500 rows — funding-as-signal was impossible before), 429 retry/backoff (a
   > rate-limited multi-coin sweep was silently reporting 0 trades), and
   > `funding_hourly` plumbed consistently into backtest + live views.
+  > **D2b investigated (2026-06-14): NOT CONFIRMED.** New-listing day-1 reversion
+  > (moonshot sleeve, S7): fade a coin's day-1 overshoot from its listing price,
+  > revert toward it. Built as `new_listing_reversion_v1` (+ spec + sweep). The
+  > thesis points the right way at an intraday hold (1h: +198bps full-sample, 3×-slip
+  > robust) but the **sample is fatally thin AND horizon-sensitive**: HL's 1h
+  > retention reaches only ~190d → just ~9 listings → **6 trades** (0/12 sweep
+  > combos clear G0); a 4h/~830d probe with a week-long hold has 91 listings but
+  > **flips net-negative** (−229 to −634bps, the "keeps mooning" tail). New listings
+  > are a low-frequency fat-tailed event — a confirmable OOS needs episodes accrued
+  > FORWARD, not back-fetched. NOT rostered, NOT wired live (holds until a forward
+  > listing log exists). Durable win: the **new-listing signal** (`new_listings` on
+  > Frame/MarketView, cache v5) — a reusable, forward-accruable detector for S7.
 - [ ] **D3 — Signal expansion (where new edges hide).** Wire free signals into
   MarketView and test whether they sharpen dislocation entries or seed new
   agents: cross-venue funding (Binance/Bybit, S5), L2 book imbalance (we have
