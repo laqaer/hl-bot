@@ -33,13 +33,17 @@ CLAUDE_MODEL="${CLAUDE_MODEL:-claude-opus-4-8}"
 # Non-interactive by default. Review before granting broader autonomy.
 CLAUDE_FLAGS="${CLAUDE_FLAGS:---permission-mode acceptEdits}"
 BRANCH="$(git rev-parse --abbrev-ref HEAD)"
+# Per-process temp (was hardcoded /tmp/ralph_* — collided across users/clones,
+# making verify() report a false RED when another user owned the file).
+RALPH_TMP="$(mktemp -d -t ralph.XXXXXX)"
+trap 'rm -rf "$RALPH_TMP"' EXIT
 PROMPT_FILE="$ROOT/ralph/PROMPT.md"
 
 log() { printf '\n\033[1;36m[ralph %s]\033[0m %s\n' "$(date -u +%H:%M:%S)" "$*"; }
 
 verify() {
-  uv run pytest -q >/tmp/ralph_pytest.log 2>&1 || { log "TESTS RED"; tail -20 /tmp/ralph_pytest.log; return 1; }
-  uv run ruff check src tests scripts >/tmp/ralph_ruff.log 2>&1 || { log "RUFF RED"; tail -20 /tmp/ralph_ruff.log; return 1; }
+  uv run pytest -q >"$RALPH_TMP/pytest.log" 2>&1 || { log "TESTS RED"; tail -20 "$RALPH_TMP/pytest.log"; return 1; }
+  uv run ruff check src tests scripts >"$RALPH_TMP/ruff.log" 2>&1 || { log "RUFF RED"; tail -20 "$RALPH_TMP/ruff.log"; return 1; }
   return 0
 }
 
@@ -77,11 +81,11 @@ command -v "$CLAUDE_BIN" >/dev/null 2>&1 || { log "claude CLI not found ($CLAUDE
 if [ "${RALPH_SKIP_AUTH_CHECK:-0}" != "1" ]; then
   log "auth probe…"
   if ! timeout 90s "$CLAUDE_BIN" -p "reply with the single word READY" \
-        --model "$CLAUDE_MODEL" $CLAUDE_FLAGS >/tmp/ralph_auth.log 2>&1 \
-        || ! grep -qi "READY" /tmp/ralph_auth.log; then
+        --model "$CLAUDE_MODEL" $CLAUDE_FLAGS >"$RALPH_TMP/auth.log" 2>&1 \
+        || ! grep -qi "READY" "$RALPH_TMP/auth.log"; then
     log "auth probe FAILED — is the claude CLI authenticated? (run 'claude' once"
     log "to sign in via OAuth/Max, or export ANTHROPIC_API_KEY). Set"
-    log "RALPH_SKIP_AUTH_CHECK=1 to bypass. Last output:"; tail -5 /tmp/ralph_auth.log
+    log "RALPH_SKIP_AUTH_CHECK=1 to bypass. Last output:"; tail -5 "$RALPH_TMP/auth.log"
     exit 1
   fi
 fi

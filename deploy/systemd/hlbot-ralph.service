@@ -1,0 +1,27 @@
+[Unit]
+Description=hl-bot Ralph loop — runs in a SEPARATE clone, never the live engine tree
+After=network-online.target
+Wants=network-online.target
+
+# Installed/managed by deploy/setup-ralph-autonomy.sh. The live engine
+# (hlbot-run, /opt/hl-bot) stays on reviewed `main`; this loop runs in
+# /opt/hl-bot-ralph on a dev branch and pushes green commits there for review —
+# autonomy with a review gate, not a loop editing the live money bot.
+# Requires `claude` authed for the hlbot user (CLAUDE_CODE_OAUTH_TOKEN in
+# /etc/hl-bot/env; never ANTHROPIC_API_KEY) and, for RALPH_PUSH=1, git push
+# creds for hlbot. The loop never enables live trading (ralph/PROMPT.md).
+
+[Service]
+Type=simple
+User=hlbot
+WorkingDirectory=/opt/hl-bot-ralph
+EnvironmentFile=/etc/hl-bot/env
+Environment=RALPH_ITERS=1000
+Environment=RALPH_PUSH=1
+ExecStart=/opt/hl-bot-ralph/ralph/loop.sh
+Restart=on-failure
+RestartSec=30
+NoNewPrivileges=true
+
+[Install]
+WantedBy=multi-user.target
