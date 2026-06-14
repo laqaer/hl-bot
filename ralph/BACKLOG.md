@@ -33,10 +33,23 @@ leverage *unblocked* thing. Add new findings as you discover them.
   OI plumbed into MarketView from `metaAndAssetCtxs`, the agent + sweep spec.
   Note OI history isn't in the candle cache — phase 1 likely paper-soaks for
   real evidence rather than backtesting (accrue OI forward via the WS feed).
-- [ ] **S5 — Cross-venue funding signal.** Spec:
+- [~] **S5 — Cross-venue funding signal.** Spec:
   `docs/research/S5_xvenue_funding.md`. Now MORE valuable given the baseline
   finding: Binance/Bybit funding tells us when HL's *spike* is idiosyncratic
-  (fade-able, feeds S8) vs market-wide. Phase-1 offline study first.
+  (fade-able, feeds S8) vs market-wide.
+  - [x] Phase-1 *plumbing*: `research/funding_xvenue.py` (symbol mapping w/
+    k->1000 hazard tests, per-8h->per-hr normalization, consensus/spread math,
+    directional fail-open entry filter, best-effort Binance+Bybit fetchers).
+    Surfaced into `MarketView.extra["funding_xvenue"]` opt-in via
+    `HLBOT_XVENUE_FUNDING=1`. Wired as an **off-by-default** selectivity filter
+    on `funding_carry` (`require_xvenue_spread_bps`). Behavior-neutral until an
+    operator turns it on. Tests: `tests/test_funding_xvenue.py`.
+  - [ ] Phase-1 *offline study* (the actual validation, host/network): backfill
+    Binance funding history over the cached 180d window, join vs HL funding,
+    measure conditional edge of carry entries WITH vs WITHOUT the spread filter.
+    G0 expectation: spread-filtered beats unfiltered by >=2 bps/trade net, else
+    REFUTE and delete. Persist a `xvenue_funding` table for live use.
+  - [ ] Wire the same filter into `xfund_carry` / `femr` once the study confirms.
 
 ## P0b — review remediation (2026-06-12 four-track audit)
 

@@ -39,6 +39,12 @@ class FundingCarryConfig:
     max_total_notional: float = 75.0
     max_concurrent_positions: int = 3
     reentry_cooldown_hours: float = 4.0
+    # S5 (optional, off by default): require HL funding to exceed the
+    # cross-venue (Binance/Bybit) consensus by this many bps/8h in the carry
+    # direction before entering — i.e. only take HL's *idiosyncratic* spikes.
+    # None disables the filter; needs view.extra["funding_xvenue"] populated
+    # (HLBOT_XVENUE_FUNDING=1). Fails open when consensus is unavailable.
+    require_xvenue_spread_bps: float | None = None
 
 
 class FundingCarryAgent(Agent):
@@ -62,6 +68,10 @@ class FundingCarryAgent(Agent):
             max_total_notional=float(c.get("max_total_notional", 75.0)),
             reentry_cooldown_hours=float(c.get("reentry_cooldown_hours", 4.0)),
             max_concurrent_positions=int(c.get("max_concurrent_positions", 3)),
+            require_xvenue_spread_bps=(
+                float(c["require_xvenue_spread_bps"])
+                if c.get("require_xvenue_spread_bps") is not None else None
+            ),
         )
         self.conn = conn
 
@@ -104,6 +114,18 @@ class FundingCarryAgent(Agent):
             (self.name, cutoff, 0 if self.is_live else 1),
         ).fetchall()
         return {r["coin"] for r in rows if r["coin"]}
+
+    def _xvenue_ok(self, coin: str, funding: float, view: MarketView) -> bool:
+        """S5 selectivity filter. No-op (True) unless configured AND cross-venue
+        funding is present; fails open per-coin when consensus is unavailable."""
+        if self.cfg.require_xvenue_spread_bps is None:
+            return True
+        xmap = view.extra.get("funding_xvenue") or {}
+        from ..research.funding_xvenue import passes_xvenue_filter
+        return passes_xvenue_filter(
+            funding, xmap.get(coin),
+            min_spread_bps_8h=self.cfg.require_xvenue_spread_bps,
+        )
 
     def decide(self, view: MarketView) -> list[Decision]:
         out: list[Decision] = []
@@ -158,6 +180,7 @@ class FundingCarryAgent(Agent):
             if c not in active_after and c not in flattening and c not in cooled
             and abs(f) >= self.cfg.enter_funding_per_hr
             and vol.get(c, 0) >= self.cfg.min_daily_volume_usd and (view.mids.get(c) or 0) > 0
+            and self._xvenue_ok(c, f, view)
         ]
         candidates.sort(key=lambda kv: abs(kv[1]), reverse=True)
 

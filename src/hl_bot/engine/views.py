@@ -24,7 +24,32 @@ def build_view(api_url: str, *, ws_snapshot_path: str | None = None) -> MarketVi
     view = fetch_market_view(api_url, [])
     enrich_view(view, api_url, view.extra.get("day_ntl_vlm", {}))
     overlay_ws_snapshot(view, ws_snapshot_path)
+    enrich_xvenue_funding(view)
     return view
+
+
+def enrich_xvenue_funding(view: MarketView) -> bool:
+    """Overlay Binance/Bybit funding into ``extra['funding_xvenue']`` (S5).
+
+    Opt-in and off by default: only runs when ``HLBOT_XVENUE_FUNDING=1`` so the
+    default tick adds no off-venue network call. Best-effort — a fetch miss
+    leaves the key absent and the carry agents' optional filter fails open.
+    Covers the liquid universe (top coins by volume), where consensus exists.
+    Returns whether the overlay populated anything.
+    """
+    if os.environ.get("HLBOT_XVENUE_FUNDING") != "1":
+        return False
+    vol = view.extra.get("day_ntl_vlm", {}) or {}
+    coins = [c for c, _ in sorted(vol.items(), key=lambda kv: kv[1], reverse=True)[:30]]
+    if not coins:
+        coins = list(view.funding.keys())
+    if not coins:
+        return False
+    from ..research.funding_xvenue import fetch_xvenue_funding
+    xv = fetch_xvenue_funding(coins)
+    if xv:
+        view.extra["funding_xvenue"] = xv
+    return bool(xv)
 
 
 def overlay_ws_snapshot(view: MarketView, ws_snapshot_path: str | None = None) -> bool:

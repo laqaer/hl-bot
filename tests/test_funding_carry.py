@@ -10,6 +10,7 @@ Funding folded into realized PnL via the engine's liquidate-at-end.
 
 from __future__ import annotations
 
+from hl_bot.agents.base import MarketView
 from hl_bot.agents.funding_carry import FundingCarryAgent
 from hl_bot.agents.xfund_carry import XFundCarryAgent
 from hl_bot.backtest.engine import Backtester, CostModel, Frame
@@ -71,3 +72,38 @@ def test_carry_skips_calm_funding():
     ]
     res, _ = _run(FundingCarryAgent, frames)
     assert res.scorecard.n_trades == 0
+
+
+def test_xvenue_filter_blocks_non_idiosyncratic_funding():
+    # HL funding is extreme (short-worthy) but matches the cross-venue
+    # consensus -> with the S5 filter ON, the coin is NOT idiosyncratic and is
+    # skipped; the SAME view with the filter OFF would trade it.
+    view = MarketView(
+        ts_ms=0,
+        mids={"HOT": 100.0},
+        funding={"HOT": 0.0008},
+        extra={
+            "day_ntl_vlm": {"HOT": 5e7},
+            "funding_xvenue": {"HOT": {"binance": 0.0008, "bybit": 0.0008}},
+        },
+    )
+    on = FundingCarryAgent(config={"require_xvenue_spread_bps": 10.0})
+    off = FundingCarryAgent(config={})
+    assert not any(d.action == "place" for d in on.decide(view))
+    assert any(d.action == "place" for d in off.decide(view))
+
+
+def test_xvenue_filter_allows_idiosyncratic_hl_spike():
+    # HL funding far above the off-venue consensus -> idiosyncratic -> traded
+    # even with the filter ON.
+    view = MarketView(
+        ts_ms=0,
+        mids={"HOT": 100.0},
+        funding={"HOT": 0.0008},
+        extra={
+            "day_ntl_vlm": {"HOT": 5e7},
+            "funding_xvenue": {"HOT": {"binance": 0.0001, "bybit": 0.0001}},
+        },
+    )
+    on = FundingCarryAgent(config={"require_xvenue_spread_bps": 10.0})
+    assert any(d.action == "place" for d in on.decide(view))
