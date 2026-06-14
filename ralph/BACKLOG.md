@@ -23,12 +23,18 @@ leverage *unblocked* thing. Add new findings as you discover them.
 
 - [ ] **D1 — Keep dislocation_reversion honest & optimal (the live strategy).**
   It is LIVE; treat it with care. Each iteration: (a) read the newest
-  `research/results/*dislocation*` from the nightly sweep; (b) if a combo
-  beats the deployed `z=3/stop=0.02/hold=24` on OOS edge AND survives taker +
-  2× slip AND ≥20 round trips, fold it into `configs/agent_overrides.json`
-  (the host re-stamps `hlbot confirm --record`); (c) widen the sweep grid
-  toward finer z/stop/hold and more universes to map the edge surface; (d)
-  watch live exec quality (taker fill prices vs the 5m signal price — slippage
+  `research/results/*dislocation*` from the nightly sweep; (b) if the sweep's
+  **top IN-SAMPLE-ranked CONFIRMED** combo (the report already ranks by
+  in-sample and only marks ✅ when it also clears OOS — never pick by the OOS
+  column, that consumes the holdout and overfits) beats the deployed
+  `z=3/stop=0.02/hold=24`, adopt it by **changing the agent dataclass
+  DEFAULTS** in `agents/dislocation_reversion.py` (a tested code change), NOT
+  `agent_overrides.json` — because `hlbot confirm` instantiates the agent with
+  DEFAULTS, so only default-baked params are actually G0-validated; an override
+  would inherit a stamp for a different config (the V3 hole below). (c) widen
+  the sweep grid toward finer z/stop/hold and more universes to map the edge
+  surface; (d) watch live exec quality (taker fill prices vs the 5m signal
+  price — slippage
   is the live edge-killer). NEVER weaken its gates or caps; improvements are
   evidence-backed only.
 - [ ] **D2 — More event-driven edges (the structural thesis).** Dislocation
@@ -47,9 +53,14 @@ leverage *unblocked* thing. Add new findings as you discover them.
 
 - [ ] **V1 — verify/rewire the liquidation feed** (host: does `liq_log.jsonl`
   accrue? HL's public trades may not carry the flag — find the real source).
-- [ ] **V3 — params_hash provenance** so tuning a live strategy can't inherit
-  stale evidence / G0 stamps (matters now that dislocation is live + ralph
-  tunes it).
+- [ ] **V3 — make `hlbot confirm` params-aware + params_hash provenance.**
+  confirm instantiates agents with `config={}` (defaults), so it does NOT
+  validate `agent_overrides.json` params — a tuned override inherits a G0
+  stamp for the wrong config. Fix: confirm/sweep load the same overrides the
+  runner does (or take a `--params`), and stamp a `params_hash` into
+  `confirmations` that `require_g0` matches against the deployed config.
+  Until then D1 adopts params via dataclass defaults (which confirm DOES see),
+  not overrides. Critical now that dislocation is live and ralph tunes it.
 - [ ] **V6 — equity-floor flow adjustment** (deposits/withdrawals inflated the
   drawdown and tripped the kill on 2026-06-12; track net transfers).
 
