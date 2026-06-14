@@ -4,6 +4,11 @@
 # reverting fills). The earlier maker sweep (+7bps) assumed 100% fills at mid,
 # an upper bound; this tests whether the edge survives real entry cost.
 # Grid keys MUST match the DislocationReversionConfig dataclass field names.
+# NOTE ON `days`: HL's candleSnapshot serves at most ~5000 candles per interval,
+# so a 5m request can only ever return ~17d of history (15m ~52d, 1h ~208d) no
+# matter what `days` says. `days: 90` is a nominal ceiling — the real evidence
+# window is ~17d (the sweep report + a fetch-time WARNING state the actual span).
+# This edge is therefore validated on a thin sample; do not read "90d" as 90d.
 agent: dislocation_reversion_v1
 interval: 5m
 days: 90

@@ -116,13 +116,26 @@ def run_sweep(
     return rows
 
 
-def render_markdown(spec: SweepSpec, rows: list[SweepRow], *, date: str | None = None) -> str:
-    """Ranked, human/agent-readable sweep report for research/results/."""
+def render_markdown(
+    spec: SweepSpec, rows: list[SweepRow], *, date: str | None = None,
+    coverage_days: float | None = None,
+) -> str:
+    """Ranked, human/agent-readable sweep report for research/results/.
+
+    ``coverage_days`` (when supplied by the caller that loaded the frames) is the
+    actual wall-clock span the data covered. HL retains ≤~5000 candles/interval,
+    so a fine-interval sweep's real window is often far shorter than ``spec.days``
+    — we say so explicitly rather than print a misleading "90d".
+    """
     date = date or time.strftime("%Y-%m-%d")
+    cov_note = ""
+    if coverage_days is not None and coverage_days < spec.days * 0.9:
+        cov_note = (f" — ACTUAL coverage ~{coverage_days:.1f}d (HL retains ≤~5000 "
+                    f"candles/interval; the evidence window is this, not {spec.days}d)")
     lines = [
         f"# Sweep: {spec.agent} — {date}",
         "",
-        f"- dataset: {spec.days}d of {spec.interval} candles, prefer={spec.prefer}",
+        f"- dataset: {spec.days}d of {spec.interval} candles, prefer={spec.prefer}{cov_note}",
         f"- gate: OOS edge ≥ {spec.min_edge_bps} bps, sharpe ≥ {spec.min_sharpe}, 2x-slippage robust",
         f"- combos: {len(rows)} (ranked by IN-SAMPLE edge; OOS columns are a "
         f"one-shot readout, never the selection key)",
@@ -160,6 +173,7 @@ def render_markdown(spec: SweepSpec, rows: list[SweepRow], *, date: str | None =
 def write_outputs(
     spec: SweepSpec, rows: list[SweepRow], *,
     json_dir: str | Path, md_dir: str | Path, date: str | None = None,
+    coverage_days: float | None = None,
 ) -> tuple[Path, Path]:
     date = date or time.strftime("%Y-%m-%d")
     jd, md = Path(json_dir), Path(md_dir)
@@ -168,5 +182,5 @@ def write_outputs(
     jpath = jd / f"{date}_{spec.agent}.json"
     jpath.write_text(json.dumps([r.__dict__ for r in rows], indent=1, default=str))
     mpath = md / f"{date}_{spec.agent}.md"
-    mpath.write_text(render_markdown(spec, rows, date=date))
+    mpath.write_text(render_markdown(spec, rows, date=date, coverage_days=coverage_days))
     return jpath, mpath

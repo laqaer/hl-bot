@@ -216,6 +216,40 @@ def funding_rate_at(funding_rows: list[dict[str, Any]], ts_ms: int) -> float:
     return best
 
 
+def frames_coverage_days(frames: list[Frame]) -> float:
+    """Actual wall-clock span covered by ``frames``, in days (0.0 if <2 frames).
+
+    Used to tell the truth about how much history a backtest *actually* saw:
+    HL's ``candleSnapshot`` serves at most ~5000 candles per interval, so a
+    fine interval cannot reach a long lookback regardless of the requested
+    window (5m → ~17d, 15m → ~52d, 1h → ~208d). The requested ``days`` is then
+    only a nominal upper bound, not the real evidence window.
+    """
+    if len(frames) < 2:
+        return 0.0
+    return (frames[-1].ts_ms - frames[0].ts_ms) / 86_400_000.0
+
+
+def warn_if_short_coverage(frames: list[Frame], *, interval: str, days: int) -> float:
+    """Log a WARNING when the built frames cover materially less than ``days``.
+
+    Returns the actual coverage in days so callers can surface it in reports /
+    confirmation records. The threshold (90% of requested) avoids noise from the
+    one partial bar at each end while catching the retention cliff (e.g. a "90d"
+    5m request that only yields ~17d). Never raises — purely advisory.
+    """
+    cov = frames_coverage_days(frames)
+    if frames and days >= 2 and cov < days * 0.9:
+        log.warning(
+            "history coverage short: requested %dd of %s but only ~%.1fd of "
+            "candles exist at HL (≤~5000 candles/interval retention cap). Treat "
+            "this backtest as a ~%.0fd window, not %dd — the evidence base is "
+            "thinner than the requested days imply.",
+            days, interval, cov, cov, days,
+        )
+    return cov
+
+
 def build_frames(
     candles_by_coin: dict[str, list[dict[str, Any]]],
     *,
@@ -335,11 +369,13 @@ def load_frames(
         if spot:
             spot_candles_by_coin[coin] = spot
     bar_hours = INTERVAL_MS.get(interval, 3_600_000) / 3_600_000
-    return build_frames(
+    frames = build_frames(
         candles_by_coin, funding_by_coin=funding_by_coin,
         spot_candles_by_coin=spot_candles_by_coin,
         vwap_window=vwap_window, warmup=min(vwap_window, 30), bar_hours=bar_hours,
     )
+    warn_if_short_coverage(frames, interval=interval, days=days)
+    return frames
 
 
 # ---------------------------------------------------------------------------
@@ -395,7 +431,11 @@ def cached_or_fetch(
     p = Path(cache_path) if cache_path else default_cache_path(coins, interval, days)
     if p.exists() and not refresh:
         try:
-            return load_cached_frames(p)
+            cached = load_cached_frames(p)
+            # Cache hits skip load_frames, so re-emit the coverage warning here
+            # — every backtest/confirm/sweep run should see the real window.
+            warn_if_short_coverage(cached, interval=interval, days=days)
+            return cached
         except (ValueError, OSError, json.JSONDecodeError) as exc:
             # Stale/legacy cache (e.g. pre-spot v1) -> refetch and overwrite.
             log.info("refetching %s: %s", p, exc)

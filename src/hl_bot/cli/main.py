@@ -914,7 +914,7 @@ def confirm(
     with require_g0 check (auto-promotion runs on this evidence).
     """
     from ..backtest.confirm import confirm_strategy
-    from ..backtest.data import cached_or_fetch, load_frames
+    from ..backtest.data import cached_or_fetch, frames_coverage_days, load_frames
 
     conn, s = _conn()
     coin_list = [c.strip() for c in coins.split(",") if c.strip()]
@@ -946,12 +946,21 @@ def confirm(
         min_edge_bps=min_edge_bps, min_sharpe=min_sharpe, periods_per_year=per_year,
     )
     console.print(res.summary())
+    # Record the ACTUAL coverage, not just the requested days: at fine intervals
+    # HL serves only ~5000 candles (5m → ~17d), so "90d" in a confirmation record
+    # would overstate the evidence behind a G0 stamp.
+    cov = frames_coverage_days(frames)
+    dataset = f"{coins}/{interval}/{days}d"
+    if frames and cov < days * 0.9:
+        dataset = f"{coins}/{interval}/{days}d(actual~{cov:.0f}d)"
+        console.print(f"[yellow]note:[/yellow] only ~{cov:.1f}d of {interval} history exists "
+                      f"at HL (retention cap); G0 evidence window is ~{cov:.0f}d, not {days}d.")
     if record:
         conn.execute(
             """INSERT INTO confirmations(agent, ts_ms, dataset, prefer, confirmed,
                                          oos_edge_bps, summary)
                VALUES(?,?,?,?,?,?,?)""",
-            (agent, int(time.time() * 1000), f"{coins}/{interval}/{days}d", prefer,
+            (agent, int(time.time() * 1000), dataset, prefer,
              1 if res.confirmed else 0, res.out_of_sample.edge_bps, res.summary()),
         )
         conn.commit()
@@ -972,7 +981,7 @@ def sweep(
     Loads configs/sweeps/<name>.yaml, replays every combo over cached real
     history, and writes a ranked report to research/results/ (committed by the
     nightly host job so research sessions start from fresh evidence)."""
-    from ..backtest.data import cached_or_fetch
+    from ..backtest.data import cached_or_fetch, frames_coverage_days
     from ..engine.runner import AGENT_FACTORIES
     from ..research.sweep import SweepSpec, run_sweep, write_outputs
 
@@ -993,8 +1002,15 @@ def sweep(
             console.print(f"[red]history load failed for {universe}: {e}[/red]")
             frames_by_universe[tuple(universe)] = []
     rows = run_sweep(sw, frames_by_universe, factory)
-    jpath, mpath = write_outputs(sw, rows, json_dir=json_dir, md_dir=md_dir)
+    coverage = max((frames_coverage_days(f) for f in frames_by_universe.values() if f),
+                   default=0.0)
+    jpath, mpath = write_outputs(sw, rows, json_dir=json_dir, md_dir=md_dir,
+                                 coverage_days=coverage)
     confirmed = sum(1 for r in rows if r.confirmed)
+    if coverage and coverage < sw.days * 0.9:
+        console.print(f"[yellow]note:[/yellow] requested {sw.days}d of {sw.interval} but only "
+                      f"~{coverage:.1f}d of candles exist at HL (retention cap) — "
+                      f"this sweep's evidence window is ~{coverage:.0f}d.")
     console.print(f"[green]✓[/green] {len(rows)} combos, {confirmed} confirmed → {mpath}")
 
 

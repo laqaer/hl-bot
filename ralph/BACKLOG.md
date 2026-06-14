@@ -14,12 +14,31 @@ leverage *unblocked* thing. Add new findings as you discover them.
 ## P0 — LIVE NOW: optimize the one confirmed edge, find the next (2026-06-14)
 
 > Status as of 2026-06-14: **dislocation_reversion_v1 is the only confirmed
-> edge** (G0 PASS at taker: OOS +5.0bps, robust to 2× slippage) and is **LIVE
+> edge** (G0 PASS at taker, robust through 3× slippage) and is **LIVE
 > at live_small** on the dedicated account. Carry (xfund, funding_carry, S4)
 > is empirically DEAD on HL — tested on real data, economically trivial after
 > costs (<1%/yr); do not spend more effort there. liq_cascade's feed is dead.
 > The mission now: make the live edge bigger and more reliable, and find the
 > NEXT event-driven edge. Each loop iteration, take the top unblocked item.
+>
+> **DATA-RETENTION CAVEAT (measured 2026-06-14):** HL `candleSnapshot` serves
+> only ~5000 candles/interval, so the 5m sweep's "90d" is really ~17.5d (15m
+> ~52d, 1h ~208d). The dislocation edge is validated on ~17.5d / ~5d OOS / ~37
+> OOS trades — real but THIN; do not read "90d" as 90d. Reports + a fetch-time
+> WARNING now state the true window. Binance/Bybit (deep history + xvenue
+> funding) are geo-blocked from the CI sandbox — those legs are host-only.
+
+> **D1 re-sweep finding (2026-06-14):** re-ran `configs/sweeps/dislocation_reversion_v1.yaml`.
+> 36 combos, **1 confirms** — `z=3/stop=0.02/hold=24` on the **8-coin** universe
+> (OOS +3.0bps, sharpe +2.41, 37 trades), which is **exactly the deployed
+> config**, so the top in-sample-ranked confirmed combo == live config → **no
+> param change**. Same params on the 4-coin universe just miss (OOS +2.6) — the
+> edge needs the broader universe for enough dislocations, so ensure live trades
+> the 8-coin breadth (engine universe, not a dataclass default). Full-sample
+> edge is robust (+7.7 → +5.7 → +3.7 bps through 1×/2×/3× slip); the marginality
+> is the thin OOS split, not fragility to cost. Today's OOS (+3.0) is below a
+> prior run's +5.0 — the ~17.5d window rolls daily, so the number is sample-
+> sensitive; treat single re-confirms as noisy.
 
 - [ ] **D1 — Keep dislocation_reversion honest & optimal (the live strategy).**
   It is LIVE; treat it with care. Each iteration: (a) read the newest
