@@ -49,11 +49,33 @@ sudo -u hlbot git -C "$RALPH_HOME" config pull.ff only
 # 2. deps in the clone (own venv; never shares the live tree's)
 ( cd "$RALPH_HOME" && sudo -u hlbot uv sync --frozen )
 
-# 3. prerequisite checks (warn only)
-sudo -u hlbot bash -lc 'command -v claude >/dev/null 2>&1' \
-  || log "WARN: claude CLI not found for hlbot — install + auth it before enabling the loop"
-sudo grep -q '^CLAUDE_CODE_OAUTH_TOKEN=' /etc/hl-bot/env 2>/dev/null \
-  || log "WARN: CLAUDE_CODE_OAUTH_TOKEN missing in /etc/hl-bot/env — the loop fails its auth probe"
+# 3. claude CLI for the hlbot user. The loop runs under systemd (minimal PATH,
+#    NOT a login shell), so resolve claude's ABSOLUTE path — it installs to
+#    ~hlbot/.local/bin, which a non-login systemd PATH won't include — and pin
+#    CLAUDE_BIN in the env so the service always finds it. This is the most
+#    common "works in my shell, fails in the service" bootstrap trap.
+CLAUDE_PATH="$(sudo -u hlbot bash -lc 'command -v claude' 2>/dev/null || true)"
+if [ -z "$CLAUDE_PATH" ]; then
+  log "WARN: claude not found for hlbot. Install it, then re-run this script:"
+  log "      sudo -u hlbot bash -lc 'curl -fsSL https://claude.ai/install.sh | bash'"
+else
+  if grep -q '^CLAUDE_BIN=' /etc/hl-bot/env 2>/dev/null; then
+    sed -i "s|^CLAUDE_BIN=.*|CLAUDE_BIN=$CLAUDE_PATH|" /etc/hl-bot/env
+  else
+    echo "CLAUDE_BIN=$CLAUDE_PATH" >> /etc/hl-bot/env
+  fi
+  log "pinned CLAUDE_BIN=$CLAUDE_PATH (systemd has no login PATH)"
+fi
+# auth: the loop uses CLAUDE_CODE_OAUTH_TOKEN (subscription, flat) or falls back
+# to ANTHROPIC_API_KEY (bills per call). Need at least one.
+if ! sudo grep -qE '^(CLAUDE_CODE_OAUTH_TOKEN|ANTHROPIC_API_KEY)=' /etc/hl-bot/env 2>/dev/null; then
+  log "WARN: no CLAUDE_CODE_OAUTH_TOKEN or ANTHROPIC_API_KEY in env — the loop can't auth"
+elif sudo grep -q '^ANTHROPIC_API_KEY=' /etc/hl-bot/env 2>/dev/null \
+     && ! sudo grep -q '^CLAUDE_CODE_OAUTH_TOKEN=' /etc/hl-bot/env 2>/dev/null; then
+  log "NOTE: auth via ANTHROPIC_API_KEY (bills PER CALL). For a 24/7 loop, prefer a"
+  log "      subscription token: 'claude setup-token' -> CLAUDE_CODE_OAUTH_TOKEN in env,"
+  log "      and remove ANTHROPIC_API_KEY (it takes precedence)."
+fi
 if ! sudo -u hlbot git -C "$RALPH_HOME" ls-remote --exit-code origin >/dev/null 2>&1; then
   log "WARN: hlbot may lack push creds to origin — RALPH_PUSH=1 will commit locally but not publish"
 fi
