@@ -108,8 +108,46 @@ Health pings `HEALTHCHECK_URL` each tick; `warn`/`down` Telegram-alerts.
 
 ## 7. Optional: the self-improvement loop
 
+The Ralph loop (`hlbot-loop.service`) runs the `claude` CLI headlessly to
+research / backtest / propose — it **never enables live trading**. It runs as
+the **`hlbot`** system user, so it needs `claude` installed and authenticated
+*for that user* (OAuth credentials are per-user). Do this before enabling:
+
 ```bash
-# needs the `claude` CLI authed on the host
+# a) claude on the host, reachable by the service. Verify it's on the systemd
+#    PATH (/usr/local/bin:/usr/bin:…); if not, pin CLAUDE_BIN in the env (below).
+command -v claude || npm install -g @anthropic-ai/claude-code
+
+# b) auth WITHOUT metered API billing: mint a 1-year Max/Pro OAuth token.
+#    Run this in a shell where you can open a browser link, then copy the token.
+claude setup-token
+
+# c) hand the token (and, if needed, the claude path) to the service via the
+#    env file the unit already loads. Use your OAuth sub, NOT an API key —
+#    if ANTHROPIC_API_KEY is set it OVERRIDES the token and bills per-token.
+sudo tee -a /etc/hl-bot/env >/dev/null <<'EOF'
+CLAUDE_CODE_OAUTH_TOKEN=paste-the-token-here
+# CLAUDE_BIN=/usr/local/bin/claude   # only if claude isn't on the service PATH
+# RALPH_PUSH=1                         # push green commits (needs git creds for hlbot)
+EOF
+
+# d) keep the loop OFF main — point the deployed checkout at a dev branch so its
+#    commits never land on main (and a re-run of install.sh won't refuse).
+sudo -u hlbot git -C /opt/hl-bot checkout -B claude/ralph-auto
+
+# e) enable it (NOTE: sudo — systemctl needs root; "Interactive authentication
+#    required" means you ran it unprivileged).
 sudo systemctl enable --now hlbot-loop
+sudo journalctl -u hlbot-loop -f          # watch; it auth-probes then loops
 ```
-Research/backtest/propose only — it never enables live trading.
+
+Stop it any time with `sudo systemctl disable --now hlbot-loop` (or `touch
+/opt/hl-bot/ralph/STOP` for a graceful stop after the current iteration). The
+loop fails fast if the token is missing/expired, caps each iteration at
+`RALPH_TIMEOUT` (30 min) and aborts after `RALPH_MAX_FAILS` (5) stuck
+iterations — see `ralph/README.md`.
+
+> **Tip — fastest first run:** if you've already authed `claude` as your own
+> sudo user, skip the systemd path and run the loop in your home on a dev
+> branch: `tmux new -s ralph 'RALPH_ITERS=200 RALPH_PUSH=1 ralph/loop.sh'`. It's
+> decoupled from the live engine and uses creds you already have.
