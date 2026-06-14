@@ -36,6 +36,10 @@ ORIGIN="$(sudo -u hlbot git -C "$LIVE_HOME" remote get-url origin)"
 sudo -u hlbot git config --global --add safe.directory "$RALPH_HOME" 2>/dev/null || true
 if [ ! -d "$RALPH_HOME/.git" ]; then
   log "cloning $ORIGIN -> $RALPH_HOME"
+  # /opt is root-owned; create the dir as root and hand it to hlbot BEFORE the
+  # clone (hlbot can't mkdir under /opt itself — caused 'Permission denied').
+  mkdir -p "$RALPH_HOME"
+  chown hlbot:hlbot "$RALPH_HOME"
   sudo -u hlbot git clone "$ORIGIN" "$RALPH_HOME"
 fi
 sudo -u hlbot git -C "$RALPH_HOME" fetch origin
