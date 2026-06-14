@@ -39,6 +39,11 @@ def overlay_ws_snapshot(view: MarketView, ws_snapshot_path: str | None = None) -
         return False
     view.mids.update(snap.mids)
     view.funding.update(snap.funding)
+    # Keep the funding SIGNAL in sync with the freshest funding: enrich_view()
+    # ran BEFORE this overlay and copied the (now stale) REST funding into
+    # extra["funding_hourly"]; funding-threshold agents read that field, so
+    # re-mirror it here or they gate on stale rates in WS-enabled runs.
+    view.extra["funding_hourly"] = dict(view.funding)
     if snap.book_top:
         view.book_top.update(snap.book_top)
     liqs = snap.extra.get("liquidations") or []
