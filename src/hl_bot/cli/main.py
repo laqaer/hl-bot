@@ -1002,15 +1002,19 @@ def sweep(
             console.print(f"[red]history load failed for {universe}: {e}[/red]")
             frames_by_universe[tuple(universe)] = []
     rows = run_sweep(sw, frames_by_universe, factory)
-    coverage = max((frames_coverage_days(f) for f in frames_by_universe.values() if f),
-                   default=0.0)
+    # Per-universe coverage (empty/failed load → 0.0d). The report and this note
+    # key off the LIMITING (shortest) span so a long-history universe can't mask
+    # a short/failed one and overstate the evidence window.
+    coverage_by_universe = {",".join(u): frames_coverage_days(f)
+                            for u, f in frames_by_universe.items()}
     jpath, mpath = write_outputs(sw, rows, json_dir=json_dir, md_dir=md_dir,
-                                 coverage_days=coverage)
+                                 coverage_by_universe=coverage_by_universe)
     confirmed = sum(1 for r in rows if r.confirmed)
-    if coverage and coverage < sw.days * 0.9:
-        console.print(f"[yellow]note:[/yellow] requested {sw.days}d of {sw.interval} but only "
-                      f"~{coverage:.1f}d of candles exist at HL (retention cap) — "
-                      f"this sweep's evidence window is ~{coverage:.0f}d.")
+    limiting = min(coverage_by_universe.values(), default=0.0)
+    if coverage_by_universe and limiting < sw.days * 0.9:
+        console.print(f"[yellow]note:[/yellow] requested {sw.days}d of {sw.interval} but the "
+                      f"limiting universe has only ~{limiting:.1f}d of candles at HL "
+                      f"(retention cap) — this sweep's evidence window is ~{limiting:.0f}d.")
     console.print(f"[green]✓[/green] {len(rows)} combos, {confirmed} confirmed → {mpath}")
 
 

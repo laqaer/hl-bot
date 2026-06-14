@@ -1,6 +1,6 @@
 # Sweep: dislocation_reversion_v1 — 2026-06-14
 
-- dataset: 90d of 5m candles, prefer=taker — ACTUAL coverage ~17.5d (HL retains ≤~5000 candles/interval; the evidence window is this, not 90d)
+- dataset: 90d of 5m candles, prefer=taker — ACTUAL coverage (HL retains ≤~5000 candles/interval; the evidence window is the SHORTEST span, not 90d): BTC,ETH,SOL,HYPE ~17.5d; BTC,ETH,SOL,HYPE,DOGE,XRP,WIF,kPEPE ~17.5d
 - gate: OOS edge ≥ 3.0 bps, sharpe ≥ 1.0, 2x-slippage robust
 - combos: 36 (ranked by IN-SAMPLE edge; OOS columns are a one-shot readout, never the selection key)
 

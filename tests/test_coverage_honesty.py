@@ -68,13 +68,15 @@ def _row() -> SweepRow:
 
 
 def test_report_states_actual_coverage_when_short():
-    md = render_markdown(_spec(), [_row()], date="2026-06-14", coverage_days=17.4)
-    assert "ACTUAL coverage ~17.4d" in md
+    md = render_markdown(_spec(), [_row()], date="2026-06-14",
+                         coverage_by_universe={"BTC,ETH,SOL,HYPE": 17.4})
+    assert "~17.4d" in md
     assert "not 90d" in md
 
 
 def test_report_omits_note_when_coverage_adequate():
-    md = render_markdown(_spec(), [_row()], date="2026-06-14", coverage_days=88.0)
+    md = render_markdown(_spec(), [_row()], date="2026-06-14",
+                         coverage_by_universe={"BTC,ETH,SOL,HYPE": 88.0})
     assert "ACTUAL coverage" not in md
 
 
@@ -82,3 +84,16 @@ def test_report_omits_note_when_coverage_unknown():
     # Back-compat: callers that don't pass coverage get the old header.
     md = render_markdown(_spec(), [_row()], date="2026-06-14")
     assert "ACTUAL coverage" not in md
+
+
+def test_report_uses_limiting_span_not_max():
+    # A long-history universe must NOT mask a short/failed one (Codex P2): the
+    # note must fire on the shortest span and list every universe.
+    md = render_markdown(_spec(), [_row()], date="2026-06-14",
+                         coverage_by_universe={"BIG": 90.0, "SHORT": 17.4, "FAILED": 0.0})
+    assert "ACTUAL coverage" in md
+    assert "SHORT ~17.4d" in md
+    assert "FAILED ~0.0d" in md
+    assert "SHORTEST span" in md
+    # shortest listed first
+    assert md.index("FAILED ~0.0d") < md.index("SHORT ~17.4d") < md.index("BIG ~90.0d")
