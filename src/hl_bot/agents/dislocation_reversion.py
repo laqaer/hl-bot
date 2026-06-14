@@ -38,8 +38,8 @@ from .decisions import Decision
 class DislocationReversionConfig:
     z_enter: float = 3.0            # fade when |(mid-vwap)/sigma| >= this
     z_exit: float = 0.5            # take profit when z reverts within this of vwap
-    stop_pct: float = 0.015        # 1.5% adverse -> stop out
-    max_hold_bars: int = 12        # ~1h at 5m; dislocation edges decay fast
+    stop_pct: float = 0.02         # confirmed combo (taker sweep 2026-06-14)
+    max_hold_bars: int = 24        # ~2h at 5m; the confirmed hold (z=3/stop=2%)
     bar_seconds: int = 300         # 5m; for converting max_hold_bars to a time check
     min_daily_volume_usd: float = 10_000_000.0
     max_notional_per_trade: float = 25.0
@@ -65,8 +65,8 @@ class DislocationReversionAgent(Agent):
         self.cfg = DislocationReversionConfig(
             z_enter=float(c.get("z_enter", 3.0)),
             z_exit=float(c.get("z_exit", 0.5)),
-            stop_pct=float(c.get("stop_pct", 0.015)),
-            max_hold_bars=int(c.get("max_hold_bars", 12)),
+            stop_pct=float(c.get("stop_pct", 0.02)),
+            max_hold_bars=int(c.get("max_hold_bars", 24)),
             bar_seconds=int(c.get("bar_seconds", 300)),
             min_daily_volume_usd=float(c.get("min_daily_volume_usd", 10_000_000.0)),
             max_notional_per_trade=float(c.get("max_notional_per_trade", 25.0)),

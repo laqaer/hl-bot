@@ -59,14 +59,16 @@ def enrich_view(view: MarketView, api_url: str, vol: dict[str, float]) -> None:
     liquidations: list[dict] = []
 
     with httpx.Client(timeout=15) as cli:
-        # 60 × 1m candles -> vwap & sigma per top coin
+        # 60 × 5m candles -> vwap & sigma per top coin (5h window). MUST match
+        # the dislocation_reversion backtest basis (interval 5m, vwap_window 60)
+        # or live trades a different signal than confirmed (the twap_mr lesson).
         end_ms = int(time.time() * 1000)
-        start_ms = end_ms - 60 * 60_000
+        start_ms = end_ms - 60 * 5 * 60_000
         for coin in top_coins:
             try:
                 cs = cli.post(api_url + "/info", json={
                     "type": "candleSnapshot",
-                    "req": {"coin": coin, "interval": "1m",
+                    "req": {"coin": coin, "interval": "5m",
                             "startTime": start_ms, "endTime": end_ms},
                 }).json() or []
                 if not isinstance(cs, list) or len(cs) < 10:
