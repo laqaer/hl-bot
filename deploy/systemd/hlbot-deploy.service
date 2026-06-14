@@ -1,0 +1,8 @@
+[Unit]
+Description=hl-bot auto-deploy — fast-forward the live engine to reviewed main, restart on change
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/opt/hl-bot/deploy/run-deploy.sh

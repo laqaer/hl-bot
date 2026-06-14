@@ -1,0 +1,43 @@
+# Autonomous merge for the ralph loop's branches ONLY. When ralph pushes to
+# claude/ralph-auto*, this runs the FULL gate (ruff + the entire test suite,
+# which includes the CI-pinned gate minima and CostModel cost floors that ralph
+# cannot weaken) and, only if green, opens a PR and squash-merges it to main.
+# The operator's own branches are unaffected and still merge by hand. Disable
+# anytime by deleting this file. The live engine then auto-deploys reviewed
+# main (hlbot-deploy.timer); the kill switch + caps bound everything.
+name: ralph-automerge
+on:
+  push:
+    branches: ['claude/ralph-auto', 'claude/ralph-auto/**']
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  gate-and-merge:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v3
+        with:
+          enable-cache: true
+      - run: uv sync --frozen --all-extras --dev
+      - name: lint
+        run: uv run ruff check .
+      - name: full test suite (the authoritative gate; includes gate-minima + cost pins)
+        run: uv run pytest -q
+      - name: open PR + squash-merge (green only)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          BR="${GITHUB_REF_NAME}"
+          PR=$(gh pr list --head "$BR" --base main --state open --json number -q '.[0].number' || true)
+          if [ -z "${PR:-}" ]; then
+            PR=$(gh pr create --base main --head "$BR" \
+                  --title "ralph: autonomous increment ($BR)" \
+                  --body "Auto-opened by ralph-automerge after green CI (full suite + gate-minima + cost pins). Bounded by sizing caps + kill switch." \
+                 | grep -oE '[0-9]+$')
+          fi
+          gh pr merge "$PR" --squash --body "autonomous merge: CI green"
