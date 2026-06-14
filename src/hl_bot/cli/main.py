@@ -245,7 +245,8 @@ def tick(coins: str = "BTC,ETH,SOL,HYPE,ZEC"):
 @app.command()
 def run(
     live: bool = False,
-    execution: str = "maker",
+    execution: str = "auto",   # per-agent execution_mode() (carry=maker,
+                               # reversion/momentum=taker); 'maker'/'taker' force all
     interval: int = 20,
     ingest_every_s: int = 300,
     supervise_every_s: int = 900,
