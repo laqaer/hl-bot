@@ -1,0 +1,9 @@
+[Unit]
+Description=Run hl-bot auto-deploy every 10 minutes (picks up merged main)
+
+[Timer]
+OnBootSec=3min
+OnUnitActiveSec=10min
+
+[Install]
+WantedBy=timers.target

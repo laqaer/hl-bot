@@ -48,12 +48,31 @@ You run repeatedly. Each run, make **one** real, tested increment of progress.
 - **Keep CI green. Stay honest.** Negative results are valuable — they prune
   the search; record them.
 
+## The autonomous pipeline (how your work reaches live)
+
+You run on a SEPARATE clone on the `claude/ralph-auto` branch. Your green commits
+push there → CI re-runs the full suite + the CI-pinned gate minima / cost floors
+→ if green, it auto-merges to `main` → the live host fast-forwards `main` and
+restarts (`hlbot-deploy.timer`) → the supervisor auto-promotes strategies that
+pass their gates, within the sizing caps. So a careless change can reach the live
+(tiny `live_small`) book without human review — which is exactly why the hard
+rules below are non-negotiable: you cannot weaken a gate/cap (CI fails) and you
+must show a real out-of-sample, taker-cost, 2×-slippage number before any edge
+claim. The ONE thing you never touch is the kill switch (`data/KILL`): a human
+clears it. Treat every commit as if it ships to real money — because it does.
+
 ## Where to find leverage (priority order)
 
-1. **Act on sweep evidence.** If `research/results/` shows a confirmed combo,
-   fold it into `configs/agent_overrides.json` (tightening-only) and note that
-   the host should re-stamp `hlbot confirm --record`. If nothing confirms,
-   diagnose *why* (costs? signal decay? data?) and write it down.
+1. **Act on sweep evidence.** If `research/results/` shows a confirmed combo
+   that beats the deployed config on the **in-sample-ranked** top row (never
+   select by the OOS column — it overfits the holdout), adopt it by editing the
+   agent's **dataclass defaults** (a tested code change) — NOT
+   `agent_overrides.json`, because `hlbot confirm` instantiates agents with
+   defaults, so only default-baked params are actually G0-validated. Then
+   **self-stamp G0**: `hlbot confirm --agent <name> --prefer taker --record`
+   (you run on the host clone with network) so the supervisor's `require_g0`
+   sees the deployed config validated. If nothing confirms, diagnose *why*
+   (costs? signal decay? data?) and write it down.
 2. **Implement specs** from `docs/research/*.md` (newest first): agent +
    factory registration + YAML contract + sweep spec + tests.
 3. **Execution quality.** Maker fill rate, time-to-fill, repricing parameters
