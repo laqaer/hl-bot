@@ -3,10 +3,15 @@ Description=hl-bot Ralph self-improvement loop (research/backtest/propose only)
 After=network-online.target
 Wants=network-online.target
 
-# NOT enabled by install.sh. Start deliberately once `claude` CLI is authed and HL
-# history is reachable:  systemctl enable --now hlbot-loop
-# The loop never enables live trading (see ralph/PROMPT.md); it only improves the
-# repo and commits on green. RALPH_PUSH=1 pushes to the dev branch.
+# NOT enabled by install.sh. The loop runs as User=hlbot, so `claude` must be
+# authed FOR THAT USER (per-user creds): put a Max/Pro token from
+# `claude setup-token` into /etc/hl-bot/env as CLAUDE_CODE_OAUTH_TOKEN (do NOT
+# set ANTHROPIC_API_KEY — it overrides the token and bills per-call). Point the
+# /opt/hl-bot checkout at a dev branch first so commits don't land on main, then:
+#   sudo systemctl enable --now hlbot-loop      # sudo: systemctl needs root
+# See docs/HOST_QUICKSTART.md §7. The loop never enables live trading (see
+# ralph/PROMPT.md); it only improves the repo and commits on green. RALPH_PUSH=1
+# pushes to the current (dev) branch.
 
 [Service]
 Type=simple
