@@ -63,6 +63,17 @@ leverage *unblocked* thing. Add new findings as you discover them.
   (moonshot sleeve), (c) **OI-spike crowding-reversal** (S8 — needs OI
   history accrued forward via the WS feed). Each: spec → 5m/fine-candle
   backtest → confirm → let the supervisor promote. Backtestable ones first.
+  > **D2a investigated (2026-06-14): NOT CONFIRMED.** The "settlement snap" is
+  > really a funding-gated crowding fade (OI-free subset of S8): fade a 5m z
+  > overshoot when |funding| ≥ ~15% APR (settlement timing irrelevant). Built as
+  > `funding_crowding_fade_v1` (+ spec). Strong in-sample (+15bps, robust to 3×
+  > slip) but **0/36 sweep combos clear G0** — walk-forward OOS fails on the thin
+  > ~5d holdout (1–18 trades). NOT rostered; do not promote. Needs a real
+  > forward-accrued 5m window (HL retains only ~17.5d) or OI (true S8) to retest.
+  > Durable wins shipped: funding-history forward-pagination (HL caps at oldest
+  > 500 rows — funding-as-signal was impossible before), 429 retry/backoff (a
+  > rate-limited multi-coin sweep was silently reporting 0 trades), and
+  > `funding_hourly` plumbed consistently into backtest + live views.
 - [ ] **D3 — Signal expansion (where new edges hide).** Wire free signals into
   MarketView and test whether they sharpen dislocation entries or seed new
   agents: cross-venue funding (Binance/Bybit, S5), L2 book imbalance (we have

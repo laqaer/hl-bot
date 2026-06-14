@@ -26,7 +26,10 @@ log = logging.getLogger(__name__)
 
 # Bump when the on-disk frame schema changes so stale caches are recomputed.
 # v2 adds spot mids (S4 spot-perp carry); v1 caches lacked them.
-CACHE_VERSION = 2
+# v3 adds funding_hourly (unscaled 1h rate signal for funding_crowding_fade).
+# v4 pages funding forward (was capped at the oldest 500 rows → recent funding
+# was stale/missing, which is fatal for funding-as-signal agents).
+CACHE_VERSION = 4
 
 INTERVAL_MS: dict[str, int] = {
     "1m": 60_000,
@@ -43,6 +46,32 @@ INTERVAL_MS: dict[str, int] = {
 # ---------------------------------------------------------------------------
 
 
+def _post_info(
+    payload: dict[str, Any], *,
+    base_url: str = "https://api.hyperliquid.xyz",
+    timeout: float = 20.0, retries: int = 5,
+) -> Any:
+    """POST to the HL /info endpoint, retrying 429 (rate limit) with backoff.
+
+    Multi-coin fetches that page funding fire many requests in a burst and HL
+    rate-limits them; without backoff the whole load fails and a sweep silently
+    reports 0 trades (a FALSE negative, not a strategy verdict). Backoff:
+    0.5s,1,2,4,8s. Non-429 HTTP errors raise immediately.
+    """
+    delay = 0.5
+    for attempt in range(retries + 1):
+        with httpx.Client(timeout=timeout) as client:
+            r = client.post(base_url + "/info", json=payload)
+        if r.status_code == 429 and attempt < retries:
+            time.sleep(delay)
+            delay = min(delay * 2, 8.0)
+            continue
+        r.raise_for_status()
+        return r.json()
+    r.raise_for_status()  # exhausted retries on 429 -> surface it
+    return r.json()
+
+
 def fetch_candles(
     coin: str,
     interval: str,
@@ -52,14 +81,11 @@ def fetch_candles(
     base_url: str = "https://api.hyperliquid.xyz",
 ) -> list[dict[str, Any]]:
     """Raw candle dicts: {t, T, o, h, l, c, v, n}. Newest-last."""
-    with httpx.Client(timeout=20) as client:
-        r = client.post(base_url + "/info", json={
-            "type": "candleSnapshot",
-            "req": {"coin": coin, "interval": interval,
-                    "startTime": start_ms, "endTime": end_ms},
-        })
-        r.raise_for_status()
-        out = r.json()
+    out = _post_info({
+        "type": "candleSnapshot",
+        "req": {"coin": coin, "interval": interval,
+                "startTime": start_ms, "endTime": end_ms},
+    }, base_url=base_url)
     return out if isinstance(out, list) else []
 
 
@@ -71,10 +97,7 @@ def fetch_spot_meta(*, base_url: str = "https://api.hyperliquid.xyz") -> dict[st
     global _SPOT_META_CACHE
     if _SPOT_META_CACHE is not None:
         return _SPOT_META_CACHE
-    with httpx.Client(timeout=20) as client:
-        r = client.post(base_url + "/info", json={"type": "spotMeta"})
-        r.raise_for_status()
-        out = r.json()
+    out = _post_info({"type": "spotMeta"}, base_url=base_url)
     _SPOT_META_CACHE = out if isinstance(out, dict) else {"universe": [], "tokens": []}
     return _SPOT_META_CACHE
 
@@ -155,15 +178,56 @@ def fetch_funding_history(
     *,
     base_url: str = "https://api.hyperliquid.xyz",
 ) -> list[dict[str, Any]]:
-    """Raw funding rows: {coin, fundingRate, premium, time}."""
-    with httpx.Client(timeout=20) as client:
-        r = client.post(base_url + "/info", json={
-            "type": "fundingHistory", "coin": coin,
-            "startTime": start_ms, "endTime": end_ms,
-        })
-        r.raise_for_status()
-        out = r.json()
+    """Raw funding rows: {coin, fundingRate, premium, time}. ONE request.
+
+    HL caps this at ~500 rows anchored at ``startTime`` (the OLDEST 500 in the
+    window), so a wide window returns only its oldest ~21 days — the recent end
+    is missing. Callers wanting full coverage must page forward; see
+    ``fetch_funding_history_window``.
+    """
+    out = _post_info({
+        "type": "fundingHistory", "coin": coin,
+        "startTime": start_ms, "endTime": end_ms,
+    }, base_url=base_url)
     return out if isinstance(out, list) else []
+
+
+_FUNDING_PAGE_CAP = 500  # HL's per-request fundingHistory row cap
+
+
+def fetch_funding_history_window(
+    coin: str,
+    start_ms: int,
+    end_ms: int,
+    *,
+    base_url: str = "https://api.hyperliquid.xyz",
+    max_pages: int = 30,
+) -> list[dict[str, Any]]:
+    """Full funding history over [start, end], paging FORWARD past the 500-row cap.
+
+    Each request returns the oldest ≤500 rows from its ``startTime``; we advance
+    ``startTime`` to just past the newest row received and repeat until the
+    window is covered (short page), no progress is made, or ``max_pages`` is hit.
+    De-duplicates by timestamp. Without this, funding-as-signal agents (e.g.
+    funding_crowding_fade) see only stale 69–90d-old rates on a wide window.
+    """
+    out: list[dict[str, Any]] = []
+    seen: set[int] = set()
+    cur = start_ms
+    for _ in range(max_pages):
+        batch = fetch_funding_history(coin, cur, end_ms, base_url=base_url)
+        if not batch:
+            break
+        fresh = [r for r in batch if int(r.get("time", 0)) not in seen]
+        for r in fresh:
+            seen.add(int(r.get("time", 0)))
+        out.extend(fresh)
+        last_t = max((int(r.get("time", 0)) for r in batch), default=cur)
+        if len(batch) < _FUNDING_PAGE_CAP or last_t >= end_ms or last_t <= cur:
+            break  # reached the end, or no forward progress
+        cur = last_t + 1
+    out.sort(key=lambda r: int(r.get("time", 0)))
+    return out
 
 
 # ---------------------------------------------------------------------------
@@ -304,6 +368,7 @@ def build_frames(
         candles_1h: dict[str, dict] = {}
         closes_window: dict[str, list[float]] = {}
         funding: dict[str, float] = {}
+        funding_hourly: dict[str, float] = {}
         spot_mids: dict[str, float] = {}
         for coin, idx in by_ts.items():
             k = idx.get(ts)
@@ -327,7 +392,9 @@ def build_frames(
             closes_window[coin] = closes[max(0, cut - vwap_window):cut]
             bars_per_day = max(1, round(24.0 / max(bar_hours, 1e-9)))
             vol[coin] = sum(vols[max(0, cut - bars_per_day):cut]) * mid  # rolling 24h notional
-            funding[coin] = funding_rate_at(funding_by_coin.get(coin, []), ts) * bar_hours
+            raw_funding = funding_rate_at(funding_by_coin.get(coin, []), ts)
+            funding[coin] = raw_funding * bar_hours   # per-bar (PnL accrual)
+            funding_hourly[coin] = raw_funding        # unscaled 1h rate (signal)
             # Spot leg: align by timestamp. Expose under spot_mids[coin] AND
             # mids["<coin>-SPOT"] so the engine prices the spot leg via frame.mids
             # (it has no funding entry, so it accrues zero funding — no engine
@@ -340,7 +407,7 @@ def build_frames(
             frames.append(Frame(
                 ts_ms=ts, mids=mids, funding=funding,
                 day_ntl_vlm=vol, candles_1h=candles_1h, closes=closes_window,
-                spot_mids=spot_mids,
+                spot_mids=spot_mids, funding_hourly=funding_hourly,
             ))
     return frames
 
@@ -363,7 +430,10 @@ def load_frames(
     for coin in coins:
         candles_by_coin[coin] = fetch_candles(coin, interval, start_ms, end_ms, base_url=base_url)
         if with_funding:
-            funding_by_coin[coin] = fetch_funding_history(coin, start_ms, end_ms, base_url=base_url)
+            # Page forward past the 500-row cap so funding covers the RECENT end
+            # of the window (a single request returns only the oldest ~21d).
+            funding_by_coin[coin] = fetch_funding_history_window(
+                coin, start_ms, end_ms, base_url=base_url)
         # Spot leg for S4: coins with no resolvable spot pair just won't have it.
         spot = fetch_spot_candles(coin, interval, start_ms, end_ms, base_url=base_url)
         if spot:

@@ -39,6 +39,11 @@ def overlay_ws_snapshot(view: MarketView, ws_snapshot_path: str | None = None) -
         return False
     view.mids.update(snap.mids)
     view.funding.update(snap.funding)
+    # Keep the funding SIGNAL in sync with the freshest funding: enrich_view()
+    # ran BEFORE this overlay and copied the (now stale) REST funding into
+    # extra["funding_hourly"]; funding-threshold agents read that field, so
+    # re-mirror it here or they gate on stale rates in WS-enabled runs.
+    view.extra["funding_hourly"] = dict(view.funding)
     if snap.book_top:
         view.book_top.update(snap.book_top)
     liqs = snap.extra.get("liquidations") or []
@@ -183,6 +188,10 @@ def enrich_view(view: MarketView, api_url: str, vol: dict[str, float]) -> None:
     view.extra["closes"] = closes_by_coin
     view.extra["spot_mids"] = spot_mids
     view.extra["liquidations"] = liquidations
+    # Unscaled 1h funding as a signal, mirroring the backtest frame's
+    # funding_hourly (live view.funding is already the 1h rate). Lets
+    # funding-threshold agents read identical units in paper/live and backtest.
+    view.extra["funding_hourly"] = dict(view.funding)
     # Also surface each spot mid under a "<coin>-SPOT" key in view.mids so the
     # spot-perp carry (S4) agent prices its spot leg identically in paper and
     # backtest (the backtest puts spot in mids[-SPOT] too). extra["spot_mids"]
