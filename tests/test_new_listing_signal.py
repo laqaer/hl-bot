@@ -41,6 +41,22 @@ def test_new_listing_flagged_with_ref_and_age():
     assert last.new_listings["NEW"]["ref_px"] == 10.0   # ref stays the listing px
 
 
+def test_day1_frames_carry_funding_before_warmup():
+    # A new coin's day-1 frames (age < warmup) must still carry funding[coin] —
+    # the backtester accrues carry only from Frame.funding, and a day-1 position
+    # is held entirely within these pre-warmup frames (Codex #20 P2).
+    old = _candles(0, 100, [100.0] * 100)
+    new = _candles(60, 5, [10.0, 11.0, 13.0, 14.0, 12.0])
+    funding = {"NEW": [{"time": 60 * H, "fundingRate": 0.0009}]}  # high fresh-perp funding
+    frames = build_frames({"OLD": old, "NEW": new}, funding_by_coin=funding,
+                          warmup=30, bar_hours=1.0, new_listing_gap_bars=12)
+    nl_frames = [f for f in frames if "NEW" in f.new_listings]
+    # every day-1 frame is < warmup but must carry the funding rate, not omit it
+    assert nl_frames and all(f.new_listings["NEW"]["age_bars"] < 30 for f in nl_frames)
+    assert all(f.funding.get("NEW") == 0.0009 for f in nl_frames)
+    assert all(f.funding_hourly.get("NEW") == 0.0009 for f in nl_frames)
+
+
 def test_no_anchor_gap_means_not_new():
     # Two coins both starting at the cliff: neither is "new" (gap 0 < 12).
     a = _candles(0, 30, [5.0] * 30)

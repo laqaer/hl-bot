@@ -406,6 +406,15 @@ def build_frames(
             mids[coin] = mid
             closes, vols, tss = series[coin]
             upto = [i for i, t in enumerate(tss) if t <= ts]
+            # Funding does NOT depend on the vwap warmup — populate it for every
+            # bar the coin trades, BEFORE the warmup gate, so the backtester
+            # accrues carry on positions held during a coin's first < warmup bars.
+            # The day-1 new-listing path enters at age 1–24 (< warmup 30); without
+            # this those holds pay/receive zero funding and PnL is misstated for
+            # high-funding fresh perps.
+            raw_funding = funding_rate_at(funding_by_coin.get(coin, []), ts)
+            funding[coin] = raw_funding * bar_hours   # per-bar (PnL accrual)
+            funding_hourly[coin] = raw_funding        # unscaled 1h rate (signal)
             # New-listing signal — computed BEFORE the warmup gate so a day-1
             # coin (which has < warmup bars and so no candles_1h/closes below)
             # still carries an age / listing-reference / since-listing volume.
@@ -427,9 +436,6 @@ def build_frames(
             closes_window[coin] = closes[max(0, cut - vwap_window):cut]
             bars_per_day = max(1, round(24.0 / max(bar_hours, 1e-9)))
             vol[coin] = sum(vols[max(0, cut - bars_per_day):cut]) * mid  # rolling 24h notional
-            raw_funding = funding_rate_at(funding_by_coin.get(coin, []), ts)
-            funding[coin] = raw_funding * bar_hours   # per-bar (PnL accrual)
-            funding_hourly[coin] = raw_funding        # unscaled 1h rate (signal)
             # Spot leg: align by timestamp. Expose under spot_mids[coin] AND
             # mids["<coin>-SPOT"] so the engine prices the spot leg via frame.mids
             # (it has no funding entry, so it accrues zero funding — no engine

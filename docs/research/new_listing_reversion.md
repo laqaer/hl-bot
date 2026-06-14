@@ -55,12 +55,12 @@ production engine + scorer.
 
 - The day-1 reversion **points the right way in-sample**: fading the overshoot
   was net-positive and the gross edge clears costs comfortably — full-sample
-  +198 bps net at default params, **robust through 3× taker slippage**
-  (+200.6 → +194.0 bps maker→taker-3×).
+  +188 bps net at default params, **robust through 3× taker slippage**
+  (+190.9 → +184.4 bps maker→taker-3×).
 - But the **sample is far too thin to confirm anything**: only ~9 HL listings
   exist in the retrievable 1h window, yielding **6 trades total** (2 in-sample,
   4 out-of-sample) vs the G0 floor of ≥30 IS / ≥10 OOS. The in-sample-best
-  walk-forward leg is +768 bps on **2 trades** (noise); the OOS leg is −65 bps
+  walk-forward leg is +765 bps on **2 trades** (noise); the OOS leg is −78 bps
   on 4 trades. At n=6 none of this is evidence of an edge — only that the
   machinery and the thesis direction are sound.
 

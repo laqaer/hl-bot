@@ -6,18 +6,18 @@
 
 | # | verdict | OOS edge (bps) | OOS sharpe | OOS net | trades | universe | params |
 |---:|---|---:|---:|---:|---:|---|---|
-| 1 | ❌ | -492.8 | -2.53 | -4.66 | 3 | BTC,ETH,CHIP,AZTEC,SKR,LIT,FOGO,AXS,DASH,STABLE,XMR | `{"max_age_bars": 12, "min_runup": 0.2, "stop_pct": 0.08}` |
-| 2 | ❌ | -951.8 | -3.15 | -6.31 | 2 | BTC,ETH,CHIP,AZTEC,SKR,LIT,FOGO,AXS,DASH,STABLE,XMR | `{"max_age_bars": 12, "min_runup": 0.2, "stop_pct": 0.12}` |
-| 3 | ❌ | -71.6 | -0.36 | -0.86 | 4 | BTC,ETH,CHIP,AZTEC,SKR,LIT,FOGO,AXS,DASH,STABLE,XMR | `{"max_age_bars": 24, "min_runup": 0.2, "stop_pct": 0.08}` |
-| 4 | ❌ | -951.8 | -3.15 | -6.31 | 2 | BTC,ETH,CHIP,AZTEC,SKR,LIT,FOGO,AXS,DASH,STABLE,XMR | `{"max_age_bars": 24, "min_runup": 0.2, "stop_pct": 0.12}` |
-| 5 | ❌ | +91.3 | +0.36 | +0.81 | 3 | BTC,ETH,CHIP,AZTEC,SKR,LIT,FOGO,AXS,DASH,STABLE,XMR | `{"max_age_bars": 24, "min_runup": 0.3, "stop_pct": 0.08}` |
-| 6 | ❌ | -929.2 | -4.45 | -9.21 | 3 | BTC,ETH,CHIP,AZTEC,SKR,LIT,FOGO,AXS,DASH,STABLE,XMR | `{"max_age_bars": 24, "min_runup": 0.3, "stop_pct": 0.12}` |
-| 7 | ❌ | -474.2 | -1.73 | -2.99 | 2 | BTC,ETH,CHIP,AZTEC,SKR,LIT,FOGO,AXS,DASH,STABLE,XMR | `{"max_age_bars": 12, "min_runup": 0.3, "stop_pct": 0.08}` |
-| 8 | ❌ | -978.1 | -3.84 | -6.50 | 2 | BTC,ETH,CHIP,AZTEC,SKR,LIT,FOGO,AXS,DASH,STABLE,XMR | `{"max_age_bars": 12, "min_runup": 0.3, "stop_pct": 0.12}` |
-| 9 | ❌ | -474.2 | -1.73 | -2.99 | 2 | BTC,ETH,CHIP,AZTEC,SKR,LIT,FOGO,AXS,DASH,STABLE,XMR | `{"max_age_bars": 12, "min_runup": 0.4, "stop_pct": 0.08}` |
-| 10 | ❌ | -978.1 | -3.84 | -6.50 | 2 | BTC,ETH,CHIP,AZTEC,SKR,LIT,FOGO,AXS,DASH,STABLE,XMR | `{"max_age_bars": 12, "min_runup": 0.4, "stop_pct": 0.12}` |
-| 11 | ❌ | +91.3 | +0.36 | +0.81 | 3 | BTC,ETH,CHIP,AZTEC,SKR,LIT,FOGO,AXS,DASH,STABLE,XMR | `{"max_age_bars": 24, "min_runup": 0.4, "stop_pct": 0.08}` |
-| 12 | ❌ | -929.2 | -4.45 | -9.21 | 3 | BTC,ETH,CHIP,AZTEC,SKR,LIT,FOGO,AXS,DASH,STABLE,XMR | `{"max_age_bars": 24, "min_runup": 0.4, "stop_pct": 0.12}` |
+| 1 | ❌ | -497.6 | -2.56 | -4.71 | 3 | BTC,ETH,CHIP,AZTEC,SKR,LIT,FOGO,AXS,DASH,STABLE,XMR | `{"max_age_bars": 12, "min_runup": 0.2, "stop_pct": 0.08}` |
+| 2 | ❌ | -960.1 | -3.17 | -6.36 | 2 | BTC,ETH,CHIP,AZTEC,SKR,LIT,FOGO,AXS,DASH,STABLE,XMR | `{"max_age_bars": 12, "min_runup": 0.2, "stop_pct": 0.12}` |
+| 3 | ❌ | -77.7 | -0.39 | -0.94 | 4 | BTC,ETH,CHIP,AZTEC,SKR,LIT,FOGO,AXS,DASH,STABLE,XMR | `{"max_age_bars": 24, "min_runup": 0.2, "stop_pct": 0.08}` |
+| 4 | ❌ | -960.1 | -3.17 | -6.36 | 2 | BTC,ETH,CHIP,AZTEC,SKR,LIT,FOGO,AXS,DASH,STABLE,XMR | `{"max_age_bars": 24, "min_runup": 0.2, "stop_pct": 0.12}` |
+| 5 | ❌ | +82.3 | +0.33 | +0.73 | 3 | BTC,ETH,CHIP,AZTEC,SKR,LIT,FOGO,AXS,DASH,STABLE,XMR | `{"max_age_bars": 24, "min_runup": 0.3, "stop_pct": 0.08}` |
+| 6 | ❌ | -936.2 | -4.47 | -9.28 | 3 | BTC,ETH,CHIP,AZTEC,SKR,LIT,FOGO,AXS,DASH,STABLE,XMR | `{"max_age_bars": 24, "min_runup": 0.3, "stop_pct": 0.12}` |
+| 7 | ❌ | -482.5 | -1.76 | -3.04 | 2 | BTC,ETH,CHIP,AZTEC,SKR,LIT,FOGO,AXS,DASH,STABLE,XMR | `{"max_age_bars": 12, "min_runup": 0.3, "stop_pct": 0.08}` |
+| 8 | ❌ | -977.2 | -3.83 | -6.49 | 2 | BTC,ETH,CHIP,AZTEC,SKR,LIT,FOGO,AXS,DASH,STABLE,XMR | `{"max_age_bars": 12, "min_runup": 0.3, "stop_pct": 0.12}` |
+| 9 | ❌ | -482.5 | -1.76 | -3.04 | 2 | BTC,ETH,CHIP,AZTEC,SKR,LIT,FOGO,AXS,DASH,STABLE,XMR | `{"max_age_bars": 12, "min_runup": 0.4, "stop_pct": 0.08}` |
+| 10 | ❌ | -977.2 | -3.83 | -6.49 | 2 | BTC,ETH,CHIP,AZTEC,SKR,LIT,FOGO,AXS,DASH,STABLE,XMR | `{"max_age_bars": 12, "min_runup": 0.4, "stop_pct": 0.12}` |
+| 11 | ❌ | +82.3 | +0.33 | +0.73 | 3 | BTC,ETH,CHIP,AZTEC,SKR,LIT,FOGO,AXS,DASH,STABLE,XMR | `{"max_age_bars": 24, "min_runup": 0.4, "stop_pct": 0.08}` |
+| 12 | ❌ | -936.2 | -4.47 | -9.28 | 3 | BTC,ETH,CHIP,AZTEC,SKR,LIT,FOGO,AXS,DASH,STABLE,XMR | `{"max_age_bars": 24, "min_runup": 0.4, "stop_pct": 0.12}` |
 
 **0/12 combos confirmed.**
 
