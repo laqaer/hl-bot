@@ -28,6 +28,22 @@ touch ralph/STOP              # graceful stop after the current iteration
 Requires the `claude` CLI on PATH and `uv` for tests/lint. Tune the model and
 permission posture via `CLAUDE_MODEL` / `CLAUDE_FLAGS` (see `loop.sh` header).
 
+**Unattended-safety knobs** (all env, see the `loop.sh` header):
+
+| Env | Default | What |
+|---|---|---|
+| `RALPH_TIMEOUT` | `1800` | Per-iteration wall-clock cap (s); a hung session is killed, not left to wedge the loop. |
+| `RALPH_MAX_FAILS` | `5` | Abort after N consecutive failed/no-op iterations (a stuck or quota-exhausted run stops burning OAuth instead of spinning). |
+| `RALPH_SKIP_AUTH_CHECK` | `0` | Skip the startup auth probe. |
+
+Before looping, `loop.sh` runs a one-shot **auth probe** (`claude -p "…READY"`):
+if the OAuth/Max session or `ANTHROPIC_API_KEY` is missing/expired it exits
+immediately with guidance instead of silently no-op'ing every iteration — the
+most common unattended failure. Pushes use bounded exponential backoff
+(2/4/8/16s), and a red iteration is reverted with a full `git clean -fd`
+(gitignored `data/` + `*.sqlite` are preserved) so leftover untracked files
+can't poison the next verify.
+
 ## Guarantees & guardrails
 
 - **Green-gated commits.** `loop.sh` re-runs `pytest` + `ruff` after every
