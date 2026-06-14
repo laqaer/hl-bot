@@ -35,11 +35,17 @@ CLAUDE_FLAGS="${CLAUDE_FLAGS:---permission-mode acceptEdits}"
 BRANCH="$(git rev-parse --abbrev-ref HEAD)"
 PROMPT_FILE="$ROOT/ralph/PROMPT.md"
 
+# Per-user log dir: a shared /tmp/ralph_*.log collides across users (root/hlbot
+# vs an interactive user) and a file owned by another user makes the verify
+# redirect fail with "Permission denied" — which the loop would misread as RED.
+LOGDIR="${RALPH_LOGDIR:-${TMPDIR:-/tmp}/ralph-$(id -u)}"
+mkdir -p "$LOGDIR" 2>/dev/null || LOGDIR="$(mktemp -d)"
+
 log() { printf '\n\033[1;36m[ralph %s]\033[0m %s\n' "$(date -u +%H:%M:%S)" "$*"; }
 
 verify() {
-  uv run pytest -q >/tmp/ralph_pytest.log 2>&1 || { log "TESTS RED"; tail -20 /tmp/ralph_pytest.log; return 1; }
-  uv run ruff check src tests scripts >/tmp/ralph_ruff.log 2>&1 || { log "RUFF RED"; tail -20 /tmp/ralph_ruff.log; return 1; }
+  uv run pytest -q >"$LOGDIR/pytest.log" 2>&1 || { log "TESTS RED"; tail -20 "$LOGDIR/pytest.log"; return 1; }
+  uv run ruff check src tests scripts >"$LOGDIR/ruff.log" 2>&1 || { log "RUFF RED"; tail -20 "$LOGDIR/ruff.log"; return 1; }
   return 0
 }
 
@@ -77,11 +83,11 @@ command -v "$CLAUDE_BIN" >/dev/null 2>&1 || { log "claude CLI not found ($CLAUDE
 if [ "${RALPH_SKIP_AUTH_CHECK:-0}" != "1" ]; then
   log "auth probe…"
   if ! timeout 90s "$CLAUDE_BIN" -p "reply with the single word READY" \
-        --model "$CLAUDE_MODEL" $CLAUDE_FLAGS >/tmp/ralph_auth.log 2>&1 \
-        || ! grep -qi "READY" /tmp/ralph_auth.log; then
+        --model "$CLAUDE_MODEL" $CLAUDE_FLAGS >"$LOGDIR/auth.log" 2>&1 \
+        || ! grep -qi "READY" "$LOGDIR/auth.log"; then
     log "auth probe FAILED — is the claude CLI authenticated? (run 'claude' once"
     log "to sign in via OAuth/Max, or export ANTHROPIC_API_KEY). Set"
-    log "RALPH_SKIP_AUTH_CHECK=1 to bypass. Last output:"; tail -5 /tmp/ralph_auth.log
+    log "RALPH_SKIP_AUTH_CHECK=1 to bypass. Last output:"; tail -5 "$LOGDIR/auth.log"
     exit 1
   fi
 fi
