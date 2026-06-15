@@ -918,7 +918,7 @@ def _confirm_and_record(
     forward loop). Returns ``(res, phash, dataset, cfg, cov)``. Raises on an
     unknown agent (KeyError) or a history-load failure (the caller decides how
     loud to be)."""
-    from ..agents.base import compute_params_hash
+    from ..agents.fingerprint import config_fingerprint
     from ..backtest.confirm import confirm_strategy
     from ..backtest.data import cached_or_fetch, frames_coverage_days, load_frames
     from ..engine.runner import AGENT_FACTORIES, _load_overrides
@@ -935,7 +935,7 @@ def _confirm_and_record(
     if params:
         cfg.update(json.loads(params))   # caller catches ValueError
     factory = lambda conn, _cfg=dict(cfg): factory_fn(conn, dict(_cfg))  # noqa: E731
-    phash = compute_params_hash(factory(None).params_fingerprint())
+    phash = config_fingerprint(factory(None))
     per_year = _PER_YEAR.get(interval, 8_760)
     frames = (cached_or_fetch(coin_list, interval=interval, days=days,
                               base_url=s.hl_api_url, refresh=refresh)

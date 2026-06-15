@@ -165,9 +165,10 @@ def deployed_params_hashes(
     G0 gate matches live behaviour. Best-effort: any failure yields {} (gate
     falls back to age-only matching rather than blocking everything)."""
     try:
+        from ..agents.fingerprint import config_fingerprint
         from ..engine.runner import _load_overrides, build_roster
         roster = build_roster(conn, configs_dir, _load_overrides(configs_dir))
     except Exception:  # noqa: BLE001 - never let provenance break supervision
         log.exception("could not compute deployed params hashes; G0 falls back to age-only")
         return {}
-    return {e.agent.name: e.agent.params_hash() for e in roster}
+    return {e.agent.name: config_fingerprint(e.agent) for e in roster}
