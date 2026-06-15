@@ -270,6 +270,28 @@ MIGRATIONS: list[str] = [
     CREATE INDEX IF NOT EXISTS idx_confirmations_params
         ON confirmations(agent, params_hash, ts_ms);
     """,
+    # 7: forward per-bar frame store (P1 linchpin). HL serves only ~5000
+    # candles/interval, so a 5m agent's confirm window is retention-capped at
+    # ~17.5d no matter how long it soaks. This stores the per-bar signal the
+    # engine already computes each cycle (vwap/sigma/mid/funding/vol), floored to
+    # the bar boundary, so `confirm` can rebuild frames from `accrued ∪
+    # back-fetched` and the OOS window GROWS forward past HL retention. Append-
+    # only, idempotent on the bar PK (first observation in a bar wins).
+    """
+    CREATE TABLE IF NOT EXISTS frame_samples (
+        interval       TEXT    NOT NULL,   -- '5m' / '1h' (bar interval)
+        coin           TEXT    NOT NULL,
+        bar_ts_ms      INTEGER NOT NULL,   -- ts floored to the bar boundary
+        mid            REAL,
+        funding_hourly REAL,               -- unscaled 1h rate (signal)
+        vwap           REAL,               -- rolling vwap (candles_<interval>.vwap)
+        sigma          REAL,               -- rolling close-std (candles_<interval>.sigma)
+        vol            REAL,               -- rolling 24h notional (day_ntl_vlm)
+        PRIMARY KEY (interval, coin, bar_ts_ms)
+    );
+    CREATE INDEX IF NOT EXISTS idx_frame_samples_load
+        ON frame_samples(interval, bar_ts_ms);
+    """,
 ]
 
 

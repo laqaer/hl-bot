@@ -309,6 +309,37 @@ stale/mismatched one).
 (`accrue_xvenue_funding` built+tested; Binance/Bybit geo-blocked from CI). P2:
 full-universe breadth (build_frames perf) so the soak covers the whole liquid
 set. Then OI/imbalance as filters on the dislocation core (P4/S8).
+
+---
+
+## Iteration — 2026-06-15 — frame-store-backed confirm (P1 linchpin, follow-up)
+
+**Context.** Codex review #1 on PR #23 (correctly) flagged that `confirm`/
+`autoconfirm` built G0 frames only from HL's retention-capped candle cache, so a
+5m agent's OOS window could never grow past ~17.5d no matter how long it soaked —
+the require_g0 backtest window stayed capped even as paper-soak evidence grew.
+Operator chose a focused follow-up PR.
+
+**Changed.**
+- Migration 7: `frame_samples` (per-bar mid/funding_hourly/vwap/sigma/vol,
+  floored to the bar, idempotent on PK).
+- `ingest/accrual.py::accrue_frame_samples` accrues the rolling signal the engine
+  already computes each cycle (the SAME basis the agent sees live); wired into
+  `accrue_cycle` → `run_cycle`.
+- `backtest/data.py::load_accrued_frames` rebuilds agent-compatible `Frame`s from
+  the store; `merge_frames` unions `back-fetched ∪ accrued` (HL official bars win
+  inside retention; accrued extends the window backward).
+- `confirm`/`autoconfirm` replay the union (`--no-accrued` to disable); the
+  confirmations `dataset` notes `+Nfwd` when forward frames were added.
+
+**Evidence.** `uv run pytest -q` → **299 passed** (new `tests/test_frame_store.py`:
+floored/idempotent accrual, agent-compatible reconstruction — a dislocation
+trades on the rebuilt frames — and window-growth merge). `ruff check .` clean.
+End-to-end smoke: 30d of 5m accrual → merged confirm window **30.0d vs HL's
+capped 17.5d**. The forward G0 window now grows over calendar time.
+
+**What's next.** P2: widen the accrued universe past `enrich_view`'s top-vol set
+(build_frames perf). Host: wire xvenue accrual into the nightly job.
 ## Iteration (2026-06-14) — sweep-report adoption guidance + BLOCKED verify gate
 
 **Context.** Ralph loop. Oriented on the newest sweeps

@@ -166,6 +166,49 @@ def accrue_xvenue_funding(
     return written
 
 
+def accrue_frame_samples(
+    conn: sqlite3.Connection,
+    view,
+    *,
+    now_ms: int | None = None,
+    intervals: tuple[str, ...] = ("5m", "1h"),
+) -> int:
+    """Persist the per-bar signal the engine already computes (vwap/sigma/mid/
+    funding/vol) into the forward frame store, floored to the bar boundary.
+
+    This is the linchpin of the forward flywheel: HL serves only ~5000
+    candles/interval, so without it a 5m agent's confirm OOS can never grow past
+    ~17.5d. With it, ``confirm`` rebuilds frames from ``accrued ∪ back-fetched``
+    and the window grows forward. Reads ``view.extra['candles_<interval>']`` (the
+    rolling vwap/sigma the live enrichment computes — the SAME basis the agent
+    sees live), so the reconstructed frame matches live behaviour. Idempotent on
+    the bar PK (first observation in a bar wins). Returns rows written."""
+    now_ms = now_ms or _now_ms()
+    fh = (view.extra.get("funding_hourly") or view.funding or {})
+    vlm = (view.extra.get("day_ntl_vlm") or {})
+    written = 0
+    for interval in intervals:
+        bar_ms = _interval_ms(interval)
+        if bar_ms <= 0:
+            continue
+        bar_ts = (now_ms // bar_ms) * bar_ms
+        candles = (view.extra.get(f"candles_{interval}") or {})
+        for coin, stats in candles.items():
+            mid = (view.mids or {}).get(coin)
+            vwap = (stats or {}).get("vwap")
+            sigma = (stats or {}).get("sigma")
+            if mid is None or mid <= 0 or vwap is None or sigma is None:
+                continue
+            written += conn.execute(
+                """INSERT OR IGNORE INTO frame_samples(
+                       interval, coin, bar_ts_ms, mid, funding_hourly, vwap, sigma, vol)
+                   VALUES(?,?,?,?,?,?,?,?)""",
+                (interval, coin, bar_ts, float(mid), _f(fh.get(coin)),
+                 float(vwap), float(sigma), _f(vlm.get(coin))),
+            ).rowcount
+    return written
+
+
 def accrue_cycle(
     conn: sqlite3.Connection,
     view,
@@ -180,11 +223,12 @@ def accrue_cycle(
     blocked from CI) and accrued by a separate nightly job. Best-effort: a
     failure in accrual must never break a trading cycle."""
     now_ms = now_ms or _now_ms()
-    out = {"samples": 0, "listings": 0, "new_listings": 0}
+    out = {"samples": 0, "listings": 0, "new_listings": 0, "frames": 0}
     try:
         out["listings"] = accrue_listings(conn, view, now_ms=now_ms)
         out["samples"] = accrue_market_samples(
             conn, view, now_ms=now_ms, min_interval_s=sample_interval_s)
+        out["frames"] = accrue_frame_samples(conn, view, now_ms=now_ms)
         nl = build_new_listings_view(
             conn, view, now_ms=now_ms,
             max_age_bars=listing_max_age_bars, bar_seconds=listing_bar_seconds)
@@ -192,6 +236,14 @@ def accrue_cycle(
     except sqlite3.Error:
         pass
     return out
+
+
+_INTERVAL_MS = {"1m": 60_000, "5m": 300_000, "15m": 900_000,
+                "1h": 3_600_000, "4h": 14_400_000, "1d": 86_400_000}
+
+
+def _interval_ms(interval: str) -> int:
+    return _INTERVAL_MS.get(interval, 0)
 
 
 def _f(v) -> float | None:
