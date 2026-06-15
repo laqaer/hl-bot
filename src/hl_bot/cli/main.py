@@ -1015,6 +1015,9 @@ def confirm(
         console.print(f"[yellow]note:[/yellow] only ~{cov:.1f}d of {interval} history exists "
                       f"at HL (retention cap); G0 evidence window is ~{cov:.0f}d, not {days}d.")
     if record:
+        # The INSERT (with the deployed config's params_hash) already happened in
+        # _confirm_and_record(record=True); main's inline default-config stamp is
+        # superseded by that override-aware path.
         console.print(f"[dim]confirmation recorded (confirmed={res.confirmed}, "
                       f"params_hash={phash})[/dim]")
     if not res.confirmed:

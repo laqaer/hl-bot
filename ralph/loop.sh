@@ -33,6 +33,10 @@ CLAUDE_MODEL="${CLAUDE_MODEL:-claude-opus-4-8}"
 # Non-interactive by default. Review before granting broader autonomy.
 CLAUDE_FLAGS="${CLAUDE_FLAGS:---permission-mode acceptEdits}"
 BRANCH="$(git rev-parse --abbrev-ref HEAD)"
+# A systemd service user usually has no git identity -> commits fail with
+# "empty ident name". Set a repo-local one if missing so the loop can commit.
+git config user.email >/dev/null 2>&1 || git config user.email "ralph@hl-bot.local"
+git config user.name  >/dev/null 2>&1 || git config user.name  "hlbot-ralph"
 # Per-process temp (was hardcoded /tmp/ralph_* — collided across users/clones,
 # making verify() report a false RED when another user owned the file).
 RALPH_TMP="$(mktemp -d -t ralph.XXXXXX)"
@@ -95,7 +99,9 @@ log "baseline verify…"; verify || { log "baseline is already red — fix befor
 
 fails=0
 for i in $(seq 1 "$ITERS"); do
-  [ -f "$ROOT/ralph/STOP" ] && { log "STOP file present — exiting"; rm -f "$ROOT/ralph/STOP"; break; }
+  # Exit 42 (not 0) so the graceful STOP is honored under Restart=always:
+  # the unit sets RestartPreventExitStatus=42, so systemd will NOT relaunch us.
+  [ -f "$ROOT/ralph/STOP" ] && { log "STOP file present — exiting"; rm -f "$ROOT/ralph/STOP"; exit 42; }
   log "iteration $i/$ITERS"
 
   before="$(git rev-parse HEAD)"
@@ -119,8 +125,11 @@ for i in $(seq 1 "$ITERS"); do
   if [ "$before" = "$after" ]; then
     # Agent made changes but didn't commit; commit them on its behalf (green).
     if ! git diff --quiet || ! git diff --cached --quiet; then
-      git add -A && git commit -q -m "ralph: iteration $i" && after="$(git rev-parse HEAD)"
-      log "committed uncommitted green changes"
+      if git add -A && git commit -q -m "ralph: iteration $i"; then
+        after="$(git rev-parse HEAD)"; log "committed uncommitted green changes"
+      else
+        log "COMMIT FAILED (check git identity / state) — work not saved"; continue
+      fi
     else
       log "no changes this iteration"
       fails=$((fails + 1))

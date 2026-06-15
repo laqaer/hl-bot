@@ -163,7 +163,8 @@ def g0_confirmed(
     stamped for that exact deployed config — a G0 earned for different params
     no longer counts. Legacy rows (NULL params_hash, pre-V3) never match a
     specific hash, so a config that has never been confirmed under provenance
-    must earn a fresh stamp before it can promote.
+    must earn a fresh stamp before it can promote. ``None`` (the default) keeps
+    the legacy agent-name-only check, so existing callers are unaffected.
     """
     now_ms = now_ms or int(time.time() * 1000)
     since = now_ms - int(max_age_days * 86_400_000)
