@@ -66,10 +66,29 @@ paper, ≥20 paper round trips, ≥3 bps edge, params-matched G0). It cannot rea
 live until the supervisor sees a fresh, params-matched forward G0 — no gate
 weakened.
 
+## Determining the edge before the forward soak completes
+
+HL OI isn't back-fetchable and forward OOS takes weeks, so to get an EARLY read
+on whether S8 is real, use **Binance OI history as a cross-venue proxy** for
+crowding (the same phase-1-offline-study posture as S5 xvenue funding):
+
+```
+hlbot s8-oi-backtest --coins BTC,ETH,SOL,... --days 30 --lookback-min 30
+```
+
+It loads HL 5m candle frames, overlays Binance `openInterestHist` OI-change
+(`research/oi_history.py` + `backtest.data.overlay_oi_change`), and runs the SAME
+G0 gate as `confirm`. **Host-only** — Binance is geo-blocked from CI (the parser
++ overlay are unit-tested with mocks; only the fetch needs the host). A PASS is
+evidence to keep soaking S8 forward, NOT a promotion: live still requires a
+params-matched **forward** G0 on HL data, since Binance OI is only a proxy for HL
+crowding (different participants, different microstructure).
+
 ## Open / next
 
-- **Tuning (P2):** sweep `oi_spike_min` / `z_enter` / lookback once enough
-  forward OI has accrued; the defaults are a sensible prior, not a fit.
+- **Tuning (P2):** sweep `oi_spike_min` / `z_enter` / lookback — first via
+  `s8-oi-backtest` on Binance OI (host), then on forward HL data as it accrues;
+  the defaults are a sensible prior, not a fit.
 - **Breadth compounds it:** more coins in the enrich universe (#25/#26) ⇒ more OI
   spikes observed ⇒ faster G0. The OI-change signal currently rides the same
   coins the enrich candle universe covers (they need both candles and OI).

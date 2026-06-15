@@ -1148,6 +1148,83 @@ def autoconfirm(
 
 
 @app.command()
+def s8_oi_backtest(
+    coins: str = "BTC,ETH,SOL,DOGE,AVAX,LINK,SUI,WLD",
+    days: int = 30,
+    prefer: str = "taker",
+    lookback_min: int = 30,
+    min_edge_bps: float = 3.0,
+    min_sharpe: float = 1.0,
+    params: str = "",
+):
+    """HOST-ONLY: measure the S8 OI-crowding edge on real Binance OI history.
+
+    HL never serves OI history (only candles), so oi_crowding_reversal can't be
+    back-tested on HL — only confirmed FORWARD over weeks. Binance publishes ~30d
+    of 5m OI, which is a usable cross-venue PROXY for crowding: this loads HL 5m
+    candle frames, overlays Binance OI-change, and runs the SAME G0 gate as
+    `confirm` to give an early read on whether the edge is real before committing
+    a long soak. Binance is geo-blocked from CI, so run this on the host."""
+    from ..backtest.confirm import confirm_strategy
+    from ..backtest.data import cached_or_fetch, frames_coverage_days, overlay_oi_change
+    from ..engine.runner import AGENT_FACTORIES
+    from ..research.oi_history import fetch_binance_oi_hist, hl_to_binance
+
+    s = Settings.from_env()
+    coin_list = [c.strip() for c in coins.split(",") if c.strip()]
+    cfg: dict = {}
+    if params:
+        try:
+            cfg.update(json.loads(params))
+        except ValueError as e:
+            console.print(f"[red]--params must be valid JSON: {e}[/red]")
+            raise typer.Exit(2) from e
+
+    console.print(f"[dim]loading {len(coin_list)} coins × {days}d 5m candles…[/dim]")
+    frames = cached_or_fetch(coin_list, interval="5m", days=days, base_url=s.hl_api_url)
+    if not frames:
+        console.print("[red]no candle frames built[/red]")
+        raise typer.Exit(2)
+
+    oi_by_coin: dict[str, list[tuple[int, float]]] = {}
+    skipped: list[str] = []
+    for coin in coin_list:
+        if hl_to_binance(coin) is None:
+            skipped.append(coin)
+            continue
+        pts = fetch_binance_oi_hist(coin, period="5m", days=days)
+        if pts:
+            oi_by_coin[coin] = pts
+        else:
+            skipped.append(coin)
+    n_sig = overlay_oi_change(frames, oi_by_coin, lookback_ms=lookback_min * 60_000)
+    if not oi_by_coin:
+        console.print("[red]no Binance OI fetched (geo-blocked? run on host) — "
+                      "cannot determine the edge[/red]")
+        raise typer.Exit(2)
+    console.print(f"[dim]OI for {len(oi_by_coin)} coin(s) "
+                  f"(skipped {','.join(skipped) or '∅'}); {n_sig} bar-signals overlaid[/dim]")
+
+    factory = lambda conn, _c=dict(cfg): AGENT_FACTORIES["oi_crowding_reversal_v1"](conn, dict(_c))  # noqa: E731
+    res = confirm_strategy(
+        factory, frames, prefer=prefer,
+        min_edge_bps=min_edge_bps, min_sharpe=min_sharpe, periods_per_year=_PER_YEAR["5m"],
+    )
+    cov = frames_coverage_days(frames)
+    console.print(f"\n[bold]S8 OI-crowding backtest[/bold] (Binance OI proxy, ~{cov:.0f}d, "
+                  f"lookback {lookback_min}m)")
+    console.print(res.summary())
+    verdict = "[green]✅ PASS[/green]" if res.confirmed else "[red]❌ FAIL[/red]"
+    _e = lambda v: "—" if v is None else f"{v:+.1f}bps"  # noqa: E731
+    console.print(f"{verdict}  IS edge {_e(res.in_sample.edge_bps)} / "
+                  f"OOS edge {_e(res.out_of_sample.edge_bps)} / "
+                  f"{res.out_of_sample.n_trades} OOS trades")
+    console.print("[dim]Cross-venue proxy: Binance OI ≈ HL crowding. A PASS here is "
+                  "evidence to keep soaking S8 forward, not a promotion — live still "
+                  "requires a params-matched forward G0 on HL data.[/dim]")
+
+
+@app.command()
 def sweep(
     spec: Path,
     refresh: bool = False,
