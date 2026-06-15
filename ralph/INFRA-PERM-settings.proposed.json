@@ -1,0 +1,45 @@
+{
+  "_comment": "INFRA-PERM unblock. An agent cannot write .claude/settings.json itself (the harness guards self-escalation of permissions / the whole .claude/ dir), so this proposed allowlist is staged here as a normal repo file. OPERATOR: review, then copy it into place (the .claude/ dir does not exist yet, so create it first):  mkdir -p .claude && cp ralph/INFRA-PERM-settings.proposed.json .claude/settings.json  — this lets the autonomous Ralph loop run its verify gate (pytest+ruff) and commit without per-command approval. Scope is dev/test/VCS + read-only/research hlbot subcommands. Deny takes precedence over allow in Claude Code, so the dangerous hlbot subcommands and `make deploy` are explicitly denied: nothing that trips/clears KILL (`hlbot kill`/`resume`), writes agent_state modes (`hlbot supervisor` — auto-promotion is the supervisor's job, never the loop's), places live orders (`hlbot run`/`tick`/`femr-tick`), or deploys/sudo (`make deploy`). Push is intentionally NOT allowed (the loop script handles push). NOTE: `uv run python:*` is allowed because the loop must run tests/ad-hoc checks — that grant is necessarily broad, so the real guardrails remain the hard rules + CI gate-minima diff checks + the separate clone, not this file.",
+  "permissions": {
+    "allow": [
+      "Bash(uv run pytest:*)",
+      "Bash(uv run ruff:*)",
+      "Bash(uv run python:*)",
+      "Bash(uv run hlbot:*)",
+      "Bash(hlbot:*)",
+      "Bash(make test:*)",
+      "Bash(make lint:*)",
+      "Bash(make check:*)",
+      "Bash(git add:*)",
+      "Bash(git rm:*)",
+      "Bash(git commit:*)",
+      "Bash(git diff:*)",
+      "Bash(git status:*)",
+      "Bash(git log:*)",
+      "Bash(git show:*)",
+      "Bash(git restore:*)",
+      "Bash(git stash:*)",
+      "Bash(git rev-parse:*)",
+      "Bash(git branch:*)"
+    ],
+    "deny": [
+      "Read(./data/KILL)",
+      "Write(./data/KILL)",
+      "Read(./**/KILL)",
+      "Write(./**/KILL)",
+      "Bash(make deploy:*)",
+      "Bash(hlbot kill:*)",
+      "Bash(hlbot resume:*)",
+      "Bash(hlbot supervisor:*)",
+      "Bash(hlbot run:*)",
+      "Bash(hlbot tick:*)",
+      "Bash(hlbot femr-tick:*)",
+      "Bash(uv run hlbot kill:*)",
+      "Bash(uv run hlbot resume:*)",
+      "Bash(uv run hlbot supervisor:*)",
+      "Bash(uv run hlbot run:*)",
+      "Bash(uv run hlbot tick:*)",
+      "Bash(uv run hlbot femr-tick:*)"
+    ]
+  }
+}

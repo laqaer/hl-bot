@@ -155,16 +155,30 @@ def load_goals(config_path: str | Path) -> list[AgentGoals]:
 
 def g0_confirmed(
     conn: sqlite3.Connection, agent: str, *, max_age_days: float = 30.0,
-    now_ms: int | None = None,
+    now_ms: int | None = None, params_hash: str | None = None,
 ) -> bool:
-    """True when a fresh PASSING `hlbot confirm --record` row exists (G0)."""
+    """True when a fresh PASSING `hlbot confirm --record` row exists (G0).
+
+    When ``params_hash`` is given the stamp must also have been earned for that
+    exact config fingerprint (V3 provenance) — a confirmation recorded for a
+    different param set does NOT count. ``None`` (the default) keeps the legacy
+    agent-name-only check, so existing callers are unaffected.
+    """
     now_ms = now_ms or int(time.time() * 1000)
     since = now_ms - int(max_age_days * 86_400_000)
     try:
-        row = conn.execute(
-            "SELECT 1 FROM confirmations WHERE agent=? AND confirmed=1 AND ts_ms>=? LIMIT 1",
-            (agent, since),
-        ).fetchone()
+        if params_hash is None:
+            row = conn.execute(
+                "SELECT 1 FROM confirmations WHERE agent=? AND confirmed=1 "
+                "AND ts_ms>=? LIMIT 1",
+                (agent, since),
+            ).fetchone()
+        else:
+            row = conn.execute(
+                "SELECT 1 FROM confirmations WHERE agent=? AND confirmed=1 "
+                "AND ts_ms>=? AND params_hash=? LIMIT 1",
+                (agent, since, params_hash),
+            ).fetchone()
     except sqlite3.OperationalError:
         return False
     return row is not None

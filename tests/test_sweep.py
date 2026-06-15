@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from hl_bot.agents.twap_mr import TwapMrAgent
 from hl_bot.backtest.engine import Frame
-from hl_bot.research.sweep import SweepSpec, render_markdown, run_sweep
+from hl_bot.research.sweep import SweepRow, SweepSpec, render_markdown, run_sweep
 
 HOUR = 3_600_000
 COIN = "TST"
@@ -40,14 +40,17 @@ def test_combos_expand_grid():
     assert SweepSpec(agent="x").combos() == [{}]
 
 
-def test_run_sweep_ranks_by_oos_edge():
+def test_run_sweep_ranks_by_in_sample_edge():
+    # Ranking is by IN-SAMPLE edge — ranking on OOS would consume the held-out
+    # window as a selection set (max-order-statistic inflation). Assert the
+    # actual invariant the harness guarantees, not the OOS column.
     frames = {_k: _choppy() for _k in [(COIN,)]}
     rows = run_sweep(SPEC, frames,
                      lambda conn, cfg: TwapMrAgent(config=cfg, conn=conn))
     assert len(rows) == 2
-    edges = [r.oos_edge_bps for r in rows]
+    edges = [r.is_edge_bps for r in rows]
     real = [e for e in edges if e is not None]
-    assert real == sorted(real, reverse=True)   # best first
+    assert real == sorted(real, reverse=True)   # best in-sample first
 
 
 def test_run_sweep_handles_missing_frames():
@@ -67,3 +70,20 @@ def test_render_markdown_report():
     # gate-integrity message must appear when nothing confirms
     if not any(r.confirmed for r in rows):
         assert "do not loosen the gate" in md
+
+
+def test_render_markdown_confirmed_steers_to_defaults_not_overrides():
+    # When a combo confirms, the report's "Next actions" must steer adoption via
+    # DATACLASS DEFAULTS (which `hlbot confirm` actually validates), NOT
+    # agent_overrides.json — an override inherits a G0 stamp for the wrong config
+    # (the V3 provenance hole). Build a confirmed row deterministically.
+    row = SweepRow(
+        universe=[COIN], params={"z_enter": 3.0}, confirmed=True,
+        is_edge_bps=12.0, oos_edge_bps=5.0, oos_sharpe=2.0, oos_net_pnl=1.0,
+        n_trades=40, reasons=[],
+    )
+    md = render_markdown(SPEC, [row], date="2026-06-14")
+    assert "Next actions:" in md
+    assert "DATACLASS DEFAULTS" in md
+    assert "NOT" in md and "agent_overrides.json" in md
+    assert "--record" in md
