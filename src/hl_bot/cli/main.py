@@ -908,7 +908,8 @@ _SEC_TO_INTERVAL = {60: "1m", 300: "5m", 900: "15m", 3600: "1h",
 def _confirm_and_record(
     conn, s, agent: str, *, coins: str, interval: str, days: int, prefer: str,
     min_edge_bps: float = 3.0, min_sharpe: float = 1.0, cache: bool = True,
-    use_overrides: bool = True, params: str = "", record: bool = False,
+    refresh: bool = False, use_overrides: bool = True, params: str = "",
+    record: bool = False,
 ):
     """Run the G0 gate for one agent built from its DEPLOYED config (V3) and,
     with ``record``, stamp the verdict + params_hash into ``confirmations``.
@@ -936,7 +937,8 @@ def _confirm_and_record(
     factory = lambda conn, _cfg=dict(cfg): factory_fn(conn, dict(_cfg))  # noqa: E731
     phash = compute_params_hash(factory(None).params_fingerprint())
     per_year = _PER_YEAR.get(interval, 8_760)
-    frames = (cached_or_fetch(coin_list, interval=interval, days=days, base_url=s.hl_api_url)
+    frames = (cached_or_fetch(coin_list, interval=interval, days=days,
+                              base_url=s.hl_api_url, refresh=refresh)
               if cache else
               load_frames(coin_list, interval=interval, days=days, base_url=s.hl_api_url))
     res = confirm_strategy(
@@ -1049,6 +1051,7 @@ def autoconfirm(
     record: bool = True,
     agents: str = "",
     cache: bool = True,
+    refresh: bool = True,
 ):
     """Nightly FORWARD auto-confirm loop (P1c): re-run `hlbot confirm --record`
     over the accrued forward window for every unconfirmed agent, so any that now
@@ -1059,8 +1062,10 @@ def autoconfirm(
     paper→live_small stage requires G0 (i.e. a fresh forward G0 is exactly what
     blocks their promotion). Pass --agents a,b to override the set. Each agent's
     interval is derived from its cfg bar_seconds; --days 0 picks an HL-retention-
-    aware default per interval. Resilient: one agent's failure never stops the
-    rest. Intended to run after the nightly sweep (hlbot-confirm.timer)."""
+    aware default per interval. --refresh (default on) re-fetches the latest
+    candles so the rolling window advances each night instead of re-confirming a
+    stale cached dataset (refreshed once per distinct interval/days). Resilient:
+    one agent's failure never stops the rest. Runs after the nightly sweep."""
     from ..engine.runner import _load_overrides, build_roster
 
     conn, s = _conn()
@@ -1077,15 +1082,20 @@ def autoconfirm(
     console.print(f"[bold]autoconfirm[/bold] {len(targets)} agent(s): "
                   + ", ".join(e.agent.name for e in targets))
     n_confirmed = 0
+    refreshed: set[tuple[str, int]] = set()   # dedupe network refreshes per dataset
     for e in targets:
         name = e.agent.name
         bar_s = int(getattr(getattr(e.agent, "cfg", None), "bar_seconds", 0) or 0)
         interval = _SEC_TO_INTERVAL.get(bar_s, "1h")
         d = days or {"1m": 90, "5m": 90, "15m": 90}.get(interval, 210)
+        # Refresh the cache once per (interval, days); agents that share a
+        # dataset reuse the freshened frames rather than re-fetching.
+        do_refresh = cache and refresh and (interval, d) not in refreshed
+        refreshed.add((interval, d))
         try:
             res, phash, dataset, _cfg, cov = _confirm_and_record(
                 conn, s, name, coins=coins, interval=interval, days=d, prefer=prefer,
-                cache=cache, record=record)
+                cache=cache, refresh=do_refresh, record=record)
         except Exception as ex:  # noqa: BLE001 - one agent must not abort the loop
             console.print(f"  [yellow]{name}: confirm failed ({ex})[/yellow]")
             continue

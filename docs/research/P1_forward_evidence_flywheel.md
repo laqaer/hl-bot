@@ -151,9 +151,17 @@ hlbot confirm --agent <name> --interval 5m --days <forward-span> \
     --prefer taker --record          # uses deployed config + stamps params_hash
 ```
 
-- Build the confirm frames from the **forward-accrued** window (paper-soak
-  candles + `market_samples`), not just back-fetched history, so the OOS split
-  grows night over night.
+- `--refresh` (default on for `autoconfirm`) re-fetches the latest HL candles so
+  the rolling window ADVANCES each night instead of re-confirming a stale cached
+  dataset.
+- KNOWN GAP (the linchpin, tracked below): `confirm` today builds frames from
+  HL's candle cache, which is retention-capped (~17.5d at 5m) — so for a 5m
+  agent the G0 backtest OOS *rolls* forward but does not *grow* past ~17.5d. To
+  truly grow the window past HL retention, confirm must reconstruct frames from a
+  **forward-accrued frame store** (the candles HL discards), unioned with
+  back-fetched history. The paper-soak `source: paper` promotion conditions DO
+  grow forward today; the require_g0 backtest window does not yet. See
+  "Follow-ups still open → frame-store-backed confirm".
 - `--record` stamps `confirmed` + `params_hash` of the deployed config (V3).
 - When an agent's forward OOS finally clears G0 with matching params, the
   supervisor's next `require_g0` check passes and promotes paper→live_small —
@@ -195,6 +203,13 @@ no human action beyond the monthly capital decision, and:
 
 ## Follow-ups still open
 
+0. **frame-store-backed confirm (the linchpin for retention-capped agents).**
+   Persist per-cycle, per-bar frame data (mid, funding_hourly, vwap/sigma,
+   closes, vol — the fields `build_frames` produces) into an append-only store,
+   downsampled to the agent's bar interval; then have `confirm`/`autoconfirm`
+   build frames from `accrued ∪ back-fetched` (dedup by ts). Only this makes the
+   5m G0 OOS window GROW past HL's ~17.5d retention over calendar time — the
+   `--refresh` roll is necessary but not sufficient. (Codex review #1, PR #23.)
 1. **xvenue accrual on the host.** `accrue_xvenue_funding` exists + is tested;
    wire `research.funding_xvenue.fetch_xvenue_funding` into the nightly host job
    (Binance/Bybit are geo-blocked from CI, so this leg can't run in-sandbox).
