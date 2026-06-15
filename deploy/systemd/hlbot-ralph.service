@@ -20,6 +20,8 @@ Environment=RALPH_ITERS=1000
 Environment=RALPH_PUSH=1
 ExecStart=/opt/hl-bot-ralph/ralph/loop.sh
 Restart=always
+# loop.sh exits 42 on a graceful `touch ralph/STOP`; do not relaunch it then.
+RestartPreventExitStatus=42
 RestartSec=30
 NoNewPrivileges=true
 

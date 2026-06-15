@@ -99,7 +99,9 @@ log "baseline verify…"; verify || { log "baseline is already red — fix befor
 
 fails=0
 for i in $(seq 1 "$ITERS"); do
-  [ -f "$ROOT/ralph/STOP" ] && { log "STOP file present — exiting"; rm -f "$ROOT/ralph/STOP"; break; }
+  # Exit 42 (not 0) so the graceful STOP is honored under Restart=always:
+  # the unit sets RestartPreventExitStatus=42, so systemd will NOT relaunch us.
+  [ -f "$ROOT/ralph/STOP" ] && { log "STOP file present — exiting"; rm -f "$ROOT/ralph/STOP"; exit 42; }
   log "iteration $i/$ITERS"
 
   before="$(git rev-parse HEAD)"
