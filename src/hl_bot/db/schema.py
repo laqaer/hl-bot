@@ -292,6 +292,14 @@ MIGRATIONS: list[str] = [
     CREATE INDEX IF NOT EXISTS idx_frame_samples_load
         ON frame_samples(interval, bar_ts_ms);
     """,
+    # 8: open-interest crowding signal for the frame store (S8). OI can't be
+    # back-fetched (it's only in metaAndAssetCtxs, never in candles), so the only
+    # way oi_crowding_reversal ever reaches a confirmable sample is to accrue the
+    # per-bar OI-change FORWARD here. frame_samples ships in migration 7 without
+    # it; ALTER adds the column so a DB already at user_version=7 keeps its rows.
+    """
+    ALTER TABLE frame_samples ADD COLUMN oi_change REAL;
+    """,
 ]
 
 

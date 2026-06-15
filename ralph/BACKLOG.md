@@ -249,12 +249,18 @@ leverage *unblocked* thing. Add new findings as you discover them.
   agent with leg-sequencing (perp leg only after spot leg confirmed) +
   basis-stop + unwind rule, spot candle fetch in `backtest-fetch`, and a sweep
   spec. _Blocked: confirmed economically trivial (<1%/yr) on 180d real data._
-- [ ] **S8 — Crowding-reversal (the operator's sentiment edge, done +EV).**
-  Spec: `docs/research/S8_crowding_reversal.md`. Fade multi-signal sentiment
-  extremes (price-move + OI-spike + funding-extreme) with a hard stop. Needs:
-  OI plumbed into MarketView from `metaAndAssetCtxs`, the agent + sweep spec.
-  Note OI history isn't in the candle cache — phase 1 likely paper-soaks for
-  real evidence rather than backtesting (accrue OI forward via the WS feed).
+- [x] **S8 — OI-spike crowding-reversal. BUILT, soaking forward** (2026-06-15).
+  Spec: `docs/research/S8_oi_crowding_reversal.md`. Fade a 5m vol-normalized
+  overshoot (|z|>=z_enter) when OI spiked (`oi_change >= oi_spike_min` over a
+  ~30min lookback) — the OI signal funding_crowding_fade only proxied. OI is NOT
+  in candle history, so confirmable ONLY forward: `build_oi_change_view` computes
+  the per-bar signal from accrued `market_samples.open_interest`,
+  `accrue_frame_samples` persists it (migration 8 `frame_samples.oi_change`), and
+  `load_accrued_frames`/`Frame.oi_change` replay it so confirm/autoconfirm
+  evaluate it on the forward window. `oi_crowding_reversal_v1` rosters paper with
+  a params-matched require_g0 ladder (meets test_gate_minima). Tests:
+  `tests/test_oi_crowding.py`. NEXT: sweep `oi_spike_min`/`z_enter`/lookback once
+  enough forward OI accrues; breadth (#25/#26) compounds the event rate.
 - [ ] **S5 — Cross-venue funding signal.** Spec:
   `docs/research/S5_xvenue_funding.md`. Now MORE valuable given the baseline
   finding: Binance/Bybit funding tells us when HL's *spike* is idiosyncratic

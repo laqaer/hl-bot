@@ -61,6 +61,9 @@ class Frame:
     # coin -> {age_bars, ref_px, vol_usd, recent_closes} for coins newly listed
     # within the window (absent for established coins); see build_frames.
     new_listings: dict[str, dict] = field(default_factory=dict)
+    # coin -> fractional OI growth over the crowding lookback (S8 signal). Only
+    # forward-accrued frames carry it (candles have no OI); back-fetched = {}.
+    oi_change: dict[str, float] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -239,6 +242,9 @@ class Backtester:
                 # for established coins. LIVE views don't populate this yet —
                 # new_listing_reversion holds until it's wired live.
                 "new_listings": {k: dict(v) for k, v in frame.new_listings.items()},
+                # S8 OI-crowding signal (forward-accrued frames only; empty on
+                # back-fetched bars, so the agent simply finds no crowding there).
+                "oi_change": dict(frame.oi_change),
             },
         )
 
