@@ -136,6 +136,12 @@ measure persistence of the pre-settlement premium on fetched history.
 New HL perp listings have recurring day-1/week-1 dynamics (no funding
 history, thin books, forced discovery). Sleeve-only, hard-capped. Research
 doc from listings history before any order.
+> **D2b (2026-06-14): built + NOT CONFIRMED.** `new_listing_reversion_v1` (fade the
+> day-1 overshoot from the listing price) + the reusable `new_listings` data-layer
+> signal (cache v5). Backtest is fatally thin (HL's 1h retention sees only ~9
+> listings → 6 trades) and horizon-sensitive (a 4h/week-1 read flips net-negative —
+> the mooning tail). NOT rostered/live; needs a FORWARD-accrued listing log to ever
+> confirm. See `docs/research/new_listing_reversion.md`.
 
 ### Explicitly NOT doing
 - Cross-exchange *price* arbitrage / HFT market-making vs. colocated firms —

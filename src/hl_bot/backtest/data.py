@@ -29,7 +29,10 @@ log = logging.getLogger(__name__)
 # v3 adds funding_hourly (unscaled 1h rate signal for funding_crowding_fade).
 # v4 pages funding forward (was capped at the oldest 500 rows → recent funding
 # was stale/missing, which is fatal for funding-as-signal agents).
-CACHE_VERSION = 4
+# v5 adds the new-listing signal (per-frame age/ref-px/vol since listing) used by
+# new_listing_reversion; a coin is "newly listed" when its first candle is
+# materially later than the dataset's retention-cliff anchor.
+CACHE_VERSION = 5
 
 INTERVAL_MS: dict[str, int] = {
     "1m": 60_000,
@@ -322,6 +325,7 @@ def build_frames(
     vwap_window: int = 60,
     warmup: int = 60,
     bar_hours: float = 1.0,
+    new_listing_gap_bars: int = 12,
 ) -> list[Frame]:
     """Assemble aligned per-timestamp frames from per-coin candle series.
 
@@ -334,6 +338,15 @@ def build_frames(
     *per-bar* rate, so we scale by ``bar_hours`` (= bar interval / 1h). 1h bars
     are unchanged; 5m bars get 1/12 of the hourly rate per bar; 4h bars get 4×.
     Without this, carry PnL is over/understated on any non-1h interval.
+
+    **New-listing signal.** A coin whose first candle is ``>= new_listing_gap_bars``
+    bars later than the EARLIEST coin in the dataset (the retention-cliff anchor —
+    HL serves ≤~5000 candles/interval, so all established coins start at the same
+    cliff) is treated as newly listed. For such coins each frame carries
+    ``new_listings[coin] = {age_bars, ref_px, vol_usd, recent_closes}`` computed
+    INDEPENDENTLY of the vwap warmup (a day-1 coin has < warmup bars, so its
+    candles_1h/closes are absent — without this it would carry no signal at all).
+    Requires an established anchor coin in the universe to fix the cliff.
     """
     funding_by_coin = funding_by_coin or {}
     spot_candles_by_coin = spot_candles_by_coin or {}
@@ -361,6 +374,15 @@ def build_frames(
         series[coin] = _closes_vols(ordered)
         all_ts.update(by_ts[coin].keys())
 
+    # New-listing detection: a coin whose first (valid) candle is materially later
+    # than the earliest coin's (the retention cliff, shared by all established
+    # coins) was listed DURING the window. Needs an anchor coin at the cliff.
+    first_ts_by_coin = {c: tss[0] for c, (_, _, tss) in series.items() if tss}
+    global_first_ts = min(first_ts_by_coin.values(), default=0)
+    gap_ms = new_listing_gap_bars * int(round(bar_hours * 3_600_000))
+    new_coins = {c for c, fts in first_ts_by_coin.items()
+                 if fts - global_first_ts >= gap_ms}
+
     frames: list[Frame] = []
     for ts in sorted(all_ts):
         mids: dict[str, float] = {}
@@ -370,6 +392,7 @@ def build_frames(
         funding: dict[str, float] = {}
         funding_hourly: dict[str, float] = {}
         spot_mids: dict[str, float] = {}
+        new_listings: dict[str, dict] = {}
         for coin, idx in by_ts.items():
             k = idx.get(ts)
             if not k:
@@ -383,6 +406,27 @@ def build_frames(
             mids[coin] = mid
             closes, vols, tss = series[coin]
             upto = [i for i, t in enumerate(tss) if t <= ts]
+            # Funding does NOT depend on the vwap warmup — populate it for every
+            # bar the coin trades, BEFORE the warmup gate, so the backtester
+            # accrues carry on positions held during a coin's first < warmup bars.
+            # The day-1 new-listing path enters at age 1–24 (< warmup 30); without
+            # this those holds pay/receive zero funding and PnL is misstated for
+            # high-funding fresh perps.
+            raw_funding = funding_rate_at(funding_by_coin.get(coin, []), ts)
+            funding[coin] = raw_funding * bar_hours   # per-bar (PnL accrual)
+            funding_hourly[coin] = raw_funding        # unscaled 1h rate (signal)
+            # New-listing signal — computed BEFORE the warmup gate so a day-1
+            # coin (which has < warmup bars and so no candles_1h/closes below)
+            # still carries an age / listing-reference / since-listing volume.
+            if upto and coin in new_coins and closes and closes[0] > 0:
+                cut0 = upto[-1] + 1
+                bpd = max(1, round(24.0 / max(bar_hours, 1e-9)))
+                new_listings[coin] = {
+                    "age_bars": len(upto),
+                    "ref_px": closes[0],
+                    "vol_usd": sum(vols[max(0, cut0 - bpd):cut0]) * mid,
+                    "recent_closes": list(closes[max(0, cut0 - 48):cut0]),
+                }
             if len(upto) < warmup:
                 continue
             cut = upto[-1] + 1
@@ -392,9 +436,6 @@ def build_frames(
             closes_window[coin] = closes[max(0, cut - vwap_window):cut]
             bars_per_day = max(1, round(24.0 / max(bar_hours, 1e-9)))
             vol[coin] = sum(vols[max(0, cut - bars_per_day):cut]) * mid  # rolling 24h notional
-            raw_funding = funding_rate_at(funding_by_coin.get(coin, []), ts)
-            funding[coin] = raw_funding * bar_hours   # per-bar (PnL accrual)
-            funding_hourly[coin] = raw_funding        # unscaled 1h rate (signal)
             # Spot leg: align by timestamp. Expose under spot_mids[coin] AND
             # mids["<coin>-SPOT"] so the engine prices the spot leg via frame.mids
             # (it has no funding entry, so it accrues zero funding — no engine
@@ -408,6 +449,7 @@ def build_frames(
                 ts_ms=ts, mids=mids, funding=funding,
                 day_ntl_vlm=vol, candles_1h=candles_1h, closes=closes_window,
                 spot_mids=spot_mids, funding_hourly=funding_hourly,
+                new_listings=new_listings,
             ))
     return frames
 

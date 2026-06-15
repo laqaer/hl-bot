@@ -1,0 +1,27 @@
+# Nightly sweep: new-listing day-1 reversion (D2b, moonshot sleeve). Fade a
+# >=min_runup gap from the listing reference price while a fresh perp is still
+# within day 1, then revert toward the reference. prefer: TAKER (a reversion must
+# get in now; a thin day-1 book murders resting maker orders).
+#
+# Grid keys MUST match the NewListingReversionConfig dataclass field names.
+#
+# POINT-IN-TIME STUDY, NOT A STANDING SWEEP. The universe is the coins that were
+# newly listed within HL's retrievable 1h window AS OF 2026-06-14. HL's 1h
+# candle retention is ≤~5000 bars ≈ ~190d, and HL had listed only ~9 perps in
+# that span — so this sweep can see at most ~9 day-1 episodes (≈6 trades). That
+# is far below the G0 floor (≥30 IS / ≥10 OOS trades), so it CANNOT confirm here;
+# the verdict is "sample too thin", not a strategy result (see the research note
+# and docs/research/new_listing_reversion.md). BTC/ETH anchor the retention cliff
+# so the new coins are detected as listed-during-window. As these coins age out
+# of "new", the signal stops firing — re-point the universe at the then-current
+# fresh listings (or accrue a forward listing log) to keep the study live.
+agent: new_listing_reversion_v1
+interval: 1h
+days: 210
+prefer: taker
+universes:
+  - [BTC, ETH, CHIP, AZTEC, SKR, LIT, FOGO, AXS, DASH, STABLE, XMR]
+grid:
+  min_runup: [0.20, 0.30, 0.40]
+  max_age_bars: [12, 24]
+  stop_pct: [0.08, 0.12]
