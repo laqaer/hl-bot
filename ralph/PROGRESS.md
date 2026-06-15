@@ -638,3 +638,33 @@ have `confirm`/`sweep` load the same overrides (or `--params`) so the stamp
 reflects the live config — only then does the hole close end-to-end. Then resume
 D1 (watch the nightly dislocation sweep; adopt a better top-IS-confirmed combo
 via dataclass defaults if one beats z=3/stop=0.02/hold=24).
+
+---
+
+## Iteration — 2026-06-15 — widen + parallelize the enrich candle universe (P2)
+
+**Context.** With the P1 forward flywheel landed (#23/#24), the binding
+constraint on clearing a forward G0 is now BREADTH: `enrich_view` computed candle
+vwap/sigma for a hardcoded **top-20** by volume, fetched **serially** (2
+candleSnapshot calls/coin). That caps the universe `dislocation_reversion` (live)
+and `funding_crowding_fade` (soaking) can ever see — fewer coins ⇒ fewer
+dislocation/funding-fade events ⇒ slower G0.
+
+**Changed.**
+- `engine/views.py::enrich_view` — `universe_size` + `max_workers` params; per-coin
+  candle fetches now run on a bounded `ThreadPoolExecutor` (httpx.Client is
+  thread-safe), so widening breadth stays inside the ~5-min cycle budget.
+  `max_workers<=1` preserves the old serial path; per-coin failures isolated.
+- `config.py` — `enrich_universe_size` (default **40**) + `enrich_max_workers`
+  (8), via `HLBOT_ENRICH_UNIVERSE` / `HLBOT_ENRICH_WORKERS`. Threaded through the
+  live `run` loop, `tick`, and `build_view`.
+- Safe widening: each agent still gates on its own `min_daily_volume_usd`, so a
+  wider candle universe never forces an agent into illiquid coins — it just lets
+  the forward soak observe more events. Reversible via env.
+
+**Evidence.** New `tests/test_enrich_universe.py` (mocked HTTP, CI-safe): size cap
++ top-by-volume selection, parallel==serial determinism, per-coin failure
+isolation, size=0 disables. `uv run pytest -q` → **306 passed**; `ruff` clean.
+
+**What's next.** Full liquid set (~180) needs the candle fetches batched/cached
+(still P2). Host: wire xvenue accrual into the nightly job.
