@@ -319,6 +319,7 @@ def run(
     ingest_failures = 0
     last_enrich = 0.0
     cached_extra: dict = {}
+    enrich_offset = 0
     cycles = 0
     while True:
         t0 = time.time()
@@ -327,9 +328,14 @@ def run(
             if t0 - last_enrich >= enrich_every_s:
                 enrich_view(view, s.hl_api_url, view.extra.get("day_ntl_vlm", {}),
                             universe_size=s.enrich_universe_size,
-                            max_workers=s.enrich_max_workers)
+                            max_workers=s.enrich_max_workers,
+                            refresh_limit=s.enrich_refresh_limit,
+                            rotate_offset=enrich_offset, carry_extra=cached_extra)
                 cached_extra = dict(view.extra)
                 last_enrich = t0
+                if s.enrich_refresh_limit > 0:
+                    enrich_offset = ((enrich_offset + s.enrich_refresh_limit)
+                                     % max(1, s.enrich_universe_size))
             else:
                 merged = dict(cached_extra)
                 merged.update(view.extra)

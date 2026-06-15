@@ -34,6 +34,10 @@ class Settings:
     # stays inside the cycle budget. Tune via HLBOT_ENRICH_UNIVERSE / _WORKERS.
     enrich_universe_size: int = 40
     enrich_max_workers: int = 8
+    # Staggered refresh: fetch only this many candle universes per enrich cycle
+    # (round-robin), carrying the rest forward — so a FULL-universe soak stays at
+    # a fixed per-cycle API cost. 0 = refresh the whole universe each cycle.
+    enrich_refresh_limit: int = 0
     # Profile isolation (e.g. the ring-fenced moonshot sleeve): a profile gets
     # its own data dir (=> own DB, own KILL file), its own configs/<profile>/
     # contract set, and may sign with a different API wallet against a
@@ -62,6 +66,7 @@ class Settings:
             paper_mode_default=os.getenv("HLBOT_PAPER", "1") == "1",
             enrich_universe_size=_int_env("HLBOT_ENRICH_UNIVERSE", 40),
             enrich_max_workers=_int_env("HLBOT_ENRICH_WORKERS", 8),
+            enrich_refresh_limit=_int_env("HLBOT_ENRICH_REFRESH", 0),
             profile=profile,
             api_wallet_env=Path(wallet_env) if wallet_env else None,
         )

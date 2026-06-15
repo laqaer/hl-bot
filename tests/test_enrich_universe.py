@@ -93,3 +93,60 @@ def test_per_coin_failure_is_isolated(monkeypatch):
 def test_size_zero_disables_candles(monkeypatch):
     view = _enrich(monkeypatch, _vol(30), universe_size=0, max_workers=4)
     assert view.extra["candles_5m"] == {} and view.extra["candles_1h"] == {}
+
+
+# --- staggered (round-robin) refresh -----------------------------------------
+
+class _CountingClient(_FakeClient):
+    """Records which coins were actually fetched (candleSnapshot) this call."""
+    fetched: list[str] = []
+
+    def post(self, url, json=None):
+        if (json or {}).get("type") == "candleSnapshot":
+            type(self).fetched.append(json["req"]["coin"])
+        return super().post(url, json)
+
+
+def _enrich_counting(monkeypatch, vol, *, carry=None, **kw):
+    cc = type("CC", (_CountingClient,), {"fetched": [], "fail_coins": set()})
+    monkeypatch.setattr(views.httpx, "Client", cc)
+    view = MarketView(ts_ms=0, mids={}, funding={}, extra=dict(carry or {}))
+    views.enrich_view(view, "http://x", vol, carry_extra=carry, **kw)
+    return view, cc.fetched
+
+
+def test_refresh_limit_fetches_only_a_round_robin_window(monkeypatch):
+    vol = _vol(10)  # top-10 = COIN9..COIN0 (desc by vol)
+    top = [f"COIN{i}" for i in range(9, -1, -1)]
+    _, fetched = _enrich_counting(monkeypatch, vol, universe_size=10,
+                                  max_workers=4, refresh_limit=4, rotate_offset=0)
+    # only 4 coins fetched (each = 2 candleSnapshot calls), the first window
+    assert {c for c in fetched} == set(top[:4])
+    assert len(fetched) == 8  # 4 coins x (1m + 5m)
+
+
+def test_rotation_carries_forward_unrefreshed_and_covers_all(monkeypatch):
+    vol = _vol(8)
+    top = [f"COIN{i}" for i in range(7, -1, -1)]
+    extra: dict = {}
+    seen: set[str] = set()
+    # 2 cycles of refresh_limit=4 over a universe of 8 -> full coverage, and the
+    # carried-forward coins keep their stats so candles_5m always spans all 8.
+    offset = 0
+    sizes = []
+    for _ in range(2):
+        view, fetched = _enrich_counting(monkeypatch, vol, carry=extra,
+                                         universe_size=8, max_workers=4,
+                                         refresh_limit=4, rotate_offset=offset)
+        seen |= {c for c in fetched}
+        sizes.append(len(view.extra["candles_5m"]))
+        extra = dict(view.extra)
+        offset = (offset + 4) % 8
+    assert sizes == [4, 8]   # cold start: 4 fresh; then carry 4 + fresh 4 = whole universe
+    assert seen == set(top)  # every coin refreshed across the two cycles
+
+
+def test_refresh_limit_zero_fetches_whole_universe(monkeypatch):
+    _, fetched = _enrich_counting(monkeypatch, _vol(6), universe_size=6,
+                                  max_workers=3, refresh_limit=0)
+    assert len({c for c in fetched}) == 6
