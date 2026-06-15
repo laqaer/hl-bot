@@ -232,6 +232,41 @@ MIGRATIONS: list[str] = [
     CREATE INDEX IF NOT EXISTS idx_confirmations_params
         ON confirmations(agent, params_hash, ts_ms);
     """,
+    # 6: forward-evidence accrual (P1). Append-only signal tables for the
+    # things HL candle history can NEVER give us — OI + top-of-book imbalance
+    # (market_samples), cross-venue funding (xvenue_funding), and per-listing
+    # first-seen + reference price (listing_log). Written every engine cycle
+    # from the already-fetched MarketView/WS snapshot; idempotent on the PK, no
+    # deletes. This is the fuel for confirming the next edges FORWARD.
+    """
+    CREATE TABLE IF NOT EXISTS market_samples (
+        ts_ms          INTEGER NOT NULL,
+        coin           TEXT    NOT NULL,
+        mid            REAL,
+        funding        REAL,          -- HL 1h funding (signed, per-hour)
+        open_interest  REAL,          -- metaAndAssetCtxs openInterest (S8 enabler)
+        day_ntl_vlm    REAL,
+        book_imb       REAL,          -- (bidSz-askSz)/(bidSz+askSz) top-of-book, WS
+        PRIMARY KEY (ts_ms, coin)
+    );
+    CREATE INDEX IF NOT EXISTS idx_market_samples_coin ON market_samples(coin, ts_ms);
+
+    CREATE TABLE IF NOT EXISTS xvenue_funding (
+        ts_ms        INTEGER NOT NULL,
+        coin         TEXT    NOT NULL,
+        venue        TEXT    NOT NULL,   -- 'binance' / 'bybit' / 'hl'
+        funding_apr  REAL,              -- annualized %, for cross-venue compare
+        PRIMARY KEY (ts_ms, coin, venue)
+    );
+    CREATE INDEX IF NOT EXISTS idx_xvenue_funding_coin ON xvenue_funding(coin, ts_ms);
+
+    CREATE TABLE IF NOT EXISTS listing_log (
+        coin           TEXT PRIMARY KEY,
+        first_seen_ms  INTEGER NOT NULL,
+        listing_px     REAL,
+        source         TEXT            -- 'backfill' (pre-existing) / 'live' (new)
+    );
+    """,
 ]
 
 

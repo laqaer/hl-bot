@@ -1,8 +1,11 @@
 # P1 — Forward-evidence flywheel (the binding constraint)
 
-> Status: **spec.** V3 (params_hash provenance), the trust prerequisite, is
-> **landed** (see "V3 — landed" below). The accrual schema + nightly
-> auto-confirm loop are the build items this spec authorizes.
+> Status: **LANDED (2026-06-15).** All four parts ship: V3 provenance (the trust
+> prerequisite), the append-only accrual schema + per-cycle capture (a), the
+> full-universe paper soak of the unconfirmed agents (b), and the nightly
+> forward auto-confirm loop (c). The flywheel now turns automatically; what
+> remains is calendar time (samples accruing) and the cross-venue/host legs
+> noted under "Follow-ups still open".
 
 ## Why this is the #1 priority
 
@@ -171,14 +174,35 @@ no human action beyond the monthly capital decision, and:
 3. the forward window — not back-fetched history — supplied the OOS trades that
    cleared the ≥10-OOS floor.
 
-## Build order (follow-ups this spec authorizes)
+## What landed (2026-06-15)
 
-1. **P1a-1** migration + `market_samples` accrual in the engine cycle (cheapest,
-   unblocks OI/imbalance forward study and true S8).
-2. **P1c** nightly `confirm --record` wrapper + systemd timer (the auto-confirm
-   loop; (d) already consumes it).
-3. **P1b** full-universe paper roster for the unconfirmed agents (couples to P2
-   universe expansion + `build_frames` perf).
-4. **P1a-2** `xvenue_funding` (host) and `listing_log` accrual (S5/S7 fuel).
+- **P1a — accrual.** Migration 6 (`market_samples`, `xvenue_funding`,
+  `listing_log`). `ingest/accrual.py` writes per-cycle from the MarketView/WS
+  snapshot: OI + funding + vlm + **top-of-book imbalance** (new WS capture in
+  `ingest/ws.py::MarketState.book_imb`), throttled per coin; and the
+  `listing_log` with a **first-run backfill guard** so the pre-existing universe
+  is never mistaken for day-1 listings. Hooked into `run_cycle` before decide.
+- **P1b — paper soak.** New YAML contracts put both unconfirmed agents on the
+  roster: `funding_crowding_fade_v1` (roster:live, mode:paper, require_g0 ladder
+  — auto-promotes when forward G0 clears) and `new_listing_reversion_v1`
+  (roster:paper moonshot soak). The live `new_listings` signal
+  (`build_new_listings_view`) finally lets the new-listing agent trade in paper.
+- **P1c — auto-confirm loop.** `hlbot autoconfirm` re-runs the G0 gate over the
+  forward window for every paper agent awaiting G0 (interval derived per agent,
+  HL-retention-aware default window), `--record` stamping the params_hash.
+  `deploy/run-confirm.sh` + `hlbot-confirm.{service,timer}` (03:00 UTC, after
+  the 02:00 sweep). The supervisor's existing `require_g0` check (d) consumes it.
+
+## Follow-ups still open
+
+1. **xvenue accrual on the host.** `accrue_xvenue_funding` exists + is tested;
+   wire `research.funding_xvenue.fetch_xvenue_funding` into the nightly host job
+   (Binance/Bybit are geo-blocked from CI, so this leg can't run in-sandbox).
+2. **Full-universe breadth (P2).** Paper soak currently rides `enrich_view`'s
+   top-20-by-volume candle universe; widening to the full liquid perp set needs
+   the `build_frames`/enrich perf work (P2) to stay cheap.
+3. **OI/imbalance as filters (P4/S8).** Once `market_samples` has a forward
+   window, test OI-spike + book-imbalance as filters on the dislocation core,
+   then a true S8 crowding-reversal agent.
 
 Each follow-up: spec-bounded, additive, gate-neutral. Record dead ends honestly.

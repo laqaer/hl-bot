@@ -46,6 +46,9 @@ def overlay_ws_snapshot(view: MarketView, ws_snapshot_path: str | None = None) -
     view.extra["funding_hourly"] = dict(view.funding)
     if snap.book_top:
         view.book_top.update(snap.book_top)
+    book_imb = snap.extra.get("book_imb") or {}
+    if book_imb:
+        view.extra["book_imb"] = dict(book_imb)
     liqs = snap.extra.get("liquidations") or []
     if liqs:
         view.extra["liquidations"] = liqs

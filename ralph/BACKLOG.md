@@ -23,20 +23,31 @@ leverage *unblocked* thing. Add new findings as you discover them.
   prerequisite: confirm validates the DEPLOYED config and stamps its
   `params_hash`; `require_g0` matches it, so forward auto-promotion is
   trustworthy. Details in P0b below. Gate strengthened, not weakened.
-- [ ] **P1a — forward-accrual schema (append-only).** Migration +
-  `market_samples` (OI from metaAndAssetCtxs + top-of-book imbalance from the WS
-  feed — neither back-fetchable), `xvenue_funding` (Binance/Bybit, host-only),
-  `listing_log` (per-listing first-seen + price). Written every engine cycle
-  from the already-fetched MarketView/WS snapshot; idempotent on PK, no deletes.
-- [ ] **P1b — continuous full-universe paper soak.** Run every built-but-
-  unconfirmed agent (funding_crowding_fade, new_listing_reversion, future S8)
-  in PAPER over the full liquid perp set so OOS samples grow on calendar time.
-  Couples to P2 universe expansion + build_frames perf.
-- [ ] **P1c — nightly auto-confirm loop.** Host timer: after the sweep, run
-  `hlbot confirm --record` over the FORWARD window for each unconfirmed agent;
-  the supervisor (already wired) auto-promotes any that now clear a params-
-  matched G0. Sequencing: ws → run → sweep → confirm → supervisor.
-  ACCEPTANCE: an agent crossing G0 on forward data promotes with no human step.
+- [x] **P1a — forward-accrual schema (append-only). DONE** (2026-06-15).
+  Migration 6: `market_samples` (mid/funding/OI + **top-of-book imbalance** —
+  new WS capture), `xvenue_funding`, `listing_log`. `ingest/accrual.py` writes
+  per-cycle from the MarketView/WS snapshot (throttled, idempotent on PK), hooked
+  into `run_cycle` before decide. `listing_log` first-run **backfill guard** so
+  the pre-existing universe isn't mistaken for day-1 listings. Tests:
+  `tests/test_accrual.py`, `tests/test_ws.py`.
+- [x] **P1b — continuous paper soak of the unconfirmed agents. DONE**
+  (2026-06-15). New contracts: `funding_crowding_fade_v1` (roster:live,
+  mode:paper, require_g0 ladder → auto-promotes on a forward G0) and
+  `new_listing_reversion_v1` (roster:paper moonshot soak). Live `new_listings`
+  wiring (`build_new_listings_view`) makes the new-listing agent actually trade
+  in paper (verified end-to-end). NOTE: soak rides `enrich_view`'s top-20-vol
+  universe; full-universe breadth is **P2** (build_frames perf).
+- [x] **P1c — nightly auto-confirm loop. DONE** (2026-06-15). `hlbot autoconfirm`
+  re-runs the G0 gate over the forward window for every paper agent awaiting G0
+  (per-agent interval, retention-aware window), `--record` stamping params_hash.
+  `deploy/run-confirm.sh` + `hlbot-confirm.{service,timer}` (03:00 UTC, after the
+  02:00 sweep). Sequencing: ws → run → sweep → confirm → supervisor. The
+  supervisor's existing require_g0 (V3) auto-promotes a params-matched pass.
+  ACCEPTANCE met: a paper agent crossing G0 on forward data promotes with no
+  human step. Tests: `tests/test_autoconfirm.py`.
+  > OPEN: xvenue accrual (`accrue_xvenue_funding` built+tested) needs the nightly
+  > host job wired to `funding_xvenue.fetch_xvenue_funding` (Binance/Bybit are
+  > geo-blocked from CI). Full-universe breadth is P2.
 
 ## P0 — LIVE NOW: optimize the one confirmed edge, find the next (2026-06-14)
 

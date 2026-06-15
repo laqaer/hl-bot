@@ -1,0 +1,43 @@
+agent: new_listing_reversion_v1
+description: >-
+  New-listing day-1 reversion (D2b, S7 moonshot sleeve). Fade a >=min_runup gap
+  from a fresh perp's listing reference price while it is still within day 1,
+  revert toward the reference. Built but NOT confirmed: the thesis points the
+  right way intraday, but back-fetched history holds only ~9 listings (~6 trades)
+  — far below the G0 floor. The ONLY path to a confirmable sample is forward
+  accrual, which P1 now provides: the engine logs each listing's first-seen +
+  reference price (listing_log) and wires the live new_listings signal, so this
+  agent finally trades in PAPER and grows OOS episodes over calendar time.
+mode: paper
+# roster: paper — this is a CONVEX moonshot, not a core-book edge. It soaks in
+# paper to accrue forward evidence and can be G0-confirmed (hlbot confirm), but
+# it is NEVER auto-promoted into the core live book: per the risk discipline a
+# new-listing fader belongs in the ring-fenced, hard-capped moonshot sleeve
+# (configs/moonshot/, docs/MOONSHOT.md), entered only on the monthly capital
+# decision. Productionizing = copy a tuned contract there, not flip this to live.
+roster: paper
+cooldown_s: 1800   # listings are rare; patient re-entry
+
+# Monitored while it soaks (guardrails fire if a live sleeve copy ever bleeds).
+goals:
+  primary:
+    metric: edge_bps
+    window: 30d
+    op: ">="
+    threshold: 0
+  secondary:
+    - {metric: net_pnl, window: 30d, op: ">=", threshold: 0}
+    - {metric: win_rate, window: 30d, op: ">=", threshold: 0.45}
+
+guardrails:
+  - {metric: net_pnl,  window: 24h, op: ">=", threshold: -25,
+     action: pause,  reason: "24h realized loss > $25 (sleeve hard cap)"}
+  - {metric: edge_bps, window: 7d,  op: ">=", threshold: -15,
+     action: alert,  reason: "7d realized edge < -15 bps after costs"}
+
+# Hard-capped sleeve sizing — convex, bounded max loss. No core promotion ladder:
+# live execution is a deliberate move into the moonshot profile, gated by a fresh
+# params-matched G0 (V3) earned on the forward listing log.
+sizing:
+  live_small_max_total: 50
+  live_small_max_per_trade: 25
