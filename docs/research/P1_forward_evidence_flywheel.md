@@ -154,14 +154,14 @@ hlbot confirm --agent <name> --interval 5m --days <forward-span> \
 - `--refresh` (default on for `autoconfirm`) re-fetches the latest HL candles so
   the rolling window ADVANCES each night instead of re-confirming a stale cached
   dataset.
-- KNOWN GAP (the linchpin, tracked below): `confirm` today builds frames from
-  HL's candle cache, which is retention-capped (~17.5d at 5m) — so for a 5m
-  agent the G0 backtest OOS *rolls* forward but does not *grow* past ~17.5d. To
-  truly grow the window past HL retention, confirm must reconstruct frames from a
-  **forward-accrued frame store** (the candles HL discards), unioned with
-  back-fetched history. The paper-soak `source: paper` promotion conditions DO
-  grow forward today; the require_g0 backtest window does not yet. See
-  "Follow-ups still open → frame-store-backed confirm".
+- LINCHPIN (landed): `confirm`/`autoconfirm` build frames from
+  **back-fetched ∪ forward frame store** (`frame_samples`, migration 7;
+  `accrue_frame_samples` each cycle; `load_accrued_frames`/`merge_frames`). HL's
+  official candles win inside its ~17.5d retention; accrued bars (the rolling
+  vwap/sigma/mid/funding the engine already computes, floored to the bar) extend
+  the window backward, so the 5m G0 OOS GROWS forward past retention over
+  calendar time instead of just rolling. (`--no-accrued` to disable.) Verified
+  end-to-end: 30d soak → merged confirm window 30d vs HL's capped 17.5d.
 - `--record` stamps `confirmed` + `params_hash` of the deployed config (V3).
 - When an agent's forward OOS finally clears G0 with matching params, the
   supervisor's next `require_g0` check passes and promotes paper→live_small —
@@ -203,13 +203,13 @@ no human action beyond the monthly capital decision, and:
 
 ## Follow-ups still open
 
-0. **frame-store-backed confirm (the linchpin for retention-capped agents).**
-   Persist per-cycle, per-bar frame data (mid, funding_hourly, vwap/sigma,
-   closes, vol — the fields `build_frames` produces) into an append-only store,
-   downsampled to the agent's bar interval; then have `confirm`/`autoconfirm`
-   build frames from `accrued ∪ back-fetched` (dedup by ts). Only this makes the
-   5m G0 OOS window GROW past HL's ~17.5d retention over calendar time — the
-   `--refresh` roll is necessary but not sufficient. (Codex review #1, PR #23.)
+0. **frame-store-backed confirm — LANDED** (the linchpin for retention-capped
+   agents; was Codex review #1 on PR #23). `frame_samples` (migration 7) accrues
+   the per-bar signal each cycle; `confirm`/`autoconfirm` replay
+   `back-fetched ∪ accrued`, so the 5m G0 OOS window grows past HL's ~17.5d over
+   calendar time. Tests: `tests/test_frame_store.py`. Remaining nuance: the store
+   only covers coins with a live candle signal (top-vol via `enrich_view`);
+   widening that universe is P2.
 1. **xvenue accrual on the host.** `accrue_xvenue_funding` exists + is tested;
    wire `research.funding_xvenue.fetch_xvenue_funding` into the nightly host job
    (Binance/Bybit are geo-blocked from CI, so this leg can't run in-sandbox).

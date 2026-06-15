@@ -555,3 +555,97 @@ def cached_or_fetch(
                          base_url=base_url, vwap_window=vwap_window)
     save_frames(p, frames)
     return frames
+
+
+# ---------------------------------------------------------------------------
+# Forward frame store (P1 linchpin): rebuild frames from accrued per-bar signal
+# ---------------------------------------------------------------------------
+
+
+def load_accrued_frames(
+    conn,
+    coins: list[str],
+    interval: str,
+    *,
+    since_ms: int | None = None,
+    vwap_window: int = 60,
+) -> list[Frame]:
+    """Rebuild ``Frame`` objects from the forward ``frame_samples`` store.
+
+    These are the candles HL discards (retention ≤~5000 bars): each cycle the
+    engine accrued the rolling vwap/sigma/mid/funding/vol it computed live, so
+    replaying them reproduces what the agent saw. One frame per bar timestamp;
+    per coin it carries mid, per-bar funding (= hourly × bar_hours), the
+    funding_hourly signal, day volume, and ``candles_1h`` = {vwap, sigma, n}
+    (the backtester aliases that to the agent's ``candles_<interval>``). ``closes``
+    is the trailing window of stored mids. Ordered ascending by bar.
+    """
+    from collections import defaultdict, deque
+
+    bar_hours = INTERVAL_MS.get(interval, 3_600_000) / 3_600_000
+    sql = ["SELECT bar_ts_ms, coin, mid, funding_hourly, vwap, sigma, vol",
+           "FROM frame_samples WHERE interval = ?"]
+    args: list[Any] = [interval]
+    if coins:
+        sql.append(f"AND coin IN ({','.join('?' * len(coins))})")
+        args.extend(coins)
+    if since_ms is not None:
+        sql.append("AND bar_ts_ms >= ?")
+        args.append(int(since_ms))
+    sql.append("ORDER BY bar_ts_ms ASC")
+    rows = conn.execute(" ".join(sql), args).fetchall()
+
+    frames: list[Frame] = []
+    trailing: dict[str, Any] = defaultdict(lambda: deque(maxlen=vwap_window))
+    cur_ts: int | None = None
+    bucket: list = []
+
+    def _flush(ts: int, bucket: list) -> None:
+        mids: dict[str, float] = {}
+        funding: dict[str, float] = {}
+        funding_hourly: dict[str, float] = {}
+        vol: dict[str, float] = {}
+        candles: dict[str, dict] = {}
+        closes: dict[str, list[float]] = {}
+        for r in bucket:
+            coin = r["coin"]
+            mid = r["mid"]
+            if mid is None or mid <= 0:
+                continue
+            mids[coin] = mid
+            fh = r["funding_hourly"]
+            if fh is not None:
+                funding_hourly[coin] = fh
+                funding[coin] = fh * bar_hours
+            if r["vol"] is not None:
+                vol[coin] = r["vol"]
+            if r["vwap"] is not None and r["sigma"] is not None:
+                candles[coin] = {"vwap": r["vwap"], "sigma": r["sigma"], "n": vwap_window}
+            trailing[coin].append(mid)
+            closes[coin] = list(trailing[coin])
+        if mids:
+            frames.append(Frame(
+                ts_ms=ts, mids=mids, funding=funding, day_ntl_vlm=vol,
+                candles_1h=candles, closes=closes, funding_hourly=funding_hourly))
+
+    for r in rows:
+        if cur_ts is not None and r["bar_ts_ms"] != cur_ts:
+            _flush(cur_ts, bucket)
+            bucket = []
+        cur_ts = r["bar_ts_ms"]
+        bucket.append(r)
+    if bucket and cur_ts is not None:
+        _flush(cur_ts, bucket)
+    return frames
+
+
+def merge_frames(*frame_lists: list[Frame]) -> list[Frame]:
+    """Union frames by timestamp, EARLIER lists winning on a tie, sorted
+    ascending. Call ``merge_frames(back_fetched, accrued)`` so HL's official
+    candles win inside its retention window and accrued frames extend the window
+    backward past it — the union grows forward over calendar time."""
+    by_ts: dict[int, Frame] = {}
+    for fl in frame_lists:
+        for f in fl:
+            by_ts.setdefault(f.ts_ms, f)
+    return [by_ts[t] for t in sorted(by_ts)]

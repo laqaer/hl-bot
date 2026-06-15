@@ -909,18 +909,26 @@ def _confirm_and_record(
     conn, s, agent: str, *, coins: str, interval: str, days: int, prefer: str,
     min_edge_bps: float = 3.0, min_sharpe: float = 1.0, cache: bool = True,
     refresh: bool = False, use_overrides: bool = True, params: str = "",
-    record: bool = False,
+    record: bool = False, use_accrued: bool = True,
 ):
     """Run the G0 gate for one agent built from its DEPLOYED config (V3) and,
     with ``record``, stamp the verdict + params_hash into ``confirmations``.
 
     Shared by ``confirm`` (one agent, verbose) and ``autoconfirm`` (the nightly
-    forward loop). Returns ``(res, phash, dataset, cfg, cov)``. Raises on an
-    unknown agent (KeyError) or a history-load failure (the caller decides how
-    loud to be)."""
+    forward loop). With ``use_accrued`` the confirm frames are
+    ``back-fetched ∪ forward frame_samples`` (P1 linchpin), so a retention-capped
+    5m agent's OOS window GROWS forward past HL's ~17.5d instead of just rolling.
+    Returns ``(res, phash, dataset, cfg, cov)``. Raises on an unknown agent
+    (KeyError) or a history-load failure (the caller decides how loud to be)."""
     from ..agents.fingerprint import config_fingerprint
     from ..backtest.confirm import confirm_strategy
-    from ..backtest.data import cached_or_fetch, frames_coverage_days, load_frames
+    from ..backtest.data import (
+        cached_or_fetch,
+        frames_coverage_days,
+        load_accrued_frames,
+        load_frames,
+        merge_frames,
+    )
     from ..engine.runner import AGENT_FACTORIES, _load_overrides
 
     factory_fn = AGENT_FACTORIES.get(agent)
@@ -941,16 +949,33 @@ def _confirm_and_record(
                               base_url=s.hl_api_url, refresh=refresh)
               if cache else
               load_frames(coin_list, interval=interval, days=days, base_url=s.hl_api_url))
+    # Union HL's retention-capped candles with the forward-accrued frame store:
+    # HL's official bars win inside its window; accrued bars extend it backward
+    # (the window the agent actually soaked), so the OOS sample grows forward.
+    # Bound accrued to the SAME requested window (now - days) so `--days N` means
+    # "the last N days" deterministically — coverage within it still grows toward
+    # N as accrual deepens, but a longer soak can't silently inflate the window
+    # past the request and drift the walk-forward split / recorded provenance.
+    n_back = len(frames)
+    if use_accrued:
+        since_ms = int(time.time() * 1000) - days * 86_400_000 if days > 0 else None
+        accrued = load_accrued_frames(conn, coin_list, interval, since_ms=since_ms)
+        if accrued:
+            frames = merge_frames(frames, accrued)
+    n_accrued_added = len(frames) - n_back
     res = confirm_strategy(
         factory, frames, prefer=prefer,
         min_edge_bps=min_edge_bps, min_sharpe=min_sharpe, periods_per_year=per_year,
     )
     # Record the ACTUAL coverage, not just the requested days: at fine intervals
     # HL serves only ~5000 candles (5m → ~17d), so "90d" in a record overstates.
+    # With accrued frames the real span is the union's, which grows past that.
     cov = frames_coverage_days(frames)
     dataset = f"{coins}/{interval}/{days}d"
     if frames and cov < days * 0.9:
         dataset = f"{coins}/{interval}/{days}d(actual~{cov:.0f}d)"
+    if n_accrued_added > 0:
+        dataset += f"+{n_accrued_added}fwd"
     if record:
         conn.execute(
             """INSERT INTO confirmations(agent, ts_ms, dataset, prefer, confirmed,
@@ -976,6 +1001,7 @@ def confirm(
     record: bool = False,
     use_overrides: bool = True,
     params: str = "",
+    accrued: bool = True,
 ):
     """Confirm a strategy through the G0 gate: walk-forward + cost stress.
 
@@ -1000,7 +1026,7 @@ def confirm(
         res, phash, dataset, cfg, cov = _confirm_and_record(
             conn, s, agent, coins=coins, interval=interval, days=days, prefer=prefer,
             min_edge_bps=min_edge_bps, min_sharpe=min_sharpe, cache=cache,
-            use_overrides=use_overrides, params=params, record=record)
+            use_overrides=use_overrides, params=params, record=record, use_accrued=accrued)
     except ValueError as e:
         console.print(f"[red]--params must be valid JSON: {e}[/red]")
         raise typer.Exit(2) from e

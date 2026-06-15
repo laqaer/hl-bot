@@ -45,12 +45,11 @@ leverage *unblocked* thing. Add new findings as you discover them.
   supervisor's existing require_g0 (V3) auto-promotes a params-matched pass.
   ACCEPTANCE met: a paper agent crossing G0 on forward data promotes with no
   human step. Tests: `tests/test_autoconfirm.py`.
-  > OPEN (linchpin): `confirm`/`autoconfirm` still build frames from HL's
-  > retention-capped candle cache, so a 5m agent's G0 OOS *rolls* (via --refresh)
-  > but doesn't *grow* past ~17.5d. To grow it, persist per-bar frame data
-  > forward and have confirm build from `accrued ∪ back-fetched` (Codex #1, PR
-  > #23). Paper-soak promotion conditions already grow forward; only the
-  > require_g0 backtest window is capped.
+  > LINCHPIN DONE (2026-06-15, follow-up PR): `frame_samples` (migration 7)
+  > accrues the per-bar signal each cycle; `confirm`/`autoconfirm` replay
+  > `back-fetched ∪ accrued`, so a 5m agent's G0 OOS GROWS forward past HL's
+  > ~17.5d over calendar time (verified: 30d soak → 30d merged window vs 17.5d
+  > capped). `--no-accrued` to disable. Tests: tests/test_frame_store.py.
   > OPEN: xvenue accrual (`accrue_xvenue_funding` built+tested) needs the nightly
   > host job wired to `funding_xvenue.fetch_xvenue_funding` (Binance/Bybit are
   > geo-blocked from CI). Full-universe breadth is P2.
