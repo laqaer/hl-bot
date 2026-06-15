@@ -132,6 +132,43 @@ def build_new_listings_view(
     return out
 
 
+def build_oi_change_view(
+    conn: sqlite3.Connection,
+    view,
+    *,
+    now_ms: int | None = None,
+    lookback_s: float = 1800.0,
+) -> dict[str, float]:
+    """Live OI-crowding signal for S8 (``oi_crowding_reversal``): fractional
+    open-interest growth over the last ``lookback_s`` per coin.
+
+    ``oi_change = (oi_now - oi_ref) / oi_ref`` where ``oi_ref`` is the most recent
+    ``market_samples`` OI at/just before the lookback horizon. OI rising fast =
+    new positions piling in = the crowding the agent fades. This is computable
+    ONLY from forward-accrued OI (candles carry none), which is the whole point
+    of accruing it. Writes ``view.extra['oi_change']`` and returns the map. Must
+    run AFTER ``accrue_market_samples`` (so this cycle's OI is the latest row)."""
+    now_ms = now_ms or _now_ms()
+    ref_floor = now_ms - int(lookback_s * 1000)
+    oi_now_map = view.open_interest or {}
+    out: dict[str, float] = {}
+    for coin, oi_now in oi_now_map.items():
+        if not _is_perp(coin) or oi_now is None or oi_now <= 0:
+            continue
+        row = conn.execute(
+            """SELECT open_interest FROM market_samples
+               WHERE coin=? AND ts_ms<=? AND open_interest IS NOT NULL
+               ORDER BY ts_ms DESC LIMIT 1""",
+            (coin, ref_floor),
+        ).fetchone()
+        if row is None or row[0] is None or float(row[0]) <= 0:
+            continue
+        oi_ref = float(row[0])
+        out[coin] = (float(oi_now) - oi_ref) / oi_ref
+    view.extra["oi_change"] = out
+    return out
+
+
 def accrue_xvenue_funding(
     conn: sqlite3.Connection,
     xvenue: dict[str, dict[str, float]],
@@ -186,6 +223,7 @@ def accrue_frame_samples(
     now_ms = now_ms or _now_ms()
     fh = (view.extra.get("funding_hourly") or view.funding or {})
     vlm = (view.extra.get("day_ntl_vlm") or {})
+    oic = (view.extra.get("oi_change") or {})
     written = 0
     for interval in intervals:
         bar_ms = _interval_ms(interval)
@@ -201,10 +239,11 @@ def accrue_frame_samples(
                 continue
             written += conn.execute(
                 """INSERT OR IGNORE INTO frame_samples(
-                       interval, coin, bar_ts_ms, mid, funding_hourly, vwap, sigma, vol)
-                   VALUES(?,?,?,?,?,?,?,?)""",
+                       interval, coin, bar_ts_ms, mid, funding_hourly, vwap, sigma,
+                       vol, oi_change)
+                   VALUES(?,?,?,?,?,?,?,?,?)""",
                 (interval, coin, bar_ts, float(mid), _f(fh.get(coin)),
-                 float(vwap), float(sigma), _f(vlm.get(coin))),
+                 float(vwap), float(sigma), _f(vlm.get(coin)), _f(oic.get(coin))),
             ).rowcount
     return written
 
@@ -223,11 +262,14 @@ def accrue_cycle(
     blocked from CI) and accrued by a separate nightly job. Best-effort: a
     failure in accrual must never break a trading cycle."""
     now_ms = now_ms or _now_ms()
-    out = {"samples": 0, "listings": 0, "new_listings": 0, "frames": 0}
+    out = {"samples": 0, "listings": 0, "new_listings": 0, "frames": 0, "oi_change": 0}
     try:
         out["listings"] = accrue_listings(conn, view, now_ms=now_ms)
         out["samples"] = accrue_market_samples(
             conn, view, now_ms=now_ms, min_interval_s=sample_interval_s)
+        # OI-change signal first (reads market_samples just written) so the frame
+        # store persists it for S8's forward confirm.
+        out["oi_change"] = len(build_oi_change_view(conn, view, now_ms=now_ms))
         out["frames"] = accrue_frame_samples(conn, view, now_ms=now_ms)
         nl = build_new_listings_view(
             conn, view, now_ms=now_ms,

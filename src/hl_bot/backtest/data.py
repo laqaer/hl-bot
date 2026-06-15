@@ -583,7 +583,7 @@ def load_accrued_frames(
     from collections import defaultdict, deque
 
     bar_hours = INTERVAL_MS.get(interval, 3_600_000) / 3_600_000
-    sql = ["SELECT bar_ts_ms, coin, mid, funding_hourly, vwap, sigma, vol",
+    sql = ["SELECT bar_ts_ms, coin, mid, funding_hourly, vwap, sigma, vol, oi_change",
            "FROM frame_samples WHERE interval = ?"]
     args: list[Any] = [interval]
     if coins:
@@ -607,6 +607,7 @@ def load_accrued_frames(
         vol: dict[str, float] = {}
         candles: dict[str, dict] = {}
         closes: dict[str, list[float]] = {}
+        oi_change: dict[str, float] = {}
         for r in bucket:
             coin = r["coin"]
             mid = r["mid"]
@@ -621,12 +622,15 @@ def load_accrued_frames(
                 vol[coin] = r["vol"]
             if r["vwap"] is not None and r["sigma"] is not None:
                 candles[coin] = {"vwap": r["vwap"], "sigma": r["sigma"], "n": vwap_window}
+            if r["oi_change"] is not None:
+                oi_change[coin] = r["oi_change"]
             trailing[coin].append(mid)
             closes[coin] = list(trailing[coin])
         if mids:
             frames.append(Frame(
                 ts_ms=ts, mids=mids, funding=funding, day_ntl_vlm=vol,
-                candles_1h=candles, closes=closes, funding_hourly=funding_hourly))
+                candles_1h=candles, closes=closes, funding_hourly=funding_hourly,
+                oi_change=oi_change))
 
     for r in rows:
         if cur_ts is not None and r["bar_ts_ms"] != cur_ts:

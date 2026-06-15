@@ -696,3 +696,34 @@ all. `uv run pytest -q` → **309 passed**; `ruff` clean.
 
 **What's next.** Host: pick universe/refresh in the deploy + watch HL rate budget.
 Host: wire xvenue accrual into the nightly job.
+
+---
+
+## Iteration — 2026-06-15 — S8 OI-spike crowding reversal (new forward edge)
+
+**Context.** With the flywheel built + fed (P1, #23/#24, breadth #25/#26), the
+next leverage is a NEW forward-confirmable edge to soak. S8 was specced but
+blocked on OI: open interest is only in `metaAndAssetCtxs` (never in candles), so
+it can't be back-tested — but P1a now accrues OI forward, unblocking it.
+
+**Changed (end-to-end edge + its forward-confirmability).**
+- `ingest/accrual.py::build_oi_change_view` — per-coin fractional OI growth over a
+  ~30min lookback, from `market_samples` (the accrued OI); writes
+  `view.extra['oi_change']`. Wired into `accrue_cycle` (after market_samples).
+- Migration 8: `frame_samples.oi_change`; `accrue_frame_samples` persists it so
+  confirm replays it. `load_accrued_frames` + new `Frame.oi_change` + the
+  backtester view-mapping expose it identically live and in backtest.
+- `agents/oi_crowding_reversal.py` (S8) — fade a 5m |z|>=z_enter overshoot when
+  `oi_change >= oi_spike_min`; direction from the overshoot (OI spike is
+  unsigned), tight stop, TAKER. Registered in AGENT_FACTORIES.
+- `configs/oi_crowding_reversal_v1.yaml` — paper soak, params-matched require_g0
+  ladder meeting test_gate_minima. autoconfirm picks it up via bar_seconds→5m.
+- Spec: `docs/research/S8_oi_crowding_reversal.md`.
+
+**Evidence.** `tests/test_oi_crowding.py` (9 tests): OI-change signal from accrued
+OI, frame-store round trip, agent fade logic (short up / long down on spike, hold
+without spike or overshoot), end-to-end backtest on reconstructed frames. Full
+suite **318 passed**; ruff clean. Migration chain verified fresh→v8 and a
+simulated main@v7 upgrade (no dup-column).
+
+**What's next.** Sweep S8 params once forward OI accrues; xvenue host job.
