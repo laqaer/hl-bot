@@ -668,3 +668,31 @@ isolation, size=0 disables. `uv run pytest -q` → **306 passed**; `ruff` clean.
 
 **What's next.** Full liquid set (~180) needs the candle fetches batched/cached
 (still P2). Host: wire xvenue accrual into the nightly job.
+
+---
+
+## Iteration — 2026-06-15 — staggered full-universe enrichment (P2 cont.)
+
+**Context.** #25 widened the enrich candle universe (default 40) and parallelized
+the fetches, but reaching the FULL liquid set (~180) still scaled per-cycle API
+cost linearly (HL has no multi-coin candle endpoint). The 1h/5h rolling vwap/sigma
+drifts slowly, so a coin doesn't need refreshing every 5-min cycle.
+
+**Changed.**
+- `engine/views.py::enrich_view` — `refresh_limit` + `rotate_offset` + `carry_extra`:
+  fetch only `refresh_limit` coins per cycle (round-robin window from
+  `rotate_offset`) and carry the rest forward from the prior cycle's `view.extra`.
+  Cost is fixed at `refresh_limit` fetches/cycle regardless of universe size; full
+  coverage every ⌈universe/refresh_limit⌉ cycles. `refresh_limit<=0` (default)
+  refreshes the whole universe (unchanged from #25).
+- `config.py` — `enrich_refresh_limit` (default 0), env `HLBOT_ENRICH_REFRESH`.
+- Live `run` loop tracks an advancing `enrich_offset` so the window walks the
+  universe across cycles. Default off ⇒ zero behaviour change.
+
+**Evidence.** `tests/test_enrich_universe.py` extended: round-robin window
+selection, carry-forward keeps unrefreshed coins so candles span the whole
+universe (cold start 4 → warm 8), full coverage across cycles, `limit=0` fetches
+all. `uv run pytest -q` → **309 passed**; `ruff` clean.
+
+**What's next.** Host: pick universe/refresh in the deploy + watch HL rate budget.
+Host: wire xvenue accrual into the nightly job.

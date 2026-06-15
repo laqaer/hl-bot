@@ -69,6 +69,9 @@ def enrich_view(
     *,
     universe_size: int = 20,
     max_workers: int = 8,
+    refresh_limit: int = 0,
+    rotate_offset: int = 0,
+    carry_extra: dict | None = None,
 ) -> None:
     """Augment a MarketView with 1h/5m candle signals (top-vol coins), spot mids,
     liquidations.
@@ -81,16 +84,51 @@ def enrich_view(
     fetches (2 ``candleSnapshot`` calls each) are issued concurrently with a
     ``max_workers``-bounded pool so widening breadth doesn't blow the cycle's
     time budget; ``max_workers<=1`` keeps the old serial behaviour.
+
+    **Staggered refresh** (``refresh_limit`` > 0): fetch only ``refresh_limit``
+    coins this cycle — a round-robin window starting at ``rotate_offset`` — and
+    carry the remaining coins' stats forward from ``carry_extra`` (the previous
+    cycle's ``view.extra``). The 5h/1h rolling vwap/sigma drifts slowly, so a
+    coin refreshed every few cycles is fine. This is how a FULL-universe soak
+    (HL has no multi-coin candle endpoint) stays inside a fixed per-cycle API
+    budget: cost is ``refresh_limit`` fetches/cycle regardless of universe size,
+    full coverage every ``ceil(universe_size / refresh_limit)`` cycles.
+    ``refresh_limit <= 0`` (default) refreshes the whole universe each call.
     """
     # ---- top-by-volume universe ----
     top = sorted(vol.items(), key=lambda kv: kv[1], reverse=True)[:max(0, universe_size)]
     top_coins = [c for c, _ in top]
+
+    # Staggered refresh: fetch a round-robin window now, carry the rest forward.
+    if 0 < refresh_limit < len(top_coins):
+        n = len(top_coins)
+        off = rotate_offset % n
+        fetch_coins = [top_coins[(off + i) % n] for i in range(refresh_limit)]
+    else:
+        fetch_coins = list(top_coins)
+    fetch_set = set(fetch_coins)
 
     candles_1h: dict[str, dict] = {}
     candles_5m: dict[str, dict] = {}
     closes_by_coin: dict[str, list[float]] = {}
     spot_mids: dict[str, float] = {}
     liquidations: list[dict] = []
+
+    # Carry forward last-known stats for coins NOT refreshed this cycle (only
+    # those still in the current top universe, so a coin that fell out is dropped).
+    if carry_extra:
+        prev_1h = carry_extra.get("candles_1h") or {}
+        prev_5m = carry_extra.get("candles_5m") or {}
+        prev_cl = carry_extra.get("closes") or {}
+        for coin in top_coins:
+            if coin in fetch_set:
+                continue
+            if coin in prev_1h:
+                candles_1h[coin] = prev_1h[coin]
+                if coin in prev_cl:
+                    closes_by_coin[coin] = prev_cl[coin]
+            if coin in prev_5m:
+                candles_5m[coin] = prev_5m[coin]
 
     def _vwap_sigma(cli, coin, interval, span_ms):
         """(stats, closes) for ``coin`` over the last 60 ``interval`` bars, or
@@ -140,12 +178,12 @@ def enrich_view(
         return coin, out
 
     with httpx.Client(timeout=15) as cli:
-        if max_workers > 1 and len(top_coins) > 1:
+        if max_workers > 1 and len(fetch_coins) > 1:
             from concurrent.futures import ThreadPoolExecutor
-            with ThreadPoolExecutor(max_workers=min(max_workers, len(top_coins))) as ex:
-                results = list(ex.map(lambda c: _fetch_coin(cli, c), top_coins))
+            with ThreadPoolExecutor(max_workers=min(max_workers, len(fetch_coins))) as ex:
+                results = list(ex.map(lambda c: _fetch_coin(cli, c), fetch_coins))
         else:
-            results = [_fetch_coin(cli, c) for c in top_coins]
+            results = [_fetch_coin(cli, c) for c in fetch_coins]
         for coin, out in results:
             if "1h" in out:
                 candles_1h[coin] = out["1h"][0]

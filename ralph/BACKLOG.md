@@ -38,8 +38,11 @@ leverage *unblocked* thing. Add new findings as you discover them.
   in paper (verified end-to-end). NOTE: soak rides `enrich_view`'s candle
   universe; widened from a hardcoded top-20 to a configurable, concurrency-
   bounded top-N (default 40, `HLBOT_ENRICH_UNIVERSE`/`_WORKERS`) on 2026-06-15 —
-  more coins ⇒ more forward dislocations/funding-fade events ⇒ faster G0. Pushing
-  toward the FULL liquid set (~180) is still P2 (batch the candle fetches / cache).
+  more coins ⇒ more forward dislocations/funding-fade events ⇒ faster G0. FULL
+  liquid set (~180) now reachable at a FIXED per-cycle API cost via staggered
+  round-robin refresh (`HLBOT_ENRICH_REFRESH=N` fetches N coins/cycle, carries
+  the rest forward; full coverage every ⌈universe/N⌉ cycles). Remaining P2: flip
+  it on in the host deploy (pick universe/refresh) + watch HL rate budget.
 - [x] **P1c — nightly auto-confirm loop. DONE** (2026-06-15). `hlbot autoconfirm`
   re-runs the G0 gate over the forward window for every paper agent awaiting G0
   (per-agent interval, retention-aware window), `--record` stamping params_hash.
