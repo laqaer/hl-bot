@@ -222,6 +222,16 @@ MIGRATIONS: list[str] = [
     );
     CREATE INDEX IF NOT EXISTS idx_confirmations_agent ON confirmations(agent, ts_ms);
     """,
+    # 5: params provenance (V3). Stamp the DEPLOYED config's params_hash onto
+    # each confirmation so promotion's require_g0 matches the CURRENTLY DEPLOYED
+    # config — a tuned override can no longer inherit a G0 earned for different
+    # params. `confirmations` is created in migration 4, so on a fresh DB this
+    # ALTER runs exactly once after it (guarded by PRAGMA user_version).
+    """
+    ALTER TABLE confirmations ADD COLUMN params_hash TEXT;
+    CREATE INDEX IF NOT EXISTS idx_confirmations_params
+        ON confirmations(agent, params_hash, ts_ms);
+    """,
 ]
 
 

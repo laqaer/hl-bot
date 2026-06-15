@@ -909,6 +909,8 @@ def confirm(
     min_sharpe: float = 1.0,
     cache: bool = True,
     record: bool = False,
+    use_overrides: bool = True,
+    params: str = "",
 ):
     """Confirm a strategy through the G0 gate: walk-forward + cost stress.
 
@@ -916,28 +918,37 @@ def confirm(
     before it is eligible for paper→live promotion. With --record the verdict
     is stamped into the confirmations table, which is what promotion stages
     with require_g0 check (auto-promotion runs on this evidence).
+
+    V3 provenance: the agent is built from the SAME config the engine deploys
+    (factory defaults + agent_overrides.json, unless --no-use-overrides), with
+    an optional ad-hoc --params JSON merged on top, and the deployed config's
+    params_hash is stamped into the record. Promotion's require_g0 matches that
+    hash, so a tuned override can never inherit a G0 earned for other params.
     """
+    from ..agents.base import compute_params_hash
     from ..backtest.confirm import confirm_strategy
     from ..backtest.data import cached_or_fetch, frames_coverage_days, load_frames
+    from ..engine.runner import AGENT_FACTORIES, _load_overrides
 
     conn, s = _conn()
     coin_list = [c.strip() for c in coins.split(",") if c.strip()]
-    factories = {
-        "twap_mr_v1": lambda conn: TwapMrAgent(config={}, conn=conn),
-        "twap_mr_regime_v1": lambda conn: TwapMrRegimeAgent(config={}, conn=conn),
-        "femr_v1": lambda conn: FemrAgent(config={}, conn=conn),
-        "funding_carry_v1": lambda conn: FundingCarryAgent(config={}, conn=conn),
-        "spot_perp_carry_v1": lambda conn: SpotPerpCarryAgent(config={}, conn=conn),
-        "xfund_carry_v1": lambda conn: XFundCarryAgent(config={}, conn=conn),
-        "liq_cascade_v1": lambda conn: LiqCascadeAgent(config={}, conn=conn),
-        "dislocation_reversion_v1": lambda conn: DislocationReversionAgent(config={}, conn=conn),
-        "funding_crowding_fade_v1": lambda conn: FundingCrowdingFadeAgent(config={}, conn=conn),
-        "new_listing_reversion_v1": lambda conn: NewListingReversionAgent(config={}, conn=conn),
-        "basis_v1": lambda conn: BasisAgent(config={}, conn=conn),
-    }
-    if agent not in factories:
-        console.print(f"[red]unknown agent {agent}; choose from {list(factories)}[/red]")
+    factory_fn = AGENT_FACTORIES.get(agent)
+    if factory_fn is None:
+        console.print(f"[red]unknown agent {agent}; choose from {list(AGENT_FACTORIES)}[/red]")
         raise typer.Exit(1)
+    # Deployed config = factory defaults + agent_overrides.json (exactly what the
+    # runner instantiates), optionally + an ad-hoc --params JSON for what-if runs.
+    cfg: dict = {}
+    if use_overrides:
+        cfg.update(_load_overrides(CONFIG_DIR).get(agent) or {})
+    if params:
+        try:
+            cfg.update(json.loads(params))
+        except ValueError as e:
+            console.print(f"[red]--params must be valid JSON: {e}[/red]")
+            raise typer.Exit(2) from e
+    factory = lambda conn, _cfg=dict(cfg): factory_fn(conn, dict(_cfg))  # noqa: E731
+    phash = compute_params_hash(factory(None).params_fingerprint())
     per_year = {"1m": 525_600, "5m": 105_120, "15m": 35_040,
                 "1h": 8_760, "4h": 2_190, "1d": 365}.get(interval, 8_760)
     try:
@@ -948,10 +959,13 @@ def confirm(
         console.print(f"[red]failed to load history: {e}[/red]")
         raise typer.Exit(2) from e
     res = confirm_strategy(
-        factories[agent], frames, prefer=prefer,
+        factory, frames, prefer=prefer,
         min_edge_bps=min_edge_bps, min_sharpe=min_sharpe, periods_per_year=per_year,
     )
     console.print(res.summary())
+    console.print(f"[dim]deployed params_hash={phash}"
+                  + (f" (config: {json.dumps(cfg)})" if cfg else " (factory defaults)")
+                  + "[/dim]")
     # Record the ACTUAL coverage, not just the requested days: at fine intervals
     # HL serves only ~5000 candles (5m → ~17d), so "90d" in a confirmation record
     # would overstate the evidence behind a G0 stamp.
@@ -964,13 +978,14 @@ def confirm(
     if record:
         conn.execute(
             """INSERT INTO confirmations(agent, ts_ms, dataset, prefer, confirmed,
-                                         oos_edge_bps, summary)
-               VALUES(?,?,?,?,?,?,?)""",
+                                         oos_edge_bps, summary, params_hash)
+               VALUES(?,?,?,?,?,?,?,?)""",
             (agent, int(time.time() * 1000), dataset, prefer,
-             1 if res.confirmed else 0, res.out_of_sample.edge_bps, res.summary()),
+             1 if res.confirmed else 0, res.out_of_sample.edge_bps, res.summary(), phash),
         )
         conn.commit()
-        console.print(f"[dim]confirmation recorded (confirmed={res.confirmed})[/dim]")
+        console.print(f"[dim]confirmation recorded (confirmed={res.confirmed}, "
+                      f"params_hash={phash})[/dim]")
     if not res.confirmed:
         raise typer.Exit(1)
 

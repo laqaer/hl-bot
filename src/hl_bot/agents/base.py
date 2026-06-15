@@ -8,10 +8,26 @@ guardrail checks, and logging are centralized.
 from __future__ import annotations
 
 import abc
+import dataclasses
+import hashlib
+import json
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import Any
 
 from .decisions import Decision
+
+
+def compute_params_hash(params: Mapping[str, Any]) -> str:
+    """Stable 12-hex-char fingerprint of a params dict (canonical JSON).
+
+    Order-independent (keys sorted) and type-tolerant (``default=str`` for any
+    odd value) so the SAME effective config always hashes the same — the basis
+    for matching a G0 confirmation to the CURRENTLY DEPLOYED config (V3).
+    """
+    canonical = json.dumps(dict(params), sort_keys=True, separators=(",", ":"),
+                           default=str)
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()[:12]
 
 
 @dataclass
@@ -55,3 +71,21 @@ class Agent(abc.ABC):
         """Resolved entry execution for this agent: config override or default."""
         mode = str(self.config.get("execution", self.default_execution)).lower()
         return mode if mode in ("maker", "taker") else self.default_execution
+
+    def params_fingerprint(self) -> dict[str, Any]:
+        """The behaviour-determining params this agent actually runs with.
+
+        Defaults to the resolved ``cfg`` dataclass (defaults + overrides merged
+        at construction) so two configs that resolve to identical behaviour hash
+        the same; falls back to the raw ``config`` when an agent has no ``cfg``.
+        Override only if an agent's behaviour depends on state outside ``cfg``.
+        """
+        cfg = getattr(self, "cfg", None)
+        if cfg is not None and dataclasses.is_dataclass(cfg) and not isinstance(cfg, type):
+            return dataclasses.asdict(cfg)
+        return dict(self.config)
+
+    def params_hash(self) -> str:
+        """Provenance hash of the deployed config — stamped into a G0
+        confirmation and matched by promotion's ``require_g0`` (V3)."""
+        return compute_params_hash(self.params_fingerprint())

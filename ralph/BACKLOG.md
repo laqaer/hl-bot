@@ -11,6 +11,33 @@ leverage *unblocked* thing. Add new findings as you discover them.
 > sweep harness. Superseded items moved to Done. New center of gravity:
 > **make a strategy pass its gates on real evidence.**
 
+## P1 — FORWARD-EVIDENCE FLYWHEEL (the binding constraint, 2026-06-15)
+
+> Backtesting is exhausted as a discovery engine here: HL retains ~5000
+> candles/interval, so low-frequency/recent edges can't reach the G0 floor from
+> back-fetched history (this is exactly why D2a/D2b failed — sample size, not
+> direction). The next edges must be confirmed FORWARD. Spec:
+> `docs/research/P1_forward_evidence_flywheel.md`.
+
+- [x] **V3 — params_hash provenance. DONE** (2026-06-15). The trust
+  prerequisite: confirm validates the DEPLOYED config and stamps its
+  `params_hash`; `require_g0` matches it, so forward auto-promotion is
+  trustworthy. Details in P0b below. Gate strengthened, not weakened.
+- [ ] **P1a — forward-accrual schema (append-only).** Migration +
+  `market_samples` (OI from metaAndAssetCtxs + top-of-book imbalance from the WS
+  feed — neither back-fetchable), `xvenue_funding` (Binance/Bybit, host-only),
+  `listing_log` (per-listing first-seen + price). Written every engine cycle
+  from the already-fetched MarketView/WS snapshot; idempotent on PK, no deletes.
+- [ ] **P1b — continuous full-universe paper soak.** Run every built-but-
+  unconfirmed agent (funding_crowding_fade, new_listing_reversion, future S8)
+  in PAPER over the full liquid perp set so OOS samples grow on calendar time.
+  Couples to P2 universe expansion + build_frames perf.
+- [ ] **P1c — nightly auto-confirm loop.** Host timer: after the sweep, run
+  `hlbot confirm --record` over the FORWARD window for each unconfirmed agent;
+  the supervisor (already wired) auto-promotes any that now clear a params-
+  matched G0. Sequencing: ws → run → sweep → confirm → supervisor.
+  ACCEPTANCE: an agent crossing G0 on forward data promotes with no human step.
+
 ## P0 — LIVE NOW: optimize the one confirmed edge, find the next (2026-06-14)
 
 > Status as of 2026-06-14: **dislocation_reversion_v1 is the only confirmed
@@ -95,14 +122,19 @@ leverage *unblocked* thing. Add new findings as you discover them.
 
 - [ ] **V1 — verify/rewire the liquidation feed** (host: does `liq_log.jsonl`
   accrue? HL's public trades may not carry the flag — find the real source).
-- [ ] **V3 — make `hlbot confirm` params-aware + params_hash provenance.**
-  confirm instantiates agents with `config={}` (defaults), so it does NOT
-  validate `agent_overrides.json` params — a tuned override inherits a G0
-  stamp for the wrong config. Fix: confirm/sweep load the same overrides the
-  runner does (or take a `--params`), and stamp a `params_hash` into
-  `confirmations` that `require_g0` matches against the deployed config.
-  Until then D1 adopts params via dataclass defaults (which confirm DOES see),
-  not overrides. Critical now that dislocation is live and ralph tunes it.
+- [x] **V3 — `hlbot confirm` params-aware + params_hash provenance. DONE.**
+  `confirm` now builds the agent from the DEPLOYED config (`AGENT_FACTORIES` +
+  `agent_overrides.json`; `--no-use-overrides` / `--params '{json}'` to vary),
+  computes a stable `params_hash` of the resolved `cfg`
+  (`agents.base.compute_params_hash` / `Agent.params_hash`), and stamps it into
+  `confirmations` (migration 5). `g0_confirmed(..., params_hash=)` requires the
+  stamp to match the deployed config; `supervise()` threads the live roster's
+  hashes through `evaluate`, so `require_g0` can no longer inherit a G0 earned
+  for other params. Legacy NULL-hash rows never satisfy a specific hash. Tests:
+  `tests/test_params_provenance.py`. Gate strengthened, not weakened. ralph may
+  now tune via `agent_overrides.json` and re-confirm — the gate re-arms on the
+  new hash automatically. (D1's "adopt via dataclass defaults only" caveat is
+  now lifted: overrides are validated + provenance-stamped.)
 - [ ] **V6 — equity-floor flow adjustment** (deposits/withdrawals inflated the
   drawdown and tripped the kill on 2026-06-12; track net transfers).
 
@@ -150,11 +182,13 @@ leverage *unblocked* thing. Add new findings as you discover them.
   resting bids below mid (the cascade fills you at maximum spread), |A−B|
   imbalance trigger (done), TP/SL swapped to positive skew. Spec first;
   calibrate from liq_log once V1 confirms data.
-- [ ] **V3 — Evidence provenance (params_hash).** Stamp a config/params hash
-  into `confirmations`, sweep results, and (cheaply) decisions; promotion's
-  require_g0 should match the *currently deployed* hash. Today ralph can tune
-  params and inherit weeks of old-params evidence (audit finding G1). Until
-  then: any agent param change should bump the agent name (`_v2`) instead.
+- [x] **V3 — Evidence provenance (params_hash). DONE** (see P0b item above).
+  `confirmations` carry the deployed config's `params_hash`; `require_g0`
+  matches the currently-deployed hash, so a tuned override can no longer
+  inherit old-params evidence (closes audit finding G1). The `_v2`-rename
+  workaround is no longer needed. (Sweep-result hashing is optional polish:
+  sweeps explore params per-combo and don't `--record`, so they never stamp a
+  confirmations row — the gate-critical path is covered.)
 - [ ] **V4 — Window-boundary edge fix.** `edge_bps` pairs close-fill PnL with
   in-window notional only — trades straddling the window start inflate edge
   ~2x at some rolling looks. Proper fix: round-trip series bucketed by close

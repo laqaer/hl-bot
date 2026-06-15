@@ -61,12 +61,18 @@ def run_once(
     configs: list[AgentGoals],
     *,
     data_dir: str | Path | None = None,
+    params_hashes: dict[str, str] | None = None,
 ) -> dict[str, list[str]]:
     """Evaluate all agent configs once. Returns map of agent -> actions taken.
+
+    ``params_hashes`` maps agent -> the deployed config's provenance hash; when
+    provided, require_g0 stages only clear with a confirmation stamped for those
+    exact params (V3). Omitted (tests) -> no hash matching, as before.
 
     While the kill switch is active, promotions are suppressed; pause/demote
     (risk-reducing actions) are always processed.
     """
+    params_hashes = params_hashes or {}
     kill_reason = kill_active(data_dir) if data_dir is not None else None
     state = {
         r["agent"]: r for r in conn.execute(
@@ -80,6 +86,7 @@ def run_once(
             conn, g,
             current_mode=st["mode"] if st else None,
             last_promoted_ms=st["last_promoted_ms"] if st else None,
+            params_hash=params_hashes.get(g.agent),
         )
         persist(conn, evals)
         acts: list[str] = []
@@ -140,8 +147,27 @@ def supervise(
     *,
     data_dir: str | Path | None = None,
 ) -> dict[str, list[str]]:
-    """Load every *.yaml in configs_dir and evaluate."""
+    """Load every *.yaml in configs_dir and evaluate against the DEPLOYED
+    config's params_hash (V3 provenance), so auto-promotion can only fire on a
+    G0 confirmation earned for the params actually running."""
     configs: list[AgentGoals] = []
     for p in sorted(Path(configs_dir).glob("*.yaml")):
         configs.extend(load_goals(p))
-    return run_once(conn, configs, data_dir=data_dir)
+    return run_once(conn, configs, data_dir=data_dir,
+                    params_hashes=deployed_params_hashes(conn, configs_dir))
+
+
+def deployed_params_hashes(
+    conn: sqlite3.Connection, configs_dir: str | Path
+) -> dict[str, str]:
+    """Map agent -> params_hash of the CURRENTLY DEPLOYED config (factory
+    defaults + agent_overrides.json) — the same roster the engine runs, so the
+    G0 gate matches live behaviour. Best-effort: any failure yields {} (gate
+    falls back to age-only matching rather than blocking everything)."""
+    try:
+        from ..engine.runner import _load_overrides, build_roster
+        roster = build_roster(conn, configs_dir, _load_overrides(configs_dir))
+    except Exception:  # noqa: BLE001 - never let provenance break supervision
+        log.exception("could not compute deployed params hashes; G0 falls back to age-only")
+        return {}
+    return {e.agent.name: e.agent.params_hash() for e in roster}
