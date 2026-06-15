@@ -959,15 +959,24 @@ def confirm(
         console.print(f"[yellow]note:[/yellow] only ~{cov:.1f}d of {interval} history exists "
                       f"at HL (retention cap); G0 evidence window is ~{cov:.0f}d, not {days}d.")
     if record:
+        from ..agents.fingerprint import config_fingerprint
+        # Fingerprint the EFFECTIVE config that was validated (confirm uses the
+        # agent's defaults, config={}), so require_g0 can later verify the
+        # deployed config matches this stamp rather than inheriting it blindly.
+        params_hash = config_fingerprint(factories[agent](conn))
         conn.execute(
             """INSERT INTO confirmations(agent, ts_ms, dataset, prefer, confirmed,
-                                         oos_edge_bps, summary)
-               VALUES(?,?,?,?,?,?,?)""",
+                                         oos_edge_bps, summary, params_hash)
+               VALUES(?,?,?,?,?,?,?,?)""",
             (agent, int(time.time() * 1000), dataset, prefer,
-             1 if res.confirmed else 0, res.out_of_sample.edge_bps, res.summary()),
+             1 if res.confirmed else 0, res.out_of_sample.edge_bps, res.summary(),
+             params_hash),
         )
         conn.commit()
-        console.print(f"[dim]confirmation recorded (confirmed={res.confirmed})[/dim]")
+        console.print(
+            f"[dim]confirmation recorded (confirmed={res.confirmed}, "
+            f"params_hash={params_hash})[/dim]"
+        )
     if not res.confirmed:
         raise typer.Exit(1)
 

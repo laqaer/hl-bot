@@ -520,3 +520,48 @@ allowlist needed, the wrapper commits) OR applies the now-hardened allowlist;
 either way the staged green set (`sweep.py`, `test_sweep.py`, `BACKLOG.md`,
 `PROGRESS.md`, `INFRA-PERM-settings.proposed.json`) commits and the loop resumes
 D1/D2.
+
+## Iteration (2026-06-15) — loop UNBLOCKED + V3 provenance slice 1 (params_hash)
+
+**State change recognized.** The INFRA-PERM block is RESOLVED: the operator is
+driving the loop via `bash ralph/loop.sh`, proven by the committed
+`ralph: iteration 1` on `claude/ralph-auto` (the blocked-era memory recorded
+ZERO iteration commits). Under `--permission-mode acceptEdits` my edits
+auto-apply while my Bash stays gated; the wrapper runs `verify()` (pytest+ruff)
+and commits in the shell, reverting cleanly if red. So I no longer pile up
+unverifiable staged work — I make one real, unit-tested increment and the
+wrapper verifies+commits it. Re-probed exec once to confirm (still gated for the
+agent, as designed); will NOT re-probe each pass. Marked INFRA-PERM done in the
+backlog; also marked E1 done (it was already fully built — `exec_quality` wired
+into `reports/daily.py` + `ops/health.py` alerts — just unticked).
+
+**Increment: V3 params-hash provenance, slice 1.** Closes the foundation of the
+audit's G1 hole — a tuned `agent_overrides.json` config inheriting a G0 stamp
+earned on a *different* config. Now that dislocation_reversion is live and ralph
+tunes it, this is the critical correctness guard.
+- `agents/fingerprint.py::config_fingerprint(agent)` — stable 12-hex SHA-256 of
+  the agent's EFFECTIVE config: its resolved `cfg` dataclass (defaults with any
+  overrides applied) via `asdict`, else the raw override dict. Deterministic,
+  key-order independent.
+- Migration #5: `confirmations.params_hash TEXT` (nullable; legacy rows stay
+  NULL and won't match a real hash — they predate the check).
+- `hlbot confirm --record` stamps the fingerprint of the validated agent and
+  prints it.
+- `g0_confirmed(conn, agent, *, params_hash=None)` — when a hash is supplied the
+  stamp must match it; `None` (default) keeps the legacy name-only check, so the
+  supervisor's current `require_g0` behavior is unchanged (no promotion
+  regression, tightening-only capability added).
+- Tests: `tests/test_fingerprint.py` (determinism, param sensitivity, effective-
+  vs-supplied equivalence, dict fallback, migration column present, g0 match/
+  reject incl. legacy-NULL rejection).
+
+**Evidence/safety.** No gate/cap/threshold weakened; `tests/test_gate_minima.py`
+untouched. No `agent_state`/KILL writes. Additive only: default-`None` keeps
+`require_g0` identical until slice 2 wires the deployed-config hash through.
+
+**Next.** V3 slice 2: make the supervisor compute the DEPLOYED agent's
+fingerprint (runner's effective overrides) and pass it to `g0_confirmed`, and
+have `confirm`/`sweep` load the same overrides (or `--params`) so the stamp
+reflects the live config — only then does the hole close end-to-end. Then resume
+D1 (watch the nightly dislocation sweep; adopt a better top-IS-confirmed combo
+via dataclass defaults if one beats z=3/stop=0.02/hold=24).
