@@ -177,9 +177,13 @@ def render_markdown(
         lines += [
             "",
             "Next actions:",
-            f"- Best combo `{json.dumps(best.params)}` on `{','.join(best.universe)}` "
-            f"→ consider promoting into configs/agent_overrides.json and stamping "
-            f"`hlbot confirm --agent {spec.agent} --prefer {spec.prefer} --record`.",
+            f"- Top IN-SAMPLE-ranked confirmed combo: `{json.dumps(best.params)}` on "
+            f"`{','.join(best.universe)}`. If it beats the deployed config, adopt it by "
+            f"editing the agent's DATACLASS DEFAULTS (a tested code change), NOT "
+            f"`configs/agent_overrides.json`: `hlbot confirm` instantiates agents with "
+            f"defaults, so an override would inherit a G0 stamp validated against a "
+            f"DIFFERENT config (the V3 provenance hole). Then self-stamp the deployed "
+            f"config: `hlbot confirm --agent {spec.agent} --prefer {spec.prefer} --record`.",
         ]
     else:
         lines += ["", "No combo cleared the gate — do not loosen the gate; "

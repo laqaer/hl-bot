@@ -222,6 +222,13 @@ MIGRATIONS: list[str] = [
     );
     CREATE INDEX IF NOT EXISTS idx_confirmations_agent ON confirmations(agent, ts_ms);
     """,
+    # 5: params provenance (V3). Stamp the fingerprint of the EFFECTIVE config a
+    # confirmation validated, so require_g0 can refuse a G0 stamp earned for a
+    # different param set. Nullable: legacy rows (pre-provenance) stay NULL and
+    # simply won't match a real hash — they predate the check.
+    """
+    ALTER TABLE confirmations ADD COLUMN params_hash TEXT;
+    """,
 ]
 
 
