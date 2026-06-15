@@ -19,10 +19,17 @@ from ..agents.runtime import fetch_market_view
 log = logging.getLogger(__name__)
 
 
-def build_view(api_url: str, *, ws_snapshot_path: str | None = None) -> MarketView:
+def build_view(
+    api_url: str,
+    *,
+    ws_snapshot_path: str | None = None,
+    universe_size: int = 20,
+    max_workers: int = 8,
+) -> MarketView:
     """Full market view for one cycle: REST fetch, WS overlay, enrichment."""
     view = fetch_market_view(api_url, [])
-    enrich_view(view, api_url, view.extra.get("day_ntl_vlm", {}))
+    enrich_view(view, api_url, view.extra.get("day_ntl_vlm", {}),
+                universe_size=universe_size, max_workers=max_workers)
     overlay_ws_snapshot(view, ws_snapshot_path)
     return view
 
@@ -55,10 +62,28 @@ def overlay_ws_snapshot(view: MarketView, ws_snapshot_path: str | None = None) -
     return True
 
 
-def enrich_view(view: MarketView, api_url: str, vol: dict[str, float]) -> None:
-    """Augment a MarketView with 1h candles (top-vol coins), spot mids, liquidations."""
-    # ---- top-20-by-volume universe ----
-    top = sorted(vol.items(), key=lambda kv: kv[1], reverse=True)[:20]
+def enrich_view(
+    view: MarketView,
+    api_url: str,
+    vol: dict[str, float],
+    *,
+    universe_size: int = 20,
+    max_workers: int = 8,
+) -> None:
+    """Augment a MarketView with 1h/5m candle signals (top-vol coins), spot mids,
+    liquidations.
+
+    ``universe_size`` is the number of top-by-24h-volume coins to compute candle
+    vwap/sigma for — the breadth ceiling for ``dislocation_reversion`` /
+    ``funding_crowding_fade`` (each still gated by its own volume floor, so a
+    wider universe never forces an agent into illiquid coins; it just lets the
+    forward soak see more dislocations and clear G0 faster). The per-coin candle
+    fetches (2 ``candleSnapshot`` calls each) are issued concurrently with a
+    ``max_workers``-bounded pool so widening breadth doesn't blow the cycle's
+    time budget; ``max_workers<=1`` keeps the old serial behaviour.
+    """
+    # ---- top-by-volume universe ----
+    top = sorted(vol.items(), key=lambda kv: kv[1], reverse=True)[:max(0, universe_size)]
     top_coins = [c for c, _ in top]
 
     candles_1h: dict[str, dict] = {}
@@ -95,22 +120,38 @@ def enrich_view(view: MarketView, api_url: str, vol: dict[str, float]) -> None:
         sigma = (sum((p - mean) ** 2 for p in pxs) / len(pxs)) ** 0.5
         return {"vwap": vwap, "sigma": sigma, "n": len(pxs)}, pxs
 
+    def _fetch_coin(cli, coin):
+        """Both candle signals for one coin; per-coin failures are isolated so a
+        single bad coin never drops the rest of the universe."""
+        out: dict = {}
+        try:
+            # twap_mr family: 60×1m = 1h window (candles_1h).
+            stats1, closes1 = _vwap_sigma(cli, coin, "1m", 60 * 60_000)
+            if stats1:
+                out["1h"] = (stats1, closes1)
+            # dislocation_reversion: 60×5m = 5h window (candles_5m). MUST match
+            # its backtest basis (interval 5m, vwap_window 60) or live trades a
+            # different signal than confirmed (the twap_mr lesson).
+            stats5, _ = _vwap_sigma(cli, coin, "5m", 60 * 5 * 60_000)
+            if stats5:
+                out["5m"] = stats5
+        except Exception:  # noqa: BLE001
+            return coin, {}
+        return coin, out
+
     with httpx.Client(timeout=15) as cli:
-        for coin in top_coins:
-            try:
-                # twap_mr family: 60×1m = 1h window (candles_1h).
-                stats1, closes1 = _vwap_sigma(cli, coin, "1m", 60 * 60_000)
-                if stats1:
-                    candles_1h[coin] = stats1
-                    closes_by_coin[coin] = closes1
-                # dislocation_reversion: 60×5m = 5h window (candles_5m). MUST
-                # match its backtest basis (interval 5m, vwap_window 60) or live
-                # trades a different signal than confirmed (the twap_mr lesson).
-                stats5, _ = _vwap_sigma(cli, coin, "5m", 60 * 5 * 60_000)
-                if stats5:
-                    candles_5m[coin] = stats5
-            except Exception:  # noqa: BLE001
-                continue
+        if max_workers > 1 and len(top_coins) > 1:
+            from concurrent.futures import ThreadPoolExecutor
+            with ThreadPoolExecutor(max_workers=min(max_workers, len(top_coins))) as ex:
+                results = list(ex.map(lambda c: _fetch_coin(cli, c), top_coins))
+        else:
+            results = [_fetch_coin(cli, c) for c in top_coins]
+        for coin, out in results:
+            if "1h" in out:
+                candles_1h[coin] = out["1h"][0]
+                closes_by_coin[coin] = out["1h"][1]
+            if "5m" in out:
+                candles_5m[coin] = out["5m"]
 
         # Spot mids for BTC/ETH/SOL. HL spot pairs use wrapped tokens
         # (UBTC/USDC=@142, UETH/USDC=@151, USOL/USDC=@156) and the midPx is

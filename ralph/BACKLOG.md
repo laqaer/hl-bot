@@ -35,8 +35,11 @@ leverage *unblocked* thing. Add new findings as you discover them.
   mode:paper, require_g0 ladder → auto-promotes on a forward G0) and
   `new_listing_reversion_v1` (roster:paper moonshot soak). Live `new_listings`
   wiring (`build_new_listings_view`) makes the new-listing agent actually trade
-  in paper (verified end-to-end). NOTE: soak rides `enrich_view`'s top-20-vol
-  universe; full-universe breadth is **P2** (build_frames perf).
+  in paper (verified end-to-end). NOTE: soak rides `enrich_view`'s candle
+  universe; widened from a hardcoded top-20 to a configurable, concurrency-
+  bounded top-N (default 40, `HLBOT_ENRICH_UNIVERSE`/`_WORKERS`) on 2026-06-15 —
+  more coins ⇒ more forward dislocations/funding-fade events ⇒ faster G0. Pushing
+  toward the FULL liquid set (~180) is still P2 (batch the candle fetches / cache).
 - [x] **P1c — nightly auto-confirm loop. DONE** (2026-06-15). `hlbot autoconfirm`
   re-runs the G0 gate over the forward window for every paper agent awaiting G0
   (per-agent interval, retention-aware window), `--record` stamping params_hash.

@@ -325,7 +325,9 @@ def run(
         try:
             view = fetch_market_view(s.hl_api_url, [])
             if t0 - last_enrich >= enrich_every_s:
-                enrich_view(view, s.hl_api_url, view.extra.get("day_ntl_vlm", {}))
+                enrich_view(view, s.hl_api_url, view.extra.get("day_ntl_vlm", {}),
+                            universe_size=s.enrich_universe_size,
+                            max_workers=s.enrich_max_workers)
                 cached_extra = dict(view.extra)
                 last_enrich = t0
             else:
@@ -600,7 +602,8 @@ def femr_tick(live: bool = False, execution: str = "auto"):
                   ", ".join(f"{n}={m}" for n, m in exec_modes.items()))
 
     view = fetch_market_view(s.hl_api_url, [])
-    _enrich_view(view, s.hl_api_url, view.extra.get("day_ntl_vlm", {}))
+    _enrich_view(view, s.hl_api_url, view.extra.get("day_ntl_vlm", {}),
+                 universe_size=s.enrich_universe_size, max_workers=s.enrich_max_workers)
 
     # Overlay a fresh WS snapshot if available (sub-second mids, L2 book, and a
     # REAL liquidations feed for liq_cascade). Purely additive; REST is the

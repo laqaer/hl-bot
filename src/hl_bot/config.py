@@ -28,6 +28,12 @@ class Settings:
     # Runtime
     db_path: Path
     paper_mode_default: bool      # global override; agents can opt-in to live
+    # Signal-enrichment breadth: how many top-by-volume coins get live candle
+    # vwap/sigma each cycle (the universe dislocation_reversion / funding_crowding_
+    # fade can see), and the concurrency used to fetch them so widening breadth
+    # stays inside the cycle budget. Tune via HLBOT_ENRICH_UNIVERSE / _WORKERS.
+    enrich_universe_size: int = 40
+    enrich_max_workers: int = 8
     # Profile isolation (e.g. the ring-fenced moonshot sleeve): a profile gets
     # its own data dir (=> own DB, own KILL file), its own configs/<profile>/
     # contract set, and may sign with a different API wallet against a
@@ -54,6 +60,16 @@ class Settings:
             tg_chat_id=os.getenv("TG_CHAT_ID") or None,
             db_path=Path(os.getenv("HLBOT_DB", str(default_db))),
             paper_mode_default=os.getenv("HLBOT_PAPER", "1") == "1",
+            enrich_universe_size=_int_env("HLBOT_ENRICH_UNIVERSE", 40),
+            enrich_max_workers=_int_env("HLBOT_ENRICH_WORKERS", 8),
             profile=profile,
             api_wallet_env=Path(wallet_env) if wallet_env else None,
         )
+
+
+def _int_env(name: str, default: int) -> int:
+    """Parse an int env var, falling back to ``default`` on unset/garbage."""
+    try:
+        return int(os.getenv(name, "") or default)
+    except (TypeError, ValueError):
+        return default
