@@ -1,0 +1,17 @@
+[Unit]
+Description=hl-bot nightly forward auto-confirm (re-run G0 over the accrued forward window; supervisor auto-promotes on a params-matched pass)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=hlbot
+WorkingDirectory=/opt/hl-bot
+EnvironmentFile=/etc/hl-bot/env
+ExecStart=/opt/hl-bot/deploy/run-confirm.sh
+TimeoutStartSec=3600
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/opt/hl-bot
+PrivateTmp=true

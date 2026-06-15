@@ -898,6 +898,71 @@ def backtest(
     console.print("[dim]taker→maker gap ≈ the spread/fee tax this strategy is paying.[/dim]")
 
 
+# Per-interval annualization + HL retention-aware default windows for confirm.
+_PER_YEAR = {"1m": 525_600, "5m": 105_120, "15m": 35_040,
+             "1h": 8_760, "4h": 2_190, "1d": 365}
+_SEC_TO_INTERVAL = {60: "1m", 300: "5m", 900: "15m", 3600: "1h",
+                    14_400: "4h", 86_400: "1d"}
+
+
+def _confirm_and_record(
+    conn, s, agent: str, *, coins: str, interval: str, days: int, prefer: str,
+    min_edge_bps: float = 3.0, min_sharpe: float = 1.0, cache: bool = True,
+    refresh: bool = False, use_overrides: bool = True, params: str = "",
+    record: bool = False,
+):
+    """Run the G0 gate for one agent built from its DEPLOYED config (V3) and,
+    with ``record``, stamp the verdict + params_hash into ``confirmations``.
+
+    Shared by ``confirm`` (one agent, verbose) and ``autoconfirm`` (the nightly
+    forward loop). Returns ``(res, phash, dataset, cfg, cov)``. Raises on an
+    unknown agent (KeyError) or a history-load failure (the caller decides how
+    loud to be)."""
+    from ..agents.fingerprint import config_fingerprint
+    from ..backtest.confirm import confirm_strategy
+    from ..backtest.data import cached_or_fetch, frames_coverage_days, load_frames
+    from ..engine.runner import AGENT_FACTORIES, _load_overrides
+
+    factory_fn = AGENT_FACTORIES.get(agent)
+    if factory_fn is None:
+        raise KeyError(agent)
+    coin_list = [c.strip() for c in coins.split(",") if c.strip()]
+    # Deployed config = factory defaults + agent_overrides.json (exactly what the
+    # runner instantiates), optionally + an ad-hoc --params JSON for what-if runs.
+    cfg: dict = {}
+    if use_overrides:
+        cfg.update(_load_overrides(s.configs_dir).get(agent) or {})
+    if params:
+        cfg.update(json.loads(params))   # caller catches ValueError
+    factory = lambda conn, _cfg=dict(cfg): factory_fn(conn, dict(_cfg))  # noqa: E731
+    phash = config_fingerprint(factory(None))
+    per_year = _PER_YEAR.get(interval, 8_760)
+    frames = (cached_or_fetch(coin_list, interval=interval, days=days,
+                              base_url=s.hl_api_url, refresh=refresh)
+              if cache else
+              load_frames(coin_list, interval=interval, days=days, base_url=s.hl_api_url))
+    res = confirm_strategy(
+        factory, frames, prefer=prefer,
+        min_edge_bps=min_edge_bps, min_sharpe=min_sharpe, periods_per_year=per_year,
+    )
+    # Record the ACTUAL coverage, not just the requested days: at fine intervals
+    # HL serves only ~5000 candles (5m → ~17d), so "90d" in a record overstates.
+    cov = frames_coverage_days(frames)
+    dataset = f"{coins}/{interval}/{days}d"
+    if frames and cov < days * 0.9:
+        dataset = f"{coins}/{interval}/{days}d(actual~{cov:.0f}d)"
+    if record:
+        conn.execute(
+            """INSERT INTO confirmations(agent, ts_ms, dataset, prefer, confirmed,
+                                         oos_edge_bps, summary, params_hash)
+               VALUES(?,?,?,?,?,?,?,?)""",
+            (agent, int(time.time() * 1000), dataset, prefer,
+             1 if res.confirmed else 0, res.out_of_sample.edge_bps, res.summary(), phash),
+        )
+        conn.commit()
+    return res, phash, dataset, cfg, cov
+
+
 @app.command()
 def confirm(
     agent: str = "twap_mr_regime_v1",
@@ -909,6 +974,8 @@ def confirm(
     min_sharpe: float = 1.0,
     cache: bool = True,
     record: bool = False,
+    use_overrides: bool = True,
+    params: str = "",
 ):
     """Confirm a strategy through the G0 gate: walk-forward + cost stress.
 
@@ -916,72 +983,133 @@ def confirm(
     before it is eligible for paper→live promotion. With --record the verdict
     is stamped into the confirmations table, which is what promotion stages
     with require_g0 check (auto-promotion runs on this evidence).
+
+    V3 provenance: the agent is built from the SAME config the engine deploys
+    (factory defaults + agent_overrides.json, unless --no-use-overrides), with
+    an optional ad-hoc --params JSON merged on top, and the deployed config's
+    params_hash is stamped into the record. Promotion's require_g0 matches that
+    hash, so a tuned override can never inherit a G0 earned for other params.
     """
-    from ..backtest.confirm import confirm_strategy
-    from ..backtest.data import cached_or_fetch, frames_coverage_days, load_frames
+    from ..engine.runner import AGENT_FACTORIES
 
     conn, s = _conn()
-    coin_list = [c.strip() for c in coins.split(",") if c.strip()]
-    factories = {
-        "twap_mr_v1": lambda conn: TwapMrAgent(config={}, conn=conn),
-        "twap_mr_regime_v1": lambda conn: TwapMrRegimeAgent(config={}, conn=conn),
-        "femr_v1": lambda conn: FemrAgent(config={}, conn=conn),
-        "funding_carry_v1": lambda conn: FundingCarryAgent(config={}, conn=conn),
-        "spot_perp_carry_v1": lambda conn: SpotPerpCarryAgent(config={}, conn=conn),
-        "xfund_carry_v1": lambda conn: XFundCarryAgent(config={}, conn=conn),
-        "liq_cascade_v1": lambda conn: LiqCascadeAgent(config={}, conn=conn),
-        "dislocation_reversion_v1": lambda conn: DislocationReversionAgent(config={}, conn=conn),
-        "funding_crowding_fade_v1": lambda conn: FundingCrowdingFadeAgent(config={}, conn=conn),
-        "new_listing_reversion_v1": lambda conn: NewListingReversionAgent(config={}, conn=conn),
-        "basis_v1": lambda conn: BasisAgent(config={}, conn=conn),
-    }
-    if agent not in factories:
-        console.print(f"[red]unknown agent {agent}; choose from {list(factories)}[/red]")
+    if agent not in AGENT_FACTORIES:
+        console.print(f"[red]unknown agent {agent}; choose from {list(AGENT_FACTORIES)}[/red]")
         raise typer.Exit(1)
-    per_year = {"1m": 525_600, "5m": 105_120, "15m": 35_040,
-                "1h": 8_760, "4h": 2_190, "1d": 365}.get(interval, 8_760)
     try:
-        frames = (cached_or_fetch(coin_list, interval=interval, days=days, base_url=s.hl_api_url)
-                  if cache else
-                  load_frames(coin_list, interval=interval, days=days, base_url=s.hl_api_url))
+        res, phash, dataset, cfg, cov = _confirm_and_record(
+            conn, s, agent, coins=coins, interval=interval, days=days, prefer=prefer,
+            min_edge_bps=min_edge_bps, min_sharpe=min_sharpe, cache=cache,
+            use_overrides=use_overrides, params=params, record=record)
+    except ValueError as e:
+        console.print(f"[red]--params must be valid JSON: {e}[/red]")
+        raise typer.Exit(2) from e
     except Exception as e:  # noqa: BLE001
         console.print(f"[red]failed to load history: {e}[/red]")
         raise typer.Exit(2) from e
-    res = confirm_strategy(
-        factories[agent], frames, prefer=prefer,
-        min_edge_bps=min_edge_bps, min_sharpe=min_sharpe, periods_per_year=per_year,
-    )
     console.print(res.summary())
-    # Record the ACTUAL coverage, not just the requested days: at fine intervals
-    # HL serves only ~5000 candles (5m → ~17d), so "90d" in a confirmation record
-    # would overstate the evidence behind a G0 stamp.
-    cov = frames_coverage_days(frames)
-    dataset = f"{coins}/{interval}/{days}d"
-    if frames and cov < days * 0.9:
-        dataset = f"{coins}/{interval}/{days}d(actual~{cov:.0f}d)"
+    console.print(f"[dim]deployed params_hash={phash}"
+                  + (f" (config: {json.dumps(cfg)})" if cfg else " (factory defaults)")
+                  + "[/dim]")
+    if "actual~" in dataset:
         console.print(f"[yellow]note:[/yellow] only ~{cov:.1f}d of {interval} history exists "
                       f"at HL (retention cap); G0 evidence window is ~{cov:.0f}d, not {days}d.")
     if record:
-        from ..agents.fingerprint import config_fingerprint
-        # Fingerprint the EFFECTIVE config that was validated (confirm uses the
-        # agent's defaults, config={}), so require_g0 can later verify the
-        # deployed config matches this stamp rather than inheriting it blindly.
-        params_hash = config_fingerprint(factories[agent](conn))
-        conn.execute(
-            """INSERT INTO confirmations(agent, ts_ms, dataset, prefer, confirmed,
-                                         oos_edge_bps, summary, params_hash)
-               VALUES(?,?,?,?,?,?,?,?)""",
-            (agent, int(time.time() * 1000), dataset, prefer,
-             1 if res.confirmed else 0, res.out_of_sample.edge_bps, res.summary(),
-             params_hash),
-        )
-        conn.commit()
-        console.print(
-            f"[dim]confirmation recorded (confirmed={res.confirmed}, "
-            f"params_hash={params_hash})[/dim]"
-        )
+        # The INSERT (with the deployed config's params_hash) already happened in
+        # _confirm_and_record(record=True); main's inline default-config stamp is
+        # superseded by that override-aware path.
+        console.print(f"[dim]confirmation recorded (confirmed={res.confirmed}, "
+                      f"params_hash={phash})[/dim]")
     if not res.confirmed:
         raise typer.Exit(1)
+
+
+def _autoconfirm_targets(roster, modes: dict, explicit: set):
+    """Which roster entries the nightly forward auto-confirm should re-run.
+
+    Default: agents whose CURRENT mode is paper AND whose paper→live_small stage
+    requires G0 — i.e. a fresh forward G0 is exactly what blocks their
+    promotion. ``explicit`` (an --agents allow-list) overrides the rule. Pure so
+    the selection is unit-tested without touching the network."""
+    out = []
+    for e in roster:
+        name = e.agent.name
+        if explicit:
+            if name in explicit:
+                out.append(e)
+            continue
+        if modes.get(name, "paper") != "paper":
+            continue   # already promoted past paper — not what the flywheel waits on
+        paper_stage = next((p for p in e.goals.ladder() if p.from_mode == "paper"), None)
+        if paper_stage and paper_stage.require_g0:
+            out.append(e)
+    return out
+
+
+@app.command()
+def autoconfirm(
+    coins: str = "BTC,ETH,SOL,HYPE,DOGE,XRP,WIF,kPEPE",
+    days: int = 0,
+    prefer: str = "taker",
+    record: bool = True,
+    agents: str = "",
+    cache: bool = True,
+    refresh: bool = True,
+):
+    """Nightly FORWARD auto-confirm loop (P1c): re-run `hlbot confirm --record`
+    over the accrued forward window for every unconfirmed agent, so any that now
+    clear a params-matched G0 are auto-promoted by the supervisor — no human
+    step. See docs/research/P1_forward_evidence_flywheel.md.
+
+    Targets, by default, agents whose CURRENT mode is paper AND whose
+    paper→live_small stage requires G0 (i.e. a fresh forward G0 is exactly what
+    blocks their promotion). Pass --agents a,b to override the set. Each agent's
+    interval is derived from its cfg bar_seconds; --days 0 picks an HL-retention-
+    aware default per interval. --refresh (default on) re-fetches the latest
+    candles so the rolling window advances each night instead of re-confirming a
+    stale cached dataset (refreshed once per distinct interval/days). Resilient:
+    one agent's failure never stops the rest. Runs after the nightly sweep."""
+    from ..engine.runner import _load_overrides, build_roster
+
+    conn, s = _conn()
+    roster = build_roster(conn, s.configs_dir, _load_overrides(s.configs_dir))
+    modes = {r["agent"]: r["mode"]
+             for r in conn.execute("SELECT agent, mode FROM agent_state").fetchall()}
+    explicit = {a.strip() for a in agents.split(",") if a.strip()}
+    targets = _autoconfirm_targets(roster, modes, explicit)
+
+    if not targets:
+        console.print("[dim]autoconfirm: no unconfirmed paper agents awaiting G0[/dim]")
+        return
+
+    console.print(f"[bold]autoconfirm[/bold] {len(targets)} agent(s): "
+                  + ", ".join(e.agent.name for e in targets))
+    n_confirmed = 0
+    refreshed: set[tuple[str, int]] = set()   # dedupe network refreshes per dataset
+    for e in targets:
+        name = e.agent.name
+        bar_s = int(getattr(getattr(e.agent, "cfg", None), "bar_seconds", 0) or 0)
+        interval = _SEC_TO_INTERVAL.get(bar_s, "1h")
+        d = days or {"1m": 90, "5m": 90, "15m": 90}.get(interval, 210)
+        # Refresh the cache once per (interval, days); agents that share a
+        # dataset reuse the freshened frames rather than re-fetching.
+        do_refresh = cache and refresh and (interval, d) not in refreshed
+        refreshed.add((interval, d))
+        try:
+            res, phash, dataset, _cfg, cov = _confirm_and_record(
+                conn, s, name, coins=coins, interval=interval, days=d, prefer=prefer,
+                cache=cache, refresh=do_refresh, record=record)
+        except Exception as ex:  # noqa: BLE001 - one agent must not abort the loop
+            console.print(f"  [yellow]{name}: confirm failed ({ex})[/yellow]")
+            continue
+        verdict = "[green]✅ CONFIRMED[/green]" if res.confirmed else "❌ not confirmed"
+        n_confirmed += int(res.confirmed)
+        console.print(f"  {name}: {verdict} "
+                      f"(interval={interval} ~{cov:.0f}d, OOS edge "
+                      f"{('—' if res.out_of_sample.edge_bps is None else f'{res.out_of_sample.edge_bps:+.1f}bps')}, "
+                      f"params_hash={phash})")
+    console.print(f"[green]✓[/green] autoconfirm done: {n_confirmed}/{len(targets)} "
+                  f"now clear G0{' (recorded)' if record else ''}")
 
 
 @app.command()

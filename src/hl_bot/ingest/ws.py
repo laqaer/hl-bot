@@ -33,6 +33,7 @@ class MarketState:
     open_interest: dict[str, float] = field(default_factory=dict)
     day_ntl_vlm: dict[str, float] = field(default_factory=dict)
     book_top: dict[str, tuple[float, float]] = field(default_factory=dict)  # coin -> (bid, ask)
+    book_imb: dict[str, float] = field(default_factory=dict)  # coin -> top-of-book imbalance
     trades: deque = field(default_factory=lambda: deque(maxlen=2000))
     updated_ms: int = 0
 
@@ -59,6 +60,11 @@ class MarketState:
                 if bid and ask:
                     self.book_top[coin] = (bid, ask)
                     self.mids[coin] = (bid + ask) / 2.0
+                # Top-of-book size imbalance (a free, forward-only signal — never
+                # in candle history): + = bid-heavy (buy pressure), - = ask-heavy.
+                imb = _book_imbalance(levels[0], levels[1])
+                if imb is not None:
+                    self.book_imb[coin] = imb
         elif channel == "activeAssetCtx" and isinstance(data, dict):
             coin = data.get("coin")
             ctx = data.get("ctx") or {}
@@ -97,6 +103,7 @@ class MarketState:
             "open_interest": self.open_interest,
             "day_ntl_vlm": self.day_ntl_vlm,
             "book_top": {k: list(v) for k, v in self.book_top.items()},
+            "book_imb": dict(self.book_imb),
             "recent_liquidations": self.recent_liquidations(),
         }
 
@@ -109,6 +116,7 @@ class MarketState:
             book_top=dict(self.book_top),
             extra={
                 "day_ntl_vlm": dict(self.day_ntl_vlm),
+                "book_imb": dict(self.book_imb),
                 "liquidations": self.recent_liquidations(),
             },
         )
@@ -121,6 +129,27 @@ def _lvl_px(side_levels: list) -> float | None:
         return float(side_levels[0]["px"])
     except (TypeError, ValueError, KeyError, IndexError):
         return None
+
+
+def _lvl_sz(side_levels: list) -> float | None:
+    if not side_levels:
+        return None
+    try:
+        return float(side_levels[0]["sz"])
+    except (TypeError, ValueError, KeyError, IndexError):
+        return None
+
+
+def _book_imbalance(bids: list, asks: list) -> float | None:
+    """Top-of-book size imbalance (bidSz-askSz)/(bidSz+askSz) in [-1, 1], or
+    None when either side / the total size is missing."""
+    bsz, asz = _lvl_sz(bids), _lvl_sz(asks)
+    if bsz is None or asz is None:
+        return None
+    tot = bsz + asz
+    if tot <= 0:
+        return None
+    return (bsz - asz) / tot
 
 
 def _set_float(d: dict[str, float], k: str, v: Any) -> None:
@@ -187,6 +216,7 @@ def load_fresh_snapshot(path: str | Path, *, max_age_s: float = 30.0) -> MarketV
         book_top={k: (float(v[0]), float(v[1])) for k, v in snap.get("book_top", {}).items()},
         extra={
             "day_ntl_vlm": {k: float(v) for k, v in snap.get("day_ntl_vlm", {}).items()},
+            "book_imb": {k: float(v) for k, v in snap.get("book_imb", {}).items()},
             "liquidations": snap.get("recent_liquidations", []),
         },
     )

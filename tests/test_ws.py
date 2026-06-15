@@ -22,6 +22,19 @@ def test_l2book_sets_book_top_and_mid():
     }})
     assert st.book_top["BTC"] == (63999.0, 64001.0)
     assert st.mids["BTC"] == 64000.0
+    assert st.book_imb["BTC"] == 0.0  # equal top-of-book sizes -> balanced
+
+
+def test_l2book_computes_top_of_book_imbalance():
+    st = MarketState()
+    st.apply_message({"channel": "l2Book", "data": {
+        "coin": "BTC",
+        "levels": [[{"px": "63999", "sz": "3"}], [{"px": "64001", "sz": "1"}]],
+    }})
+    assert st.book_imb["BTC"] == 0.5  # (3-1)/(3+1), bid-heavy
+    # round-trips through the snapshot into a MarketView
+    mv = st.to_market_view()
+    assert mv.extra["book_imb"]["BTC"] == 0.5
 
 
 def test_active_asset_ctx_sets_funding_oi_vol():

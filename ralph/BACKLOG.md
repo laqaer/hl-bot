@@ -11,6 +11,49 @@ leverage *unblocked* thing. Add new findings as you discover them.
 > sweep harness. Superseded items moved to Done. New center of gravity:
 > **make a strategy pass its gates on real evidence.**
 
+## P1 — FORWARD-EVIDENCE FLYWHEEL (the binding constraint, 2026-06-15)
+
+> Backtesting is exhausted as a discovery engine here: HL retains ~5000
+> candles/interval, so low-frequency/recent edges can't reach the G0 floor from
+> back-fetched history (this is exactly why D2a/D2b failed — sample size, not
+> direction). The next edges must be confirmed FORWARD. Spec:
+> `docs/research/P1_forward_evidence_flywheel.md`.
+
+- [x] **V3 — params_hash provenance. DONE** (2026-06-15). The trust
+  prerequisite: confirm validates the DEPLOYED config and stamps its
+  `params_hash`; `require_g0` matches it, so forward auto-promotion is
+  trustworthy. Details in P0b below. Gate strengthened, not weakened.
+- [x] **P1a — forward-accrual schema (append-only). DONE** (2026-06-15).
+  Migration 6: `market_samples` (mid/funding/OI + **top-of-book imbalance** —
+  new WS capture), `xvenue_funding`, `listing_log`. `ingest/accrual.py` writes
+  per-cycle from the MarketView/WS snapshot (throttled, idempotent on PK), hooked
+  into `run_cycle` before decide. `listing_log` first-run **backfill guard** so
+  the pre-existing universe isn't mistaken for day-1 listings. Tests:
+  `tests/test_accrual.py`, `tests/test_ws.py`.
+- [x] **P1b — continuous paper soak of the unconfirmed agents. DONE**
+  (2026-06-15). New contracts: `funding_crowding_fade_v1` (roster:live,
+  mode:paper, require_g0 ladder → auto-promotes on a forward G0) and
+  `new_listing_reversion_v1` (roster:paper moonshot soak). Live `new_listings`
+  wiring (`build_new_listings_view`) makes the new-listing agent actually trade
+  in paper (verified end-to-end). NOTE: soak rides `enrich_view`'s top-20-vol
+  universe; full-universe breadth is **P2** (build_frames perf).
+- [x] **P1c — nightly auto-confirm loop. DONE** (2026-06-15). `hlbot autoconfirm`
+  re-runs the G0 gate over the forward window for every paper agent awaiting G0
+  (per-agent interval, retention-aware window), `--record` stamping params_hash.
+  `deploy/run-confirm.sh` + `hlbot-confirm.{service,timer}` (03:00 UTC, after the
+  02:00 sweep). Sequencing: ws → run → sweep → confirm → supervisor. The
+  supervisor's existing require_g0 (V3) auto-promotes a params-matched pass.
+  ACCEPTANCE met: a paper agent crossing G0 on forward data promotes with no
+  human step. Tests: `tests/test_autoconfirm.py`.
+  > OPEN (linchpin): `confirm`/`autoconfirm` still build frames from HL's
+  > retention-capped candle cache, so a 5m agent's G0 OOS *rolls* (via --refresh)
+  > but doesn't *grow* past ~17.5d. To grow it, persist per-bar frame data
+  > forward and have confirm build from `accrued ∪ back-fetched` (Codex #1, PR
+  > #23). Paper-soak promotion conditions already grow forward; only the
+  > require_g0 backtest window is capped.
+  > OPEN: xvenue accrual (`accrue_xvenue_funding` built+tested) needs the nightly
+  > host job wired to `funding_xvenue.fetch_xvenue_funding` (Binance/Bybit are
+  > geo-blocked from CI). Full-universe breadth is P2.
 ## P0! — INFRA-PERM: RESOLVED 2026-06-15 — loop runs via `ralph/loop.sh`
 
 > **RESOLVED.** The operator is now driving the loop with `bash ralph/loop.sh`
@@ -151,6 +194,19 @@ leverage *unblocked* thing. Add new findings as you discover them.
 
 - [ ] **V1 — verify/rewire the liquidation feed** (host: does `liq_log.jsonl`
   accrue? HL's public trades may not carry the flag — find the real source).
+- [x] **V3 — `hlbot confirm` params-aware + params_hash provenance. DONE.**
+  `confirm` now builds the agent from the DEPLOYED config (`AGENT_FACTORIES` +
+  `agent_overrides.json`; `--no-use-overrides` / `--params '{json}'` to vary),
+  computes a stable `params_hash` of the resolved `cfg`
+  (`agents.base.compute_params_hash` / `Agent.params_hash`), and stamps it into
+  `confirmations` (migration 5). `g0_confirmed(..., params_hash=)` requires the
+  stamp to match the deployed config; `supervise()` threads the live roster's
+  hashes through `evaluate`, so `require_g0` can no longer inherit a G0 earned
+  for other params. Legacy NULL-hash rows never satisfy a specific hash. Tests:
+  `tests/test_params_provenance.py`. Gate strengthened, not weakened. ralph may
+  now tune via `agent_overrides.json` and re-confirm — the gate re-arms on the
+  new hash automatically. (D1's "adopt via dataclass defaults only" caveat is
+  now lifted: overrides are validated + provenance-stamped.)
 - [~] **V3 — make `hlbot confirm` params-aware + params_hash provenance.**
   confirm instantiates agents with `config={}` (defaults), so it does NOT
   validate `agent_overrides.json` params — a tuned override inherits a G0
@@ -218,11 +274,13 @@ leverage *unblocked* thing. Add new findings as you discover them.
   resting bids below mid (the cascade fills you at maximum spread), |A−B|
   imbalance trigger (done), TP/SL swapped to positive skew. Spec first;
   calibrate from liq_log once V1 confirms data.
-- [ ] **V3 — Evidence provenance (params_hash).** Stamp a config/params hash
-  into `confirmations`, sweep results, and (cheaply) decisions; promotion's
-  require_g0 should match the *currently deployed* hash. Today ralph can tune
-  params and inherit weeks of old-params evidence (audit finding G1). Until
-  then: any agent param change should bump the agent name (`_v2`) instead.
+- [x] **V3 — Evidence provenance (params_hash). DONE** (see P0b item above).
+  `confirmations` carry the deployed config's `params_hash`; `require_g0`
+  matches the currently-deployed hash, so a tuned override can no longer
+  inherit old-params evidence (closes audit finding G1). The `_v2`-rename
+  workaround is no longer needed. (Sweep-result hashing is optional polish:
+  sweeps explore params per-combo and don't `--record`, so they never stamp a
+  confirmations row — the gate-critical path is covered.)
 - [ ] **V4 — Window-boundary edge fix.** `edge_bps` pairs close-fill PnL with
   in-window notional only — trades straddling the window start inflate edge
   ~2x at some rolling looks. Proper fix: round-trip series bucketed by close

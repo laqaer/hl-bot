@@ -30,12 +30,14 @@ Perp-only, TAKER entry (a reversion must get in now; resting maker on a thin
 day-1 book suffers brutal adverse selection). Hard-capped sleeve sizing — this
 is a moonshot sleeve, not a core book (docs/ALPHA_ROADMAP.md S7).
 
-LIVE wiring (deferred — honest gap): ``new_listings`` is computed in the
-backtest frame assembly from full candle history. The live ``build_view`` does
-NOT populate it yet, so this agent HOLDS in live until first-seen listing
-timestamps are tracked forward (e.g. from the perp ``meta`` each cycle). Wiring
-that is only worth doing if the backtest confirms — so it is gated on the G0
-verdict, not done speculatively.
+LIVE wiring (P1 — done): ``new_listings`` is computed in the backtest from full
+candle history; forward, the engine accrues each perp's first-seen + reference
+price into ``listing_log`` (``ingest/accrual.py``) and rebuilds this same signal
+each cycle (``build_new_listings_view``), so the agent now trades in PAPER over
+the full universe to grow a confirmable OOS sample on calendar time. A first-run
+BACKFILL marks the pre-existing universe as known, so only coins listed AFTER we
+start watching are faded. It stays a roster:paper moonshot soak — promotion into
+the ring-fenced sleeve is a deliberate capital decision, not auto-promotion.
 """
 
 from __future__ import annotations

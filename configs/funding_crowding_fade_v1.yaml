@@ -1,0 +1,65 @@
+agent: funding_crowding_fade_v1
+description: >-
+  Funding-gated crowding fade (D2a, the OI-free subset of S8). Fade a vol-
+  normalized 5m overshoot (|z| >= z_enter, aligned with the funding sign) only
+  when |funding| >= funding_min_apr — i.e. fade the crowded side the funding rate
+  confirms. Same forced/emotional-flow -> overshoot -> revert structure as the
+  confirmed dislocation edge, with a funding filter. Built but NOT confirmed:
+  strong in-sample, but the thin ~5d 5m holdout starves the G0 trade floor. It
+  runs PAPER here to accrue OOS trades FORWARD (P1); require_g0 keeps it out of
+  live until it actually clears the gate on the forward window. See
+  docs/research/funding_crowding_fade.md.
+mode: paper
+# roster: live = eligible for live EXECUTION, but mode starts paper and the
+# paper->live_small stage requires a fresh, params-matched G0 (V3). The gate is
+# the safety: it cannot reach live until forward evidence confirms it. It is NOT
+# being promoted on hope — only the supervisor, on real evidence, promotes it.
+roster: live
+cooldown_s: 300   # 5m reversion; short re-entry like dislocation
+
+# Per-agent edge metric (sharpe/max_drawdown are account-level). Edge-per-event
+# is large, so it must clear costs + a real stop on a real forward sample.
+goals:
+  primary:
+    metric: edge_bps
+    window: 7d
+    op: ">="
+    threshold: 0
+  secondary:
+    - {metric: net_pnl, window: 30d, op: ">=", threshold: 0}
+    - {metric: win_rate, window: 30d, op: ">=", threshold: 0.50}
+
+guardrails:
+  - {metric: net_pnl,  window: 24h, op: ">=", threshold: -20,
+     action: pause,  reason: "24h realized loss > $20"}
+  - {metric: edge_bps, window: 7d,  op: ">=", threshold: -10,
+     action: demote, reason: "7d realized edge < -10 bps after costs"}
+  - {metric: edge_bps, window: 24h, op: ">=", threshold: -40,
+     action: alert,  reason: "24h edge < -40 bps"}
+
+sizing:
+  live_small_max_total: 75
+  live_small_max_per_trade: 25
+
+# n_trades counts CLOSE events (round trips), not fills. Mirrors the confirmed
+# dislocation ladder — meets tests/test_gate_minima.py minima exactly, no looser.
+promotion_ladder:
+  - from: paper
+    to: live_small
+    min_days_in_mode: 5
+    require_g0: true
+    persist_days: 3
+    persist_evals: 12
+    conditions:
+      - {metric: net_pnl,  window: 7d,  op: ">=", threshold: 0,  source: paper}
+      - {metric: edge_bps, window: 30d, op: ">=", threshold: 3,  source: paper}
+      - {metric: n_trades, window: 30d, op: ">=", threshold: 20, source: paper}
+  - from: live_small
+    to: live
+    min_days_in_mode: 14
+    persist_days: 3
+    conditions:
+      - {metric: edge_bps, window: 30d, op: ">=", threshold: 3,   source: live}
+      - {metric: net_pnl,  window: 30d, op: ">=", threshold: 0,   source: live}
+      - {metric: sharpe,   window: 30d, op: ">=", threshold: 1.0, source: live}
+      - {metric: n_trades, window: 30d, op: ">=", threshold: 10,  source: live}

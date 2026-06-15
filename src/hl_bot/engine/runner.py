@@ -252,6 +252,16 @@ def run_cycle(
         owned_femr = bot_owned_coins(conn, agent="femr_v1")
         view.extra["live_positions"] = [p for p in all_positions if p["coin"] in owned_femr]
 
+    # --- forward-evidence accrual (P1) ---
+    # Append-only capture of the un-back-fetchable signals (OI, book imbalance,
+    # listings) + the live new_listings wiring the new_listing_reversion agent
+    # needs. Best-effort and additive; must run before decide so fresh listings
+    # are visible this cycle.
+    from ..ingest.accrual import accrue_cycle
+    acc = accrue_cycle(conn, view, now_ms=now_ms)
+    if acc.get("listings"):
+        res.events.append(f"ACCRUE: {acc['listings']} new listing(s) logged")
+
     # --- decide ---
     live_names = {e.agent.name for e in live_entries}
     for e in [*live_entries, *paper_entries]:

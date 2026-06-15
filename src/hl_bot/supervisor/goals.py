@@ -159,26 +159,23 @@ def g0_confirmed(
 ) -> bool:
     """True when a fresh PASSING `hlbot confirm --record` row exists (G0).
 
-    When ``params_hash`` is given the stamp must also have been earned for that
-    exact config fingerprint (V3 provenance) — a confirmation recorded for a
-    different param set does NOT count. ``None`` (the default) keeps the legacy
-    agent-name-only check, so existing callers are unaffected.
+    When ``params_hash`` is given (V3), the confirmation must ALSO have been
+    stamped for that exact deployed config — a G0 earned for different params
+    no longer counts. Legacy rows (NULL params_hash, pre-V3) never match a
+    specific hash, so a config that has never been confirmed under provenance
+    must earn a fresh stamp before it can promote. ``None`` (the default) keeps
+    the legacy agent-name-only check, so existing callers are unaffected.
     """
     now_ms = now_ms or int(time.time() * 1000)
     since = now_ms - int(max_age_days * 86_400_000)
+    sql = "SELECT 1 FROM confirmations WHERE agent=? AND confirmed=1 AND ts_ms>=?"
+    args: list = [agent, since]
+    if params_hash is not None:
+        sql += " AND params_hash=?"
+        args.append(params_hash)
+    sql += " LIMIT 1"
     try:
-        if params_hash is None:
-            row = conn.execute(
-                "SELECT 1 FROM confirmations WHERE agent=? AND confirmed=1 "
-                "AND ts_ms>=? LIMIT 1",
-                (agent, since),
-            ).fetchone()
-        else:
-            row = conn.execute(
-                "SELECT 1 FROM confirmations WHERE agent=? AND confirmed=1 "
-                "AND ts_ms>=? AND params_hash=? LIMIT 1",
-                (agent, since, params_hash),
-            ).fetchone()
+        row = conn.execute(sql, args).fetchone()
     except sqlite3.OperationalError:
         return False
     return row is not None
@@ -204,11 +201,14 @@ def evaluate(
     current_mode: str | None = None,
     last_promoted_ms: int | None = None,
     now_ms: int | None = None,
+    params_hash: str | None = None,
 ) -> list[Evaluation]:
     """Run guardrails + promotion/demotion checks, return Evaluations.
 
     ``current_mode`` is the DB truth from agent_state (the YAML ``mode`` is only
     the agent's *initial* mode — gating on it froze every ladder at stage one).
+    ``params_hash`` is the deployed config's provenance hash (V3): when set, a
+    require_g0 stage only clears if a confirmation exists for THESE params.
     This function does NOT mutate state; the supervisor does that based on the
     actions returned.
     """
@@ -291,9 +291,11 @@ def evaluate(
             blockers.append(
                 f"only {days_in_mode:.1f}d in {mode} (< {stage.min_days_in_mode:g}d)")
         if stage.require_g0 and not g0_confirmed(
-                conn, g.agent, max_age_days=stage.g0_max_age_days, now_ms=now_ms):
+                conn, g.agent, max_age_days=stage.g0_max_age_days, now_ms=now_ms,
+                params_hash=params_hash):
+            suffix = f" for deployed params {params_hash}" if params_hash else ""
             blockers.append(
-                f"no fresh G0 confirmation (≤{stage.g0_max_age_days:g}d)")
+                f"no fresh G0 confirmation (≤{stage.g0_max_age_days:g}d){suffix}")
         results = [c.evaluate(cards[(c.window, c.source)]) for c in stage.conditions]
         conditions_pass = bool(results) and all(ok is True for ok, _ in results)
         # Persistence: record this look's readiness, then require an unbroken

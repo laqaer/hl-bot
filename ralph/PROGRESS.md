@@ -267,6 +267,48 @@ maker pricing), userFills WS, B4-RUN (confirm on real history).
 
 ---
 
+## Iteration — 2026-06-15 — V3 provenance + the P1 forward-evidence flywheel
+
+**Context.** Backtesting is exhausted as a discovery engine on HL (≤~5000
+candles/interval), so the next edges must be confirmed FORWARD. Two real edges
+(funding_crowding_fade, new_listing_reversion) already died on SAMPLE SIZE, not
+direction. The mission's binding constraint: build the flywheel that confirms
+edges forward and auto-promotes them — without weakening the gate — and land V3
+first so auto-promotion is trustworthy.
+
+**Changed.**
+- **V3 — params_hash provenance.** `Agent.params_hash()` + `compute_params_hash`
+  (stable hash of the resolved cfg). `hlbot confirm` now builds from the DEPLOYED
+  config (factory defaults + agent_overrides.json; `--params`/`--no-use-overrides`)
+  and stamps `params_hash` (migration 5) into `confirmations`. `g0_confirmed(...,
+  params_hash=)` + `supervise()`→`deployed_params_hashes` make `require_g0` match
+  the live config — a tuned override can no longer inherit a G0 for other params.
+  Gate strengthened, not weakened.
+- **P1a — forward accrual.** Migration 6 (`market_samples`, `xvenue_funding`,
+  `listing_log`). `ingest/accrual.py` writes per-cycle from the MarketView/WS
+  snapshot (OI, funding, vlm, top-of-book imbalance — new WS `book_imb` capture),
+  throttled + idempotent; hooked into `run_cycle`. `listing_log` first-run
+  backfill guard so the existing universe isn't read as day-1 listings.
+- **P1b — paper soak.** YAML contracts for `funding_crowding_fade_v1`
+  (roster:live, mode:paper, require_g0 ladder) and `new_listing_reversion_v1`
+  (roster:paper moonshot soak). Live `new_listings` wiring lets the new-listing
+  agent finally trade in paper.
+- **P1c — auto-confirm loop.** `hlbot autoconfirm` (per-agent interval, retention-
+  aware window, params_hash stamp) + `deploy/run-confirm.sh` +
+  `hlbot-confirm.{service,timer}` at 03:00 UTC after the sweep.
+
+**Evidence.** `uv run pytest -q` → **294 passed** (new: test_params_provenance,
+test_accrual, test_autoconfirm; extended test_ws). `ruff check src tests` clean.
+End-to-end smoke: a genuinely-new coin is logged forward and
+`new_listing_reversion` fires a paper SHORT on its +40% day-1 overshoot;
+`autoconfirm` targets exactly the paper agents awaiting G0;
+`supervise()`'s deployed hash matches a recorded confirmation (and rejects a
+stale/mismatched one).
+
+**What's next.** Wire xvenue accrual into the host nightly job
+(`accrue_xvenue_funding` built+tested; Binance/Bybit geo-blocked from CI). P2:
+full-universe breadth (build_frames perf) so the soak covers the whole liquid
+set. Then OI/imbalance as filters on the dislocation core (P4/S8).
 ## Iteration (2026-06-14) — sweep-report adoption guidance + BLOCKED verify gate
 
 **Context.** Ralph loop. Oriented on the newest sweeps

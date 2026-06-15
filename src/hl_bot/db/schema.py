@@ -225,9 +225,50 @@ MIGRATIONS: list[str] = [
     # 5: params provenance (V3). Stamp the fingerprint of the EFFECTIVE config a
     # confirmation validated, so require_g0 can refuse a G0 stamp earned for a
     # different param set. Nullable: legacy rows (pre-provenance) stay NULL and
-    # simply won't match a real hash — they predate the check.
+    # simply won't match a real hash — they predate the check. (Shipped on main;
+    # kept ALTER-only and verbatim so a DB already at user_version=5 stays valid.)
     """
     ALTER TABLE confirmations ADD COLUMN params_hash TEXT;
+    """,
+    # 6: forward-evidence accrual (P1). Append-only signal tables for the
+    # things HL candle history can NEVER give us — OI + top-of-book imbalance
+    # (market_samples), cross-venue funding (xvenue_funding), and per-listing
+    # first-seen + reference price (listing_log). Written every engine cycle
+    # from the already-fetched MarketView/WS snapshot; idempotent on the PK, no
+    # deletes. Also creates the params_hash lookup index HERE (not folded into
+    # migration 5, so a DB already at user_version=5 from main still gets it).
+    # This is the fuel for confirming the next edges FORWARD.
+    """
+    CREATE TABLE IF NOT EXISTS market_samples (
+        ts_ms          INTEGER NOT NULL,
+        coin           TEXT    NOT NULL,
+        mid            REAL,
+        funding        REAL,          -- HL 1h funding (signed, per-hour)
+        open_interest  REAL,          -- metaAndAssetCtxs openInterest (S8 enabler)
+        day_ntl_vlm    REAL,
+        book_imb       REAL,          -- (bidSz-askSz)/(bidSz+askSz) top-of-book, WS
+        PRIMARY KEY (ts_ms, coin)
+    );
+    CREATE INDEX IF NOT EXISTS idx_market_samples_coin ON market_samples(coin, ts_ms);
+
+    CREATE TABLE IF NOT EXISTS xvenue_funding (
+        ts_ms        INTEGER NOT NULL,
+        coin         TEXT    NOT NULL,
+        venue        TEXT    NOT NULL,   -- 'binance' / 'bybit' / 'hl'
+        funding_apr  REAL,              -- annualized %, for cross-venue compare
+        PRIMARY KEY (ts_ms, coin, venue)
+    );
+    CREATE INDEX IF NOT EXISTS idx_xvenue_funding_coin ON xvenue_funding(coin, ts_ms);
+
+    CREATE TABLE IF NOT EXISTS listing_log (
+        coin           TEXT PRIMARY KEY,
+        first_seen_ms  INTEGER NOT NULL,
+        listing_px     REAL,
+        source         TEXT            -- 'backfill' (pre-existing) / 'live' (new)
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_confirmations_params
+        ON confirmations(agent, params_hash, ts_ms);
     """,
 ]
 
