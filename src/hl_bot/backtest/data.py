@@ -653,3 +653,38 @@ def merge_frames(*frame_lists: list[Frame]) -> list[Frame]:
         for f in fl:
             by_ts.setdefault(f.ts_ms, f)
     return [by_ts[t] for t in sorted(by_ts)]
+
+
+def overlay_oi_change(
+    frames: list[Frame],
+    oi_by_coin: dict[str, list[tuple[int, float]]],
+    *,
+    lookback_ms: int = 1_800_000,
+) -> int:
+    """Overlay cross-venue (Binance) OI-change onto candle frames for the S8
+    offline backtest — the host-side way to DETERMINE the OI-crowding edge.
+
+    For each frame and coin with an OI series, sets ``frame.oi_change[coin] =
+    (oi@ts - oi@(ts-lookback)) / oi@(ts-lookback)`` using as-of (≤) lookups, the
+    same fractional-growth signal ``build_oi_change_view`` computes live. Bars
+    without a full lookback of OI history are left without a signal (warmup), so
+    S8 simply finds no crowding there. Mutates ``frames`` in place; returns the
+    number of (frame, coin) signals written."""
+    import bisect
+
+    written = 0
+    for coin, series in (oi_by_coin or {}).items():
+        if not series:
+            continue
+        ts_list = [t for t, _ in series]
+        oi_list = [o for _, o in series]
+        for f in frames:
+            i = bisect.bisect_right(ts_list, f.ts_ms) - 1
+            j = bisect.bisect_right(ts_list, f.ts_ms - lookback_ms) - 1
+            if i < 0 or j < 0 or i == j:
+                continue
+            oi_now, oi_ref = oi_list[i], oi_list[j]
+            if oi_now > 0 and oi_ref > 0:
+                f.oi_change[coin] = (oi_now - oi_ref) / oi_ref
+                written += 1
+    return written

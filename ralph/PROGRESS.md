@@ -727,3 +727,30 @@ suite **318 passed**; ruff clean. Migration chain verified fresh→v8 and a
 simulated main@v7 upgrade (no dup-column).
 
 **What's next.** Sweep S8 params once forward OI accrues; xvenue host job.
+
+---
+
+## Iteration — 2026-06-15 — S8 edge determination via Binance OI (host backtest)
+
+**Context.** S8 (merged #27) is a sound hypothesis but EMPIRICALLY UNPROVEN, and
+it can't be validated in CI: HL OI isn't in candles (not back-fetchable), and the
+forward OOS takes weeks. Operator chose to build the only near-term way to
+DETERMINE the edge — a Binance-OI cross-venue proxy backtest (host-run; Binance
+geo-blocked from CI).
+
+**Changed.**
+- `research/oi_history.py`: `parse_binance_oi` (pure) + `fetch_binance_oi_hist`
+  (paginated ~30d of Binance `openInterestHist`, host-only). Reuses
+  `funding_xvenue.hl_to_binance` symbol mapping.
+- `backtest/data.py::overlay_oi_change`: as-of overlay of OI-change onto candle
+  frames (same fractional-growth signal as `build_oi_change_view`), warmup-safe.
+- `cli s8-oi-backtest`: loads HL 5m frames, overlays Binance OI-change, runs the
+  SAME G0 gate as confirm, prints PASS/FAIL + IS/OOS edge. Honest framing: a PASS
+  is evidence to keep soaking, NOT a promotion (live still needs a forward HL G0).
+
+**Evidence.** `tests/test_oi_history.py` (6, mocked — CI-safe): Binance parse
+(dedup/sort/drop-bad), the as-of OI-change overlay (fractional growth + warmup
+gaps), and an end-to-end backtest where overlaid OI drives S8 to trade. Full
+suite **324 passed**; ruff clean. The real fetch + verdict run on the host.
+
+**What's next.** Host: `hlbot s8-oi-backtest` for the verdict; tune from there.

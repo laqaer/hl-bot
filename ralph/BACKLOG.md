@@ -259,8 +259,12 @@ leverage *unblocked* thing. Add new findings as you discover them.
   `load_accrued_frames`/`Frame.oi_change` replay it so confirm/autoconfirm
   evaluate it on the forward window. `oi_crowding_reversal_v1` rosters paper with
   a params-matched require_g0 ladder (meets test_gate_minima). Tests:
-  `tests/test_oi_crowding.py`. NEXT: sweep `oi_spike_min`/`z_enter`/lookback once
-  enough forward OI accrues; breadth (#25/#26) compounds the event rate.
+  `tests/test_oi_crowding.py`. DETERMINE-edge path: `hlbot s8-oi-backtest` runs
+  the G0 gate on Binance OI history as a cross-venue crowding proxy (host-only,
+  geo-blocked from CI; `research/oi_history.py` + `overlay_oi_change`,
+  `tests/test_oi_history.py`) for an EARLY read before the forward soak
+  completes. NEXT: run it on the host; sweep `oi_spike_min`/`z_enter`/lookback;
+  breadth (#25/#26) compounds the forward event rate.
 - [ ] **S5 — Cross-venue funding signal.** Spec:
   `docs/research/S5_xvenue_funding.md`. Now MORE valuable given the baseline
   finding: Binance/Bybit funding tells us when HL's *spike* is idiosyncratic
