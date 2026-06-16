@@ -259,7 +259,15 @@ leverage *unblocked* thing. Add new findings as you discover them.
   `load_accrued_frames`/`Frame.oi_change` replay it so confirm/autoconfirm
   evaluate it on the forward window. `oi_crowding_reversal_v1` rosters paper with
   a params-matched require_g0 ladder (meets test_gate_minima). Tests:
-  `tests/test_oi_crowding.py`. DETERMINE-edge path: `hlbot s8-oi-backtest` runs
+  `tests/test_oi_crowding.py`. DETERMINED (2026-06-16): `hlbot s8-oi-backtest`
+  runs the G0 gate on real Binance OI from the PUBLIC dumps (data.binance.vision,
+  NOT geo-blocked — works on US hosts/CI where the fapi API 451s;
+  `research/oi_history.py::fetch_binance_oi_vision`). First read on ~18d: the
+  shipped default oi_spike_min=0.10 NEVER fires (30-min ΔOI p95≈1.1%, max 6.5%)
+  — fixed to 0.01/z_enter=2.0 (calibrated, the +OOS-edge region). Edge looks real
+  but ~5d OOS too thin to confirm; keep soaking forward. `--sweep` reproduces it.
+  NEXT: run `s8-oi-backtest` on the host; let autoconfirm settle it on HL data.
+  (superseded) original DETERMINE path: `hlbot s8-oi-backtest` runs
   the G0 gate on Binance OI history as a cross-venue crowding proxy (host-only,
   geo-blocked from CI; `research/oi_history.py` + `overlay_oi_change`,
   `tests/test_oi_history.py`) for an EARLY read before the forward soak

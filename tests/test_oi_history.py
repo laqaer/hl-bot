@@ -12,12 +12,37 @@ from hl_bot.agents.oi_crowding_reversal import OICrowdingReversalAgent
 from hl_bot.backtest.data import overlay_oi_change
 from hl_bot.backtest.engine import Backtester, CostModel, Frame
 from hl_bot.db.schema import init_db
-from hl_bot.research.oi_history import hl_to_binance, parse_binance_oi
+from hl_bot.research.oi_history import (
+    hl_to_binance,
+    parse_binance_oi,
+    parse_vision_metrics,
+)
 
 MIN5 = 300_000
 
 
-# --- Binance payload parsing -------------------------------------------------
+# --- Binance public-dump (data.binance.vision) metrics CSV -------------------
+
+def test_parse_vision_metrics_reads_open_interest():
+    csv = (
+        "create_time,symbol,sum_open_interest,sum_open_interest_value,extra\n"
+        "2025-05-01 00:05:00,BTCUSDT,80107.4070,7545348708.29,0.875\n"
+        "2025-05-01 00:10:00,BTCUSDT,80250.0000,7560000000.00,0.880\n"
+        "2025-05-01 00:15:00,BTCUSDT,0,0,0.0\n"          # zero OI dropped
+        "bad,line,here\n"                                  # unparseable ts dropped
+    )
+    out = parse_vision_metrics(csv)
+    # 00:05 UTC on 2025-05-01
+    assert out[0] == (1746057900000, 80107.407)
+    assert [oi for _, oi in out] == [80107.407, 80250.0]   # sorted, zero/bad dropped
+
+
+def test_parse_vision_metrics_empty_or_headeronly():
+    assert parse_vision_metrics("") == []
+    assert parse_vision_metrics("create_time,symbol,sum_open_interest\n") == []
+
+
+# --- Binance payload parsing (fapi fallback) ---------------------------------
 
 def test_parse_binance_oi_sorts_dedups_drops_bad():
     rows = [

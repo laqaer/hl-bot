@@ -45,12 +45,22 @@ provides:
 
 | param | default | meaning |
 |-------|---------|---------|
-| `oi_spike_min` | 0.10 | min fractional OI growth over the lookback to count as crowding |
-| `z_enter` | 1.0 | min \|vol-normalized overshoot\| to fade |
+| `oi_spike_min` | **0.01** | min fractional OI growth over the lookback to count as crowding |
+| `z_enter` | **2.0** | min \|vol-normalized overshoot\| to fade |
 | `z_exit` | 0.5 | take profit when z reverts within this of VWAP |
 | `stop_pct` | 0.02 | hard stop bounds the "the crowd was right" tail |
 | `max_hold_bars` | 12 | ~60min at 5m |
 | `min_daily_volume_usd` | 10M | liquidity floor (so a wide universe never forces illiquid coins) |
+
+> **Defaults are CALIBRATED, not guessed** (2026-06-16, via `s8-oi-backtest`).
+> The first cut shipped `oi_spike_min=0.10` — but on ~18d of real Binance OI the
+> 30-min ΔOI distribution is p90 **0.71%**, p95 **1.15%**, max **6.5%**, so a 10%
+> gate **never fires** (S8 would trade zero forever and the soak accrue nothing).
+> Recalibrated to `0.01` (≈p95, a genuine spike). The grid also showed a real
+> ~2σ overshoot (`z_enter=2.0`) is where the OOS edge is positive (+11 to +23 bps
+> vs mixed/negative at z=1.0), so `z_enter` moved 1.0 → 2.0. These are distribution-
+> justified PRIORS, deliberately NOT the max-OOS-edge cell (the ~5d OOS overfits);
+> the forward soak + autoconfirm is the real arbiter.
 
 The OI lookback is `build_oi_change_view(lookback_s=1800)` (~30min), independent
 of the agent so it can be tuned in the accrual layer.
@@ -73,16 +83,26 @@ on whether S8 is real, use **Binance OI history as a cross-venue proxy** for
 crowding (the same phase-1-offline-study posture as S5 xvenue funding):
 
 ```
-hlbot s8-oi-backtest --coins BTC,ETH,SOL,... --days 30 --lookback-min 30
+hlbot s8-oi-backtest --coins BTC,ETH,SOL,DOGE,AVAX,LINK,SUI,WLD --days 30          # verdict at defaults
+hlbot s8-oi-backtest --coins ... --sweep                                            # calibrate + grid
 ```
 
-It loads HL 5m candle frames, overlays Binance `openInterestHist` OI-change
+It loads HL 5m candle frames, overlays Binance OI-change
 (`research/oi_history.py` + `backtest.data.overlay_oi_change`), and runs the SAME
-G0 gate as `confirm`. **Host-only** — Binance is geo-blocked from CI (the parser
-+ overlay are unit-tested with mocks; only the fetch needs the host). A PASS is
-evidence to keep soaking S8 forward, NOT a promotion: live still requires a
-params-matched **forward** G0 on HL data, since Binance OI is only a proxy for HL
-crowding (different participants, different microstructure).
+G0 gate as `confirm`. OI comes from Binance's **public dumps**
+(`data.binance.vision`, daily 5m `metrics` zips), which are NOT geo-blocked — so
+this runs anywhere, including US hosts and CI where the fapi API returns HTTP
+451. (The parsers are pure + unit-tested; only the download needs network.) A
+PASS is evidence to keep soaking S8 forward, NOT a promotion: live still requires
+a params-matched **forward** G0 on HL data, since Binance OI is only a proxy for
+HL crowding (different participants, different microstructure).
+
+**First run (2026-06-16, ~18d, 8 coins):** at the recalibrated defaults the edge
+is **promising but not yet confirmable** — the OOS window (~5d) is too thin (the
+exact sample-size problem the forward flywheel exists to solve). The sweep at
+`z_enter=2.0` is consistently positive (OOS +11 to +23 bps with 10–19 trades),
+which is why the defaults moved to `oi_spike_min=0.01 / z_enter=2.0`. Verdict:
+keep soaking S8 forward; let `autoconfirm` settle PASS/FAIL on HL data.
 
 ## Open / next
 

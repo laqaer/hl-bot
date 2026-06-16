@@ -1156,19 +1156,22 @@ def s8_oi_backtest(
     min_edge_bps: float = 3.0,
     min_sharpe: float = 1.0,
     params: str = "",
+    sweep: bool = False,
 ):
-    """HOST-ONLY: measure the S8 OI-crowding edge on real Binance OI history.
+    """Measure the S8 OI-crowding edge on real Binance OI history.
 
     HL never serves OI history (only candles), so oi_crowding_reversal can't be
     back-tested on HL — only confirmed FORWARD over weeks. Binance publishes ~30d
-    of 5m OI, which is a usable cross-venue PROXY for crowding: this loads HL 5m
-    candle frames, overlays Binance OI-change, and runs the SAME G0 gate as
-    `confirm` to give an early read on whether the edge is real before committing
-    a long soak. Binance is geo-blocked from CI, so run this on the host."""
+    of 5m OI, a usable cross-venue PROXY for crowding: this loads HL 5m candle
+    frames, overlays Binance OI-change, and runs the SAME G0 gate as `confirm`.
+    OI comes from Binance's PUBLIC dumps (data.binance.vision), which work even
+    where the fapi API is geo-blocked (US hosts / CI get HTTP 451). With --sweep
+    it calibrates the OI-change distribution and grids oi_spike_min × z_enter so
+    you can pick a threshold instead of guessing."""
     from ..backtest.confirm import confirm_strategy
     from ..backtest.data import cached_or_fetch, frames_coverage_days, overlay_oi_change
     from ..engine.runner import AGENT_FACTORIES
-    from ..research.oi_history import fetch_binance_oi_hist, hl_to_binance
+    from ..research.oi_history import fetch_binance_oi_vision, hl_to_binance
 
     s = Settings.from_env()
     coin_list = [c.strip() for c in coins.split(",") if c.strip()]
@@ -1192,32 +1195,56 @@ def s8_oi_backtest(
         if hl_to_binance(coin) is None:
             skipped.append(coin)
             continue
-        pts = fetch_binance_oi_hist(coin, period="5m", days=days)
+        pts = fetch_binance_oi_vision(coin, days=days)
         if pts:
             oi_by_coin[coin] = pts
         else:
             skipped.append(coin)
     n_sig = overlay_oi_change(frames, oi_by_coin, lookback_ms=lookback_min * 60_000)
     if not oi_by_coin:
-        console.print("[red]no Binance OI fetched (geo-blocked? run on host) — "
+        console.print("[red]no Binance OI fetched (network blocked?) — "
                       "cannot determine the edge[/red]")
         raise typer.Exit(2)
-    console.print(f"[dim]OI for {len(oi_by_coin)} coin(s) "
-                  f"(skipped {','.join(skipped) or '∅'}); {n_sig} bar-signals overlaid[/dim]")
-
-    factory = lambda conn, _c=dict(cfg): AGENT_FACTORIES["oi_crowding_reversal_v1"](conn, dict(_c))  # noqa: E731
-    res = confirm_strategy(
-        factory, frames, prefer=prefer,
-        min_edge_bps=min_edge_bps, min_sharpe=min_sharpe, periods_per_year=_PER_YEAR["5m"],
-    )
     cov = frames_coverage_days(frames)
+    console.print(f"[dim]OI for {len(oi_by_coin)} coin(s) "
+                  f"(skipped {','.join(skipped) or '∅'}); {n_sig} bar-signals overlaid; "
+                  f"~{cov:.0f}d window[/dim]")
+
+    def _run(extra: dict):
+        fac = lambda conn, _c=dict(extra): AGENT_FACTORIES["oi_crowding_reversal_v1"](conn, dict(_c))  # noqa: E731
+        return confirm_strategy(fac, frames, prefer=prefer, min_edge_bps=min_edge_bps,
+                                min_sharpe=min_sharpe, periods_per_year=_PER_YEAR["5m"])
+    _e = lambda v: "—" if v is None else f"{v:+.1f}"  # noqa: E731
+
+    if sweep:
+        vals = sorted(v for f in frames for v in f.oi_change.values() if v > 0)
+        if vals:
+            q = lambda p: vals[min(len(vals) - 1, int(p / 100 * len(vals)))]  # noqa: E731
+            console.print(f"[bold]ΔOI distribution[/bold] ({len(vals)} +moves, {lookback_min}m): "
+                          f"p50 {q(50):.2%}  p90 {q(90):.2%}  p95 {q(95):.2%}  "
+                          f"p99 {q(99):.2%}  max {vals[-1]:.2%}")
+        console.print(f"\n[bold]sweep[/bold] (walk-forward, ~{cov:.0f}d):")
+        console.print(f"{'spike':>6} {'z':>4} | {'IS_tr':>5} {'OOS_tr':>6} "
+                      f"{'OOS_edge':>9} {'PASS':>5}")
+        for spike in (0.005, 0.01, 0.02, 0.03):
+            for z in (1.0, 1.5, 2.0):
+                r = _run({"oi_spike_min": spike, "z_enter": z})
+                mark = "✅" if r.confirmed else "—"
+                console.print(f"{spike:>6.3f} {z:>4.1f} | {r.in_sample.n_trades:>5} "
+                              f"{r.out_of_sample.n_trades:>6} {_e(r.out_of_sample.edge_bps):>9} "
+                              f"{mark:>5}")
+        console.print("[dim]Pick by a PRIOR (distribution + a real overshoot), NOT the max "
+                      "OOS-edge cell — the ~5d OOS is thin and selecting on it overfits. "
+                      "The forward soak is the real arbiter.[/dim]")
+        return
+
+    res = _run(cfg)
     console.print(f"\n[bold]S8 OI-crowding backtest[/bold] (Binance OI proxy, ~{cov:.0f}d, "
-                  f"lookback {lookback_min}m)")
+                  f"lookback {lookback_min}m, params {cfg or 'defaults'})")
     console.print(res.summary())
     verdict = "[green]✅ PASS[/green]" if res.confirmed else "[red]❌ FAIL[/red]"
-    _e = lambda v: "—" if v is None else f"{v:+.1f}bps"  # noqa: E731
-    console.print(f"{verdict}  IS edge {_e(res.in_sample.edge_bps)} / "
-                  f"OOS edge {_e(res.out_of_sample.edge_bps)} / "
+    console.print(f"{verdict}  IS edge {_e(res.in_sample.edge_bps)}bps / "
+                  f"OOS edge {_e(res.out_of_sample.edge_bps)}bps / "
                   f"{res.out_of_sample.n_trades} OOS trades")
     console.print("[dim]Cross-venue proxy: Binance OI ≈ HL crowding. A PASS here is "
                   "evidence to keep soaking S8 forward, not a promotion — live still "
