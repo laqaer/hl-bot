@@ -754,3 +754,38 @@ gaps), and an end-to-end backtest where overlaid OI drives S8 to trade. Full
 suite **324 passed**; ruff clean. The real fetch + verdict run on the host.
 
 **What's next.** Host: `hlbot s8-oi-backtest` for the verdict; tune from there.
+
+---
+
+## Iteration — 2026-06-16 — S8 DETERMINED: Binance public-dump OI + calibration
+
+**Context.** Operator tried to run `s8-oi-backtest` on the host — the fapi API
+returned HTTP 451 (Binance geo-blocks US hosts, like CI). So the "host verdict"
+path from #28 didn't actually work anywhere reachable.
+
+**Found a reachable source + ran the determination.** Binance's PUBLIC dumps
+(`data.binance.vision`, daily 5m `metrics` zips with `sum_open_interest`) are
+static files, NOT geo-blocked — reachable from CI and US hosts. Pulled ~18d for 8
+coins, overlaid ΔOI onto HL candle frames, ran the G0 gate:
+- The shipped default `oi_spike_min=0.10` is **broken**: 30-min ΔOI p90 0.71%,
+  p95 1.15%, max 6.5% — a 10% gate NEVER fires, so S8 would trade zero forever and
+  the forward soak accrue nothing. Recalibrated to **0.01** (≈p95).
+- Sweep showed `z_enter=2.0` consistently positive (OOS +11 to +23 bps, 10–19
+  trades) vs mixed/negative at z=1.0 → default `z_enter` 1.0 → **2.0**.
+- Edge is promising but the ~5d OOS is too thin to confirm (the sample-size
+  problem the flywheel exists for). Verdict: keep soaking forward.
+
+**Changed.**
+- `research/oi_history.py`: `parse_vision_metrics` (pure) + `fetch_binance_oi_vision`
+  (the public dumps). fapi path kept as a documented fallback.
+- `cli s8-oi-backtest`: uses the vision source; new `--sweep` mode (ΔOI percentiles
+  + oi_spike_min×z_enter grid) so thresholds are picked, not guessed.
+- `agents/oi_crowding_reversal.py`: defaults `oi_spike_min` 0.10→0.01,
+  `z_enter` 1.0→2.0 (calibrated priors, not the OOS-best cell).
+
+**Evidence.** `tests/test_oi_history.py` extended (vision metrics parser, CI-safe);
+existing S8 tests pass with explicit configs. Full suite **326 passed**; ruff
+clean. Real verdict reproduced end-to-end here against data.binance.vision.
+
+**What's next.** Host: `hlbot s8-oi-backtest [--sweep]`; let autoconfirm settle S8
+on forward HL data; consider lookback tuning.
