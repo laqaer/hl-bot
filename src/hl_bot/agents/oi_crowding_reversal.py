@@ -42,7 +42,7 @@ from .decisions import Decision
 
 @dataclass
 class OICrowdingReversalConfig:
-    oi_spike_min: float = 0.01      # fade only when OI grew >= this fraction over the lookback
+    oi_spike_min: float = 0.005     # fade only when OI grew >= this fraction over the lookback
     z_enter: float = 2.0            # AND |(mid-vwap)/sigma| >= this (the overshoot to fade)
     z_exit: float = 0.5            # take profit when z reverts within this of vwap
     stop_pct: float = 0.02          # hard stop bounds the negative-skew tail
@@ -66,7 +66,7 @@ class OICrowdingReversalAgent(Agent):
         super().__init__(name, config)
         c = config or {}
         self.cfg = OICrowdingReversalConfig(
-            oi_spike_min=float(c.get("oi_spike_min", 0.01)),
+            oi_spike_min=float(c.get("oi_spike_min", 0.005)),
             z_enter=float(c.get("z_enter", 2.0)),
             z_exit=float(c.get("z_exit", 0.5)),
             stop_pct=float(c.get("stop_pct", 0.02)),

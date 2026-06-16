@@ -789,3 +789,28 @@ clean. Real verdict reproduced end-to-end here against data.binance.vision.
 
 **What's next.** Host: `hlbot s8-oi-backtest [--sweep]`; let autoconfirm settle S8
 on forward HL data; consider lookback tuning.
+
+---
+
+## Iteration — 2026-06-16 — S8 default oi_spike_min -> 0.005; ready for autonomous soak
+
+**Context.** Operator ran `s8-oi-backtest --sweep` on the live host (real Binance
+public-dump OI, ~18d): at z_enter=2.0 the edge is consistently positive (OOS +23
+bps @ spike 0.005 / 19 trades, +12 bps @ 0.01 / 10 trades); z=1.0/1.5 is noise.
+Nothing clears the full G0 yet (~5d OOS too thin). Operator wants S8 deployed to
+soak autonomously and self-improve via the flywheel.
+
+**Changed.** `agents/oi_crowding_reversal.py` default `oi_spike_min` 0.01 -> 0.005
+(both positive at z=2.0; the lower gate ~2x the event rate, so the FORWARD soak
+reaches a confirmable sample ~2x faster — a sample-rate choice, not OOS-fitting).
+Spec updated with the host result.
+
+**No promotion.** S8 stays `mode: paper` with its params-matched require_g0
+ladder. The autonomous loop self-improves it WITHOUT a human: hlbot-run accrues OI
++ soaks S8 in paper; hlbot-confirm (nightly) re-runs G0 over the growing forward
+window and records a params-matched pass; the supervisor then auto-promotes
+paper -> live_small. Force-promoting an unconfirmed edge would bypass the gate —
+not done.
+
+**Evidence.** Full suite 326 passed; ruff clean; new default verified
+(oi_spike_min=0.005, z_enter=2.0).
