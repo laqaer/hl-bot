@@ -45,7 +45,7 @@ provides:
 
 | param | default | meaning |
 |-------|---------|---------|
-| `oi_spike_min` | **0.01** | min fractional OI growth over the lookback to count as crowding |
+| `oi_spike_min` | **0.005** | min fractional OI growth over the lookback to count as crowding |
 | `z_enter` | **2.0** | min \|vol-normalized overshoot\| to fade |
 | `z_exit` | 0.5 | take profit when z reverts within this of VWAP |
 | `stop_pct` | 0.02 | hard stop bounds the "the crowd was right" tail |
@@ -97,12 +97,16 @@ PASS is evidence to keep soaking S8 forward, NOT a promotion: live still require
 a params-matched **forward** G0 on HL data, since Binance OI is only a proxy for
 HL crowding (different participants, different microstructure).
 
-**First run (2026-06-16, ~18d, 8 coins):** at the recalibrated defaults the edge
-is **promising but not yet confirmable** — the OOS window (~5d) is too thin (the
-exact sample-size problem the forward flywheel exists to solve). The sweep at
-`z_enter=2.0` is consistently positive (OOS +11 to +23 bps with 10–19 trades),
-which is why the defaults moved to `oi_spike_min=0.01 / z_enter=2.0`. Verdict:
-keep soaking S8 forward; let `autoconfirm` settle PASS/FAIL on HL data.
+**First run (2026-06-16, ~18d, 8 coins, on the live host):** at `z_enter=2.0` the
+edge is consistently positive — OOS **+23 bps** (`oi_spike_min=0.005`, 19 trades),
+**+12 bps** (`0.01`, 10 trades) — while `z=1.0/1.5` is noise. None clears the FULL
+G0 (the ~5d OOS is too thin — the exact sample-size problem the forward flywheel
+exists to solve). Default `oi_spike_min` is set to **0.005** (≈p87 of ΔOI): both
+0.005 and 0.01 are positive at z=2.0, and the lower gate ~doubles the event rate
+(19 vs 10 OOS trades), so the FORWARD soak reaches a confirmable sample roughly
+twice as fast — a sample-rate choice, not OOS-curve-fitting. Verdict: keep soaking
+S8 forward; `autoconfirm` settles PASS/FAIL on HL data and the supervisor
+auto-promotes on a params-matched G0.
 
 ## Open / next
 
