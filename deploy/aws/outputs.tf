@@ -14,3 +14,8 @@ output "ssh" {
   description = "SSH in once cloud-init finishes (~2-3 min)."
   value       = "ssh ubuntu@${aws_instance.hlbot.public_dns}"
 }
+
+output "ssm" {
+  description = "Connect via Session Manager (no SSH key required on the client)."
+  value       = "aws ssm start-session --region ${var.region} --target ${aws_instance.hlbot.id}"
+}

@@ -17,14 +17,15 @@ variable "ami_id" {
 }
 
 variable "key_name" {
-  description = "Existing EC2 key pair name for SSH access."
+  description = "Existing EC2 key pair name for SSH fallback access. Optional if using Session Manager."
   type        = string
+  default     = ""
 }
 
 variable "ssh_cidr" {
-  description = "CIDR allowed to SSH. SET THIS to your IP/32 — do not leave open."
+  description = "CIDR allowed to SSH. Set to your IP/32 for SSH fallback; leave empty to disable SSH ingress (Session Manager is recommended)."
   type        = string
-  default     = "0.0.0.0/0"
+  default     = ""
 }
 
 variable "root_gb" {

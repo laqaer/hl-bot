@@ -21,3 +21,9 @@ data/
 
 # Claude Code session state (agent worktrees, local settings)
 .claude/
+
+# Terraform
+*.tfstate
+*.tfstate.*
+crash.*.log
+deploy/aws/.terraform/

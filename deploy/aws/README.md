@@ -11,25 +11,47 @@ role** for backups (no static AWS keys on the box).
 
 ## Prerequisites
 - Terraform ≥ 1.3 and AWS credentials (`aws configure` / `AWS_PROFILE`).
-- An EC2 key pair in the target region (for SSH).
 - The repo reachable by the instance (public, or provide a token/deploy key).
+- (Optional) An EC2 key pair if you want SSH fallback access. Session Manager is enabled by default and needs no key pair.
 
 ## Deploy
+
+Create a `terraform.tfvars` file (see example below) or pass vars directly.
+
 ```bash
 cd deploy/aws
 terraform init
-terraform apply \
-  -var 'key_name=YOUR_EC2_KEYPAIR' \
-  -var 'ssh_cidr=YOUR.IP.ADDR.0/32' \
-  -var 'repo_url=https://github.com/laqaer/hl-bot.git' \
-  -var 'branch=main' \
-  -var 'hl_address=0xYOURFUNDEDACCOUNT' \
-  -var 'backup_bucket=your-existing-s3-bucket'      # optional; omit to skip backups
+terraform plan
+terraform apply
 ```
-Terraform prints the public DNS + an `ssh` command. Cloud-init takes ~2–3 min;
-watch `/var/log/hl-bot-bootstrap.log` on the box.
+
+Example `terraform.tfvars`:
+
+```hcl
+key_name    = "hl-bot"                        # optional if using Session Manager
+ssh_cidr    = "YOUR.IP.ADDR/32"               # lock SSH to your IP; set to "" to disable SSH ingress
+repo_url    = "https://github.com/laqaer/hl-bot.git"
+branch      = "main"
+hl_address  = "0xYOURFUNDEDACCOUNT"
+# hl_trader_address = "0x..."                 # only if different from hl_address
+# backup_bucket = "your-existing-s3-bucket"   # optional; omit to skip backups
+```
+
+With the default settings the instance is reachable via **AWS Systems Manager Session Manager** (no SSH key required on the client). SSH is retained as a fallback if `key_name` is provided.
+
+Terraform prints connection commands after apply. Cloud-init takes ~2–3 min; watch `/var/log/hl-bot-bootstrap.log` on the box.
 
 ## Verify (on the instance)
+
+Via Session Manager:
+```bash
+aws ssm start-session --region ap-northeast-1 --target INSTANCE_ID
+systemctl list-timers 'hlbot-*'
+systemctl status hlbot-ws.service --no-pager
+sudo -u hlbot bash -lc 'cd /opt/hl-bot && uv run hlbot doctor && uv run hlbot health'
+```
+
+Or via SSH fallback:
 ```bash
 ssh ubuntu@<public_dns>
 systemctl list-timers 'hlbot-*'

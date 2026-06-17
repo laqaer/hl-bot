@@ -7,6 +7,11 @@ exec > /var/log/hl-bot-bootstrap.log 2>&1
 apt-get update -y
 apt-get install -y git curl ca-certificates
 
+# Enable AWS Systems Manager Session Manager access (no inbound SSH required).
+snap install amazon-ssm-agent --classic || true
+systemctl enable amazon-ssm-agent || true
+systemctl start amazon-ssm-agent || true
+
 # Pre-write the env BEFORE install.sh so it wires Litestream backups (if a bucket
 # is set). Secrets (Telegram token, API wallet) are added later by you, not here.
 mkdir -p /etc/hl-bot

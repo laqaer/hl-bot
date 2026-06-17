@@ -42,12 +42,15 @@ resource "aws_security_group" "hlbot" {
   name_prefix = "hlbot-"
   description = "hl-bot: SSH in, all out"
 
-  ingress {
-    description = "SSH"
-    from_port   = 22
-    to_port     = 22
-    protocol    = "tcp"
-    cidr_blocks = [var.ssh_cidr]
+  dynamic "ingress" {
+    for_each = var.ssh_cidr != "" ? [1] : []
+    content {
+      description = "SSH"
+      from_port   = 22
+      to_port     = 22
+      protocol    = "tcp"
+      cidr_blocks = [var.ssh_cidr]
+    }
   }
   egress {
     description = "all outbound (HL API/WSS, Telegram, S3)"
@@ -94,6 +97,11 @@ resource "aws_iam_role_policy" "s3" {
   policy = data.aws_iam_policy_document.s3[0].json
 }
 
+resource "aws_iam_role_policy_attachment" "ssm" {
+  role       = aws_iam_role.hlbot.name
+  policy_arn = "arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore"
+}
+
 resource "aws_iam_instance_profile" "hlbot" {
   name_prefix = "hlbot-"
   role        = aws_iam_role.hlbot.name
@@ -102,7 +110,7 @@ resource "aws_iam_instance_profile" "hlbot" {
 resource "aws_instance" "hlbot" {
   ami                    = local.ami
   instance_type          = var.instance_type
-  key_name               = var.key_name
+  key_name               = var.key_name != "" ? var.key_name : null
   vpc_security_group_ids = [aws_security_group.hlbot.id]
   iam_instance_profile   = aws_iam_instance_profile.hlbot.name
 
