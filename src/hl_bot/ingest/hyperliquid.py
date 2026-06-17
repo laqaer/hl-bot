@@ -47,6 +47,29 @@ def _post(client: httpx.Client, base_url: str, payload: dict[str, Any]) -> Any:
     return r.json()
 
 
+def _params_hash_for_fill(conn: sqlite3.Connection, cloid: str | None, agent: str) -> str | None:
+    """Resolve the params_hash that produced this fill.
+
+    First try the matching agent_decisions row by cloid, then fall back to the
+    agent's most recently confirmed hash.
+    """
+    if cloid:
+        row = conn.execute(
+            "SELECT params_hash FROM agent_decisions WHERE cloid=? ORDER BY ts_ms DESC LIMIT 1",
+            (cloid,),
+        ).fetchone()
+        if row and row["params_hash"]:
+            return row["params_hash"]
+    if agent and agent != "manual":
+        row = conn.execute(
+            "SELECT confirmed_params_hash FROM agent_state WHERE agent=?",
+            (agent,),
+        ).fetchone()
+        if row and row["confirmed_params_hash"]:
+            return row["confirmed_params_hash"]
+    return None
+
+
 def ingest_fills(conn: sqlite3.Connection, address: str, base_url: str) -> int:
     """Pull recent userFills and upsert. Returns rows inserted."""
     with httpx.Client() as client:
@@ -56,14 +79,15 @@ def ingest_fills(conn: sqlite3.Connection, address: str, base_url: str) -> int:
     for f in fills:
         cloid = f.get("cloid")
         agent = agent_from_cloid(cloid, known_agents=KNOWN_AGENTS) if cloid else "manual"
+        params_hash = _params_hash_for_fill(conn, cloid, agent)
         try:
             cur.execute(
                 """
                 INSERT OR IGNORE INTO fills(
                     hash, tid, time_ms, coin, side, px, sz,
                     start_position, dir, closed_pnl, fee, fee_token,
-                    builder_fee, cloid, agent, raw_json
-                ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                    builder_fee, cloid, agent, params_hash, raw_json
+                ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
                 """,
                 (
                     f["hash"],
@@ -81,6 +105,7 @@ def ingest_fills(conn: sqlite3.Connection, address: str, base_url: str) -> int:
                     float(f.get("builderFee", 0) or 0),
                     cloid,
                     agent,
+                    params_hash,
                     json.dumps(f, separators=(",", ":")),
                 ),
             )

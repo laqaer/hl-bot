@@ -1,0 +1,16 @@
+[Unit]
+Description=hl-bot nightly forward G0 confirmation + auto-promotion
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=hlbot
+WorkingDirectory=/opt/hl-bot
+EnvironmentFile=/etc/hl-bot/env
+ExecStart=/usr/bin/env bash -c 'uv run hlbot confirm-forward --prefer maker'
+TimeoutStartSec=600
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/opt/hl-bot/data

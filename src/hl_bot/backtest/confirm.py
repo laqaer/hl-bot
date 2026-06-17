@@ -53,6 +53,9 @@ class ConfirmationResult:
     robust_to_2x_slippage: bool = False
     n_frames: int = 0
     prefer: str = "taker"
+    params_hash: str | None = None
+    min_is_trades: int = 30
+    min_oos_trades: int = 10
 
     def summary(self) -> str:
         verdict = "✅ CONFIRMED" if self.confirmed else "❌ NOT CONFIRMED"
@@ -91,8 +94,11 @@ def confirm_strategy(
     oos_fraction: float = 0.3,
     min_edge_bps: float = 3.0,
     min_sharpe: float = 1.0,
+    min_is_trades: int = 30,
+    min_oos_trades: int = 10,
     periods_per_year: float = 8_760,
     starting_capital: float = 1_000.0,
+    params_hash: str | None = None,
 ) -> ConfirmationResult:
     """Run the walk-forward + cost-stress confirmation. ``prefer`` ('taker' or
     'maker') selects the execution basis the PASS/FAIL verdict is judged on."""
@@ -105,6 +111,8 @@ def confirm_strategy(
         return ConfirmationResult(
             agent="?", confirmed=False, reasons=[f"only {n} frames; need >=10"],
             in_sample=empty, out_of_sample=empty, n_frames=n, prefer=prefer,
+            params_hash=params_hash, min_is_trades=min_is_trades,
+            min_oos_trades=min_oos_trades,
         )
 
     split = max(1, int(n * (1 - oos_fraction)))
@@ -134,6 +142,8 @@ def confirm_strategy(
     ok_oos_edge = out_of_sample.edge_bps is not None and out_of_sample.edge_bps >= min_edge_bps
     ok_in_edge = in_sample.edge_bps is not None and in_sample.edge_bps >= min_edge_bps
     ok_sharpe = out_of_sample.sharpe is not None and out_of_sample.sharpe >= min_sharpe
+    ok_is_trades = in_sample.n_trades >= min_is_trades
+    ok_oos_trades = out_of_sample.n_trades >= min_oos_trades
 
     if not ok_in_edge:
         reasons.append(f"in-sample edge {_fmt(in_sample.edge_bps)} < {min_edge_bps:+.0f}bps")
@@ -141,10 +151,14 @@ def confirm_strategy(
         reasons.append(f"out-of-sample edge {_fmt(out_of_sample.edge_bps)} < {min_edge_bps:+.0f}bps (overfit/none)")
     if not ok_sharpe:
         reasons.append(f"oos sharpe {_fmtn(out_of_sample.sharpe)} < {min_sharpe:.1f}")
+    if not ok_is_trades:
+        reasons.append(f"in-sample trades {in_sample.n_trades} < {min_is_trades}")
+    if not ok_oos_trades:
+        reasons.append(f"out-of-sample trades {out_of_sample.n_trades} < {min_oos_trades}")
     if not robust_2x:
         reasons.append("edge does not survive 2x taker slippage (info; not required if maker-only)")
 
-    confirmed = ok_in_edge and ok_oos_edge and ok_sharpe
+    confirmed = ok_in_edge and ok_oos_edge and ok_sharpe and ok_is_trades and ok_oos_trades
     if confirmed and not reasons:
         reasons.append(f"clears +{min_edge_bps:.0f}bps in & out of sample with sharpe >= {min_sharpe:.1f}")
 
@@ -152,6 +166,8 @@ def confirm_strategy(
         agent=agent_name, confirmed=confirmed, reasons=reasons,
         in_sample=in_sample, out_of_sample=out_of_sample, cost_ladder=ladder,
         robust_to_2x_slippage=robust_2x, n_frames=n, prefer=prefer,
+        params_hash=params_hash, min_is_trades=min_is_trades,
+        min_oos_trades=min_oos_trades,
     )
 
 

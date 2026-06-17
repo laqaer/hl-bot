@@ -49,6 +49,7 @@ def test_confirms_profitable_mean_reversion_as_maker():
     res = confirm_strategy(
         lambda conn: TwapMrAgent(config={}, conn=conn),
         _choppy(), prefer="maker", min_sharpe=0.5,
+        min_is_trades=5, min_oos_trades=5,
     )
     assert res.confirmed
     assert res.in_sample.edge_bps and res.in_sample.edge_bps > 0
@@ -70,3 +71,22 @@ def test_insufficient_data_not_confirmed():
         _choppy(4),
     )
     assert not res.confirmed
+
+
+def test_min_trade_gate_fails_when_too_few_trades():
+    res = confirm_strategy(
+        lambda conn: TwapMrAgent(config={}, conn=conn),
+        _choppy(40), prefer="maker", min_sharpe=0.5,
+        min_is_trades=30, min_oos_trades=10,
+    )
+    assert not res.confirmed
+    assert any("in-sample trades" in r for r in res.reasons)
+
+
+def test_confirmation_result_includes_params_hash():
+    res = confirm_strategy(
+        lambda conn: TwapMrAgent(config={}, conn=conn),
+        _choppy(4),
+        params_hash="abc123",
+    )
+    assert res.params_hash == "abc123"

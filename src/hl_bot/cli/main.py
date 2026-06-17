@@ -12,17 +12,8 @@ import typer
 from rich.console import Console
 from rich.table import Table
 
-from ..agents.basis import BasisAgent
-from ..agents.femr import FemrAgent
-from ..agents.funding_arb import FundingArbAgent
-from ..agents.funding_carry import FundingCarryAgent
-from ..agents.liq_cascade import LiqCascadeAgent
 from ..agents.meta_allocator import MetaAllocator, MetaAllocatorConfig
 from ..agents.runtime import run_tick
-from ..agents.twap_mr import TwapMrAgent
-from ..agents.twap_mr_regime import TwapMrRegimeAgent
-from ..agents.veto import VetoAgent
-from ..agents.xfund_carry import XFundCarryAgent
 from ..config import CONFIG_DIR, Settings
 from ..db.schema import init_db
 from ..ingest.hyperliquid import ingest_fills, ingest_funding, snapshot_equity
@@ -37,10 +28,12 @@ from ..risk.allocation import resolve_agent_caps
 from ..risk.scaling import compute_notional_cap, spot_usdc_from_state, unified_portfolio_value
 from ..scoring.metrics import score_all
 from ..supervisor.loop import supervise
+from .factories import agent_factory, make_agent_factory, paper_roster
 
 app = typer.Typer(no_args_is_help=True, add_completion=False)
 console = Console()
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
+log = logging.getLogger(__name__)
 
 
 def _conn():
@@ -197,8 +190,12 @@ def tick(coins: str = "BTC,ETH,SOL,HYPE,ZEC"):
     conn, s = _conn()
     coin_list = [c.strip() for c in coins.split(",") if c.strip()]
     agents = [
-        VetoAgent(config={"lookback_days": 30, "min_trades": 20, "veto_threshold_bps": -5.0}, conn=conn),
-        FundingArbAgent(config={"coins": coin_list}),
+        agent_factory("veto_v1", conn=conn, overrides={
+            "veto_v1": {"lookback_days": 30, "min_trades": 20, "veto_threshold_bps": -5.0},
+        }),
+        agent_factory("funding_arb_v1", conn=conn, overrides={
+            "funding_arb_v1": {"coins": coin_list},
+        }),
     ]
     decisions = run_tick(conn, agents, s.hl_api_url, coin_list, force_paper=True)
     console.print(f"[green]✓[/green] {len(decisions)} decisions logged")
@@ -362,20 +359,6 @@ def femr_tick(live: bool = False, execution: str = "taker"):
 
     conn, s = _conn()
 
-    # Load auto-tuner overrides if present
-    overrides_path = Path(__file__).resolve().parents[3] / "configs" / "agent_overrides.json"
-    overrides: dict = {}
-    if overrides_path.exists():
-        try:
-            overrides = json.loads(overrides_path.read_text())
-        except (ValueError, OSError):
-            overrides = {}
-
-    def _cfg(agent_name: str, defaults: dict) -> dict:
-        merged = dict(defaults)
-        merged.update(overrides.get(agent_name) or {})
-        return merged
-
     import httpx as _httpx
     with _httpx.Client(timeout=10) as cli:
         st = cli.post(
@@ -405,23 +388,16 @@ def femr_tick(live: bool = False, execution: str = "taker"):
         f"source={risk_cap.source})"
     )
 
-    # Instantiate the full agent roster. In paper mode, evaluate everything. In
-    # live mode, only agents explicitly enabled and promoted to live_small/live
-    # in agent_state are allowed into the execution roster.
-    agents = [
-        FemrAgent(config=_cfg("femr_v1", {
-            "max_notional_per_trade": 20.0,
-            "max_total_notional": 40.0,
-            "funding_enter_per_hr": 0.00015,
-            "funding_exit_per_hr": 0.00005,
-        }), conn=conn),
-        TwapMrAgent(config=_cfg("twap_mr_v1", {}), conn=conn),
-        TwapMrRegimeAgent(config=_cfg("twap_mr_regime_v1", {}), conn=conn),
-        LiqCascadeAgent(config=_cfg("liq_cascade_v1", {}), conn=conn),
-        BasisAgent(config=_cfg("basis_v1", {}), conn=conn),
-    ]
+    # Full paper roster: always evaluated for forward evidence. In live mode,
+    # only the subset explicitly promoted to live_small/live is allowed to place
+    # orders; the rest continue logging paper decisions.
+    paper_agents = [agent_factory(name, conn=conn) for name in paper_roster()]
+    # Future agents registered but not yet implemented.
+    for future in ("funding_crowding_fade_v1", "new_listing_reversion_v1"):
+        log.info("paper roster: %s registered but not built; skipping", future)
+
     if live:
-        agents, skipped_live = _filter_live_agents_by_state(conn, agents)
+        agents, skipped_live = _filter_live_agents_by_state(conn, paper_agents)
         if skipped_live:
             console.print(
                 "[yellow]live roster skipped[/yellow]: "
@@ -430,6 +406,8 @@ def femr_tick(live: bool = False, execution: str = "taker"):
         if not agents:
             console.print("[yellow]LIVE MODE but no agent_state rows are enabled in live_small/live; no orders possible[/yellow]")
             return
+    else:
+        agents = paper_agents
 
     # Allocator: rebalance per-agent caps from rolling 7d performance.
     # The approved live risk rule is dynamic but layered:
@@ -474,7 +452,12 @@ def femr_tick(live: bool = False, execution: str = "taker"):
                       for n, v in allocs.items()
                   ))
 
-    view = fetch_market_view(s.hl_api_url, [])
+    view = fetch_market_view(s.hl_api_url, [], conn=conn)
+    from ..ingest.universe import detect_new_listings
+
+    new_coins = detect_new_listings(conn, view, s.hl_api_url)
+    if new_coins:
+        console.print(f"[cyan]new listings detected[/cyan]: {new_coins}")
     _enrich_view(view, s.hl_api_url, view.extra.get("day_ntl_vlm", {}))
 
     # Overlay a fresh WS snapshot if available (sub-second mids, L2 book, and a
@@ -495,6 +478,18 @@ def femr_tick(live: bool = False, execution: str = "taker"):
                 view.extra["liquidations"] = liqs
             console.print(f"[dim]ws snapshot overlaid: {len(snap.mids)} mids, "
                           f"{len(liqs)} liqs[/dim]")
+
+    # In live mode, log paper decisions for any roster agent not in the live
+    # execution set. In paper mode the main loop below already covers them.
+    if live:
+        live_names = {a.name for a in agents}
+        for agent in paper_agents:
+            if agent.name in live_names:
+                continue
+            for d in agent.decide(view):
+                d.is_paper = True
+                d.params_hash = agent.params_hash
+                log_decision(conn, d)
 
     # Build position list from HL truth
     all_positions = []
@@ -544,6 +539,7 @@ def femr_tick(live: bool = False, execution: str = "taker"):
         decisions = agent.decide(view)
         for d in decisions:
             d.is_paper = not live
+            d.params_hash = agent.params_hash
             # Only log non-place/flatten actions immediately (holds skipped, rejected later).
             # `place` and `flatten` are logged ONLY after exchange acceptance in the execution
             # loop below — otherwise the cooldown check would see our own intent rows and
@@ -729,18 +725,12 @@ def backtest(
     _, s = _conn()
     coin_list = [c.strip() for c in coins.split(",") if c.strip()]
 
-    factories = {
-        "twap_mr_v1": lambda conn: TwapMrAgent(config={}, conn=conn),
-        "twap_mr_regime_v1": lambda conn: TwapMrRegimeAgent(config={}, conn=conn),
-        "femr_v1": lambda conn: FemrAgent(config={}, conn=conn),
-        "funding_carry_v1": lambda conn: FundingCarryAgent(config={}, conn=conn),
-        "xfund_carry_v1": lambda conn: XFundCarryAgent(config={}, conn=conn),
-        "liq_cascade_v1": lambda conn: LiqCascadeAgent(config={}, conn=conn),
-        "basis_v1": lambda conn: BasisAgent(config={}, conn=conn),
-    }
-    if agent not in factories:
-        console.print(f"[red]unknown agent {agent}; choose from {list(factories)}[/red]")
+    from .factories import CONFIRMABLE_AGENTS
+
+    if agent not in CONFIRMABLE_AGENTS:
+        console.print(f"[red]unknown agent {agent}; choose from {CONFIRMABLE_AGENTS}[/red]")
         raise typer.Exit(1)
+    factory = make_agent_factory(agent)
 
     console.print(f"[dim]loading {days}d of {interval} candles for {coin_list} "
                   f"({'cache' if cache else 'network'})…[/dim]")
@@ -768,7 +758,7 @@ def backtest(
         conn = _init(":memory:")
         bt = Backtester(CostModel(maker=is_maker), conn=conn,
                         starting_capital=starting_capital)
-        res = bt.run(factories[agent](conn), frames)
+        res = bt.run(factory(conn), frames)
         # recompute curve stats at the right cadence
         from ..backtest.engine import _curve_stats
         sh, dd, _ = _curve_stats(res.equity_curve, periods_per_year=per_year)
@@ -805,20 +795,14 @@ def confirm(
     from ..backtest.confirm import confirm_strategy
     from ..backtest.data import cached_or_fetch, load_frames
 
-    _, s = _conn()
+    conn, s = _conn()
     coin_list = [c.strip() for c in coins.split(",") if c.strip()]
-    factories = {
-        "twap_mr_v1": lambda conn: TwapMrAgent(config={}, conn=conn),
-        "twap_mr_regime_v1": lambda conn: TwapMrRegimeAgent(config={}, conn=conn),
-        "femr_v1": lambda conn: FemrAgent(config={}, conn=conn),
-        "funding_carry_v1": lambda conn: FundingCarryAgent(config={}, conn=conn),
-        "xfund_carry_v1": lambda conn: XFundCarryAgent(config={}, conn=conn),
-        "liq_cascade_v1": lambda conn: LiqCascadeAgent(config={}, conn=conn),
-        "basis_v1": lambda conn: BasisAgent(config={}, conn=conn),
-    }
-    if agent not in factories:
-        console.print(f"[red]unknown agent {agent}; choose from {list(factories)}[/red]")
+    from .factories import CONFIRMABLE_AGENTS
+
+    if agent not in CONFIRMABLE_AGENTS:
+        console.print(f"[red]unknown agent {agent}; choose from {CONFIRMABLE_AGENTS}[/red]")
         raise typer.Exit(1)
+    factory = make_agent_factory(agent)
     per_year = {"1m": 525_600, "5m": 105_120, "15m": 35_040,
                 "1h": 8_760, "4h": 2_190, "1d": 365}.get(interval, 8_760)
     try:
@@ -828,13 +812,66 @@ def confirm(
     except Exception as e:  # noqa: BLE001
         console.print(f"[red]failed to load history: {e}[/red]")
         raise typer.Exit(2) from e
+    from ..backtest.persist_confirm import save_confirmation_result
+    from .factories import agent_config
+
+    cfg, params_hash = agent_config(agent)
     res = confirm_strategy(
-        factories[agent], frames, prefer=prefer,
+        factory, frames, prefer=prefer,
         min_edge_bps=min_edge_bps, min_sharpe=min_sharpe, periods_per_year=per_year,
+        params_hash=params_hash,
     )
+    window_start_ms = frames[0].ts_ms if frames else None
+    window_end_ms = frames[-1].ts_ms if frames else None
+    save_confirmation_result(conn, res, window_start_ms=window_start_ms, window_end_ms=window_end_ms)
+    console.print(f"[dim]params_hash: {params_hash}[/dim]")
     console.print(res.summary())
     if not res.confirmed:
         raise typer.Exit(1)
+
+
+@app.command()
+def ingest_cross_venue_funding(
+    coins: str = "BTC,ETH,SOL,HYPE",
+    venues: str = "binance,bybit",
+):
+    """Fetch recent 1h funding rates from Binance/Bybit and upsert to DB."""
+    from ..ingest.cross_venue import accrue_cross_venue_funding
+
+    conn, _ = _conn()
+    coin_list = [c.strip() for c in coins.split(",") if c.strip()]
+    venue_list = [v.strip() for v in venues.split(",") if v.strip()]
+    counts = accrue_cross_venue_funding(conn, coin_list, venues=venue_list)
+    console.print(f"[green]✓[/green] cross-venue funding: {counts}")
+
+
+@app.command()
+def confirm_forward(
+    window_days: int = 30,
+    min_is_trades: int = 30,
+    min_oos_trades: int = 10,
+    prefer: str = "maker",
+    agents: str | None = None,
+):
+    """Run G0 confirmation over accrued forward data and auto-promote paper agents."""
+    from ..forward.confirm_forward import run_forward_confirmation
+
+    conn, _ = _conn()
+    agent_list = [a.strip() for a in agents.split(",") if a.strip()] if agents else None
+    outcomes = run_forward_confirmation(
+        conn,
+        window_days=window_days,
+        min_is_trades=min_is_trades,
+        min_oos_trades=min_oos_trades,
+        prefer=prefer,
+        agents=agent_list,
+    )
+    for o in outcomes:
+        status = "✅ PROMOTED" if o.promoted else ("✅ PASS" if o.confirmed else "❌ FAIL")
+        extra = f" ({o.promotion_blocked_reason})" if o.promotion_blocked_reason else ""
+        console.print(f"{status} {o.agent} hash={o.params_hash}{extra}")
+        for r in o.reasons:
+            console.print(f"    - {r}")
 
 
 @app.command()

@@ -18,16 +18,23 @@ import httpx
 
 from ..agents.base import Agent, MarketView
 from ..agents.decisions import Decision, log_decision
+from ..db.accrue import accrue_market_snapshot
 
 log = logging.getLogger(__name__)
 
 
-def fetch_market_view(base_url: str, coins: list[str]) -> MarketView:
+def fetch_market_view(
+    base_url: str,
+    coins: list[str],
+    conn: sqlite3.Connection | None = None,
+) -> MarketView:
     """Fetch mids + 1h funding + 24h volume for all coins via /info.
 
     NOTE: returns ALL coins from the universe, not just the requested ones,
     because FEMR needs to scan the whole universe for funding extremes.
     The `coins` parameter is kept for backward compatibility but ignored.
+
+    If *conn* is provided, the view is also written to `market_snapshots`.
     """
     with httpx.Client(timeout=15) as client:
         mids_raw = client.post(base_url + "/info", json={"type": "allMids"}).json() or {}
@@ -52,13 +59,16 @@ def fetch_market_view(base_url: str, coins: list[str]) -> MarketView:
                 day_ntl_vlm[name] = float(c.get("dayNtlVlm", 0))
             except (TypeError, ValueError):
                 pass
-    return MarketView(
+    view = MarketView(
         ts_ms=int(time.time() * 1000),
         mids=mids,
         funding=funding,
         open_interest=open_interest,
         extra={"day_ntl_vlm": day_ntl_vlm},
     )
+    if conn is not None:
+        accrue_market_snapshot(conn, view)
+    return view
 
 
 def _agent_mode(conn: sqlite3.Connection, agent: str) -> tuple[str, bool]:
@@ -84,7 +94,7 @@ def run_tick(
     is_paper=True regardless of agent mode. Flip to False only when you've
     wired and reviewed the live order adapter.
     """
-    view = fetch_market_view(base_url, coins)
+    view = fetch_market_view(base_url, coins, conn=conn)
     all_decisions: list[Decision] = []
     for agent in agents:
         mode, enabled = _agent_mode(conn, agent.name)

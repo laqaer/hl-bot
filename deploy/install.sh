@@ -67,8 +67,8 @@ for f in "${HLBOT_HOME}"/deploy/systemd/*; do
     "/etc/systemd/system/$(basename "$f")"
 done
 systemctl daemon-reload
-systemctl enable --now hlbot-tick.timer hlbot-report.timer hlbot-ws.service
-log "  -> tick + report timers + ws feed enabled (PAPER). hlbot-loop NOT enabled (start manually)."
+systemctl enable --now hlbot-tick.timer hlbot-report.timer hlbot-confirm-forward.timer hlbot-ws.service
+log "  -> tick + report + confirm-forward timers + ws feed enabled (PAPER). hlbot-loop NOT enabled (start manually)."
 
 log "8/8 optional Litestream backups"
 # shellcheck disable=SC1090

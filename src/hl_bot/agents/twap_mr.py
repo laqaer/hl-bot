@@ -51,7 +51,7 @@ class TwapMrAgent(Agent):
         config: dict[str, Any] | None = None,
         conn: sqlite3.Connection | None = None,
     ) -> None:
-        super().__init__(name, config)
+        super().__init__(name, config, conn)
         c = config or {}
         self.cfg = TwapMrConfig(
             sigma_enter=float(c.get("sigma_enter", 2.0)),

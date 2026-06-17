@@ -44,7 +44,7 @@ class FundingCarryAgent(Agent):
         config: dict[str, Any] | None = None,
         conn: sqlite3.Connection | None = None,
     ) -> None:
-        super().__init__(name, config)
+        super().__init__(name, config, conn)
         c = config or {}
         self.cfg = FundingCarryConfig(
             enter_funding_per_hr=float(c.get("enter_funding_per_hr", 0.00015)),

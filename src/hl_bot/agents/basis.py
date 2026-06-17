@@ -47,7 +47,7 @@ class BasisAgent(Agent):
         config: dict[str, Any] | None = None,
         conn: sqlite3.Connection | None = None,
     ) -> None:
-        super().__init__(name, config)
+        super().__init__(name, config, conn)
         c = config or {}
         self.cfg = BasisConfig(
             enter_basis=float(c.get("enter_basis", 0.002)),

@@ -35,7 +35,7 @@ class VetoAgent(Agent):
         config: dict[str, Any] | None = None,
         conn: sqlite3.Connection | None = None,
     ) -> None:
-        super().__init__(name, config)
+        super().__init__(name, config, conn)
         self.lookback_days = int(self.config.get("lookback_days", 30))
         # Minimum trades required before a coin can be vetoed (avoid small-N noise)
         self.min_trades = int(self.config.get("min_trades", 20))

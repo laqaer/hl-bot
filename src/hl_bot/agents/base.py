@@ -8,9 +8,13 @@ guardrail checks, and logging are centralized.
 from __future__ import annotations
 
 import abc
+import json
+import sqlite3
+import time
 from dataclasses import dataclass, field
 from typing import Any
 
+from ..config_hash import hash_config
 from .decisions import Decision
 
 
@@ -27,10 +31,41 @@ class MarketView:
 
 class Agent(abc.ABC):
     name: str
+    config: dict[str, Any]
+    params_hash: str
 
-    def __init__(self, name: str, config: dict[str, Any] | None = None) -> None:
+    def __init__(
+        self,
+        name: str,
+        config: dict[str, Any] | None = None,
+        conn: sqlite3.Connection | None = None,
+    ) -> None:
         self.name = name
         self.config = config or {}
+        self.params_hash = hash_config(self.config)
+        if conn is not None:
+            self._persist_config(conn)
+
+    def _persist_config(
+        self,
+        conn: sqlite3.Connection,
+        source: str = "effective",
+    ) -> None:
+        """Upsert this agent's effective config into the registry."""
+        conn.execute(
+            """
+            INSERT OR IGNORE INTO agent_configs(
+                agent, params_hash, config_json, created_ms, source
+            ) VALUES(?, ?, ?, ?, ?)
+            """,
+            (
+                self.name,
+                self.params_hash,
+                json.dumps(self.config, separators=(",", ":")),
+                int(time.time() * 1000),
+                source,
+            ),
+        )
 
     @abc.abstractmethod
     def decide(self, view: MarketView) -> list[Decision]:

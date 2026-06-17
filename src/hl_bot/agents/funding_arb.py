@@ -12,6 +12,7 @@ Otherwise, hold.
 
 from __future__ import annotations
 
+import sqlite3
 from typing import Any
 
 from .base import Agent, MarketView
@@ -20,8 +21,13 @@ from .decisions import Decision
 
 
 class FundingArbAgent(Agent):
-    def __init__(self, name: str = "funding_arb_v1", config: dict[str, Any] | None = None) -> None:
-        super().__init__(name, config)
+    def __init__(
+        self,
+        name: str = "funding_arb_v1",
+        config: dict[str, Any] | None = None,
+        conn: sqlite3.Connection | None = None,
+    ) -> None:
+        super().__init__(name, config, conn)
         self.threshold = float(self.config.get("funding_threshold_1h", 0.0001))  # 1bp/hr
         self.notional = float(self.config.get("notional_usd", 100))
         self.coins = self.config.get("coins", ["BTC", "ETH", "SOL"])

@@ -74,7 +74,7 @@ class FemrAgent(Agent):
         config: dict[str, Any] | None = None,
         conn: sqlite3.Connection | None = None,
     ) -> None:
-        super().__init__(name, config)
+        super().__init__(name, config, conn)
         c = config or {}
         self.cfg = FemrConfig(
             funding_enter_per_hr=float(c.get("funding_enter_per_hr", 0.00015)),

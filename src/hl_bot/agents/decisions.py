@@ -27,6 +27,7 @@ class Decision:
     reasoning: str | None = None
     market_snapshot: dict[str, Any] = field(default_factory=dict)
     is_paper: bool = True
+    params_hash: str | None = None       # V3: config version that made the decision
     error: str | None = None
 
 
@@ -35,8 +36,8 @@ def log_decision(conn: sqlite3.Connection, d: Decision) -> int:
         """
         INSERT INTO agent_decisions(
             ts_ms, agent, action, coin, side, sz, px, cloid,
-            reasoning, market_snapshot, is_paper, error
-        ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)
+            reasoning, market_snapshot, is_paper, params_hash, error
+        ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)
         """,
         (
             int(time.time() * 1000),
@@ -50,6 +51,7 @@ def log_decision(conn: sqlite3.Connection, d: Decision) -> int:
             d.reasoning,
             json.dumps(d.market_snapshot, separators=(",", ":")),
             1 if d.is_paper else 0,
+            d.params_hash,
             d.error,
         ),
     )

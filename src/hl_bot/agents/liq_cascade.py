@@ -50,7 +50,7 @@ class LiqCascadeAgent(Agent):
         config: dict[str, Any] | None = None,
         conn: sqlite3.Connection | None = None,
     ) -> None:
-        super().__init__(name, config)
+        super().__init__(name, config, conn)
         c = config or {}
         self.cfg = LiqCascadeConfig(
             min_liq_notional_usd=float(c.get("min_liq_notional_usd", 100_000.0)),

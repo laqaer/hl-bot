@@ -36,13 +36,13 @@ sudo nano /etc/hl-bot/env
 #   TG_BOT_TOKEN / TG_CHAT_ID       -> alerts
 #   HEALTHCHECK_URL                 -> dead-man switch (e.g. Healthchecks.io)
 #   LITESTREAM_S3_BUCKET            -> optional DB backups
-sudo systemctl restart hlbot-tick.timer hlbot-ws.service
+sudo systemctl restart hlbot-tick.timer hlbot-confirm-forward.timer hlbot-ws.service
 ```
 
 ## 3. Verify
 
 ```bash
-systemctl list-timers 'hlbot-*'
+systemctl list-timers 'hlbot-*'   # tick, report, confirm-forward
 systemctl status hlbot-ws.service --no-pager
 journalctl -u hlbot-tick -f                  # watch a tick (Ctrl-C to stop)
 sudo -u hlbot bash -lc 'cd /opt/hl-bot && uv run hlbot doctor'

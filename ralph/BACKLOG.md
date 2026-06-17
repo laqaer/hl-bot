@@ -53,6 +53,35 @@ Keep it ruthlessly prioritized: the top item should always be the highest-levera
 - [ ] **B9 — fills→positions replay.** Populate the unused `positions` table from
   fills so attribution survives partial fills/manual interference. (REVIEW M2.)
 
+## P1α — Forward-evidence flywheel (V3 + auto-confirmation)
+
+- [x] **P1a — V3 params_hash provenance.** `config_hash.py`, `agent_configs`
+  registry, `params_hash` on `agent_decisions`/`fills`/`confirmation_results`/
+  `agent_state`. `hlbot confirm` validates the deployed config.
+- [x] **P1b — G0 min-trade floor.** `confirm_strategy()` enforces ≥30 IS /
+  ≥10 OOS trades; never weakened.
+- [x] **P1c — Append-only market-state accrual.** `market_snapshots` table,
+  written every tick from `fetch_market_view()`.
+- [x] **P1d — New-listing detection.** `new_listings` table with first-seen ms,
+  first listed px, and initial candles.
+- [x] **P1e — Cross-venue funding ingest.** `funding_cross_venue` table +
+  `hlbot ingest-cross-venue-funding` (Binance/Bybit).
+- [x] **P1f — Continuous paper roster.** `femr_tick` always runs the full roster
+  in paper; live execution uses only `live_small`/`live` agents.
+- [x] **P1g — Nightly `hlbot confirm-forward`.** Rebuilds forward window from
+  accrued snapshots, runs G0, persists result, auto-promotes paper→live_small
+  on PASS + matching params_hash + clean guardrails.
+- [x] **P1h — Supervisor G0 gate.** Supervisor blocks paper→live_small promotion
+  unless `confirmed_params_hash` matches the deployed config.
+- [x] **P1i — systemd timer.** `hlbot-confirm-forward.timer` nightly at 00:05 UTC.
+- [ ] **P1j — Full-universe forward soak.** Run the paper roster on all liquid
+  perps, not just the current ~8-coin default, so sample size accrues faster.
+- [ ] **P1k — Cross-venue funding as filter.** Use Binance/Bybit funding as a
+  filter on the confirmed dislocation core first; standalone agents only after
+  forward evidence.
+- [ ] **P1l — WS book imbalance accrual.** Persist L2 book imbalance from the
+  WS feed into `market_snapshots` for forward filters.
+
 ## P2 — cadence, structure, devops
 
 - [x] **B10 — WebSocket market view.** Done: `ingest/ws.py` MarketState +

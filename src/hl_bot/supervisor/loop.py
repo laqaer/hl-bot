@@ -66,6 +66,24 @@ def run_once(conn: sqlite3.Connection, configs: list[AgentGoals]) -> dict[str, l
                 _demote(conn, g.agent)
                 acts.append(f"DEMOTE: {e.detail}")
             elif e.action == "promote" and g.promotion:
+                # V3: paper -> live_small requires a current G0 confirmation on
+                # the deployed config. confirm-forward sets confirmed_params_hash;
+                # the supervisor must not bypass that gate.
+                if g.promotion.from_mode == "paper" and g.promotion.to_mode == "live_small":
+                    from ..cli.factories import agent_config
+
+                    row = conn.execute(
+                        "SELECT confirmed_params_hash FROM agent_state WHERE agent=?",
+                        (g.agent,),
+                    ).fetchone()
+                    confirmed_hash = row["confirmed_params_hash"] if row else None
+                    _, deployed_hash = agent_config(g.agent)
+                    if confirmed_hash != deployed_hash:
+                        acts.append(
+                            f"BLOCKED PROMOTE: G0 confirmation required "
+                            f"(confirmed={confirmed_hash}, deployed={deployed_hash})"
+                        )
+                        continue
                 _set_mode(conn, g.agent, g.promotion.to_mode,
                           reason=f"promoted via {e.detail}")
                 acts.append(f"PROMOTE: {e.detail}")

@@ -1,0 +1,9 @@
+[Unit]
+Description=hl-bot nightly forward confirmation at 00:05 UTC
+
+[Timer]
+OnCalendar=*-*-* 00:05:00
+Persistent=true
+
+[Install]
+WantedBy=timers.target
