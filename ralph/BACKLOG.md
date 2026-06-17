@@ -304,17 +304,17 @@ leverage *unblocked* thing. Add new findings as you discover them.
   workaround is no longer needed. (Sweep-result hashing is optional polish:
   sweeps explore params per-combo and don't `--record`, so they never stamp a
   confirmations row — the gate-critical path is covered.)
-- [ ] **V4 — Window-boundary edge fix.** `edge_bps` pairs close-fill PnL with
+- [x] **V4 — Window-boundary edge fix.** `edge_bps` pairs close-fill PnL with
   in-window notional only — trades straddling the window start inflate edge
   ~2x at some rolling looks. Proper fix: round-trip series bucketed by close
   time with matched entry notional (pairing logic exists in
   `scoring/attribution.py`). The persistence gate mitigates; this removes it.
-- [ ] **V5 — Ralph privilege separation.** The loop runs as the trading user
+- [x] **V5 — Ralph privilege separation.** The loop runs as the trading user
   inside the live working tree (configs hot-reload into the engine mid-
   iteration) and can edit its own guardrail tests. Host: separate clone +
   user for the loop; CI: diff-check `tests/test_gate_minima.py`, `ops/`,
   `risk/`, `backtest/engine.py::CostModel` against main and fail on weakening.
-- [ ] **V6 — Equity-floor flow adjustment.** The 75%-of-HWM kill is not
+- [x] **V6 — Equity-floor flow adjustment.** The 75%-of-HWM kill is not
   deposit/withdrawal-adjusted (a >25% withdrawal trips it; deposits inflate
   HWM). Track net transfers (ledger endpoint) and adjust the HWM basis.
 - [ ] **V7 — xfund long-leg reality.** The long leg (funding ≤ −threshold)

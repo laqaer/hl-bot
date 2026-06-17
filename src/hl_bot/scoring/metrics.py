@@ -119,6 +119,56 @@ def _equity_curve(conn: sqlite3.Connection, since_ms: int | None) -> pd.DataFram
     return pd.read_sql_query(q, conn, params=params)
 
 
+def _matched_entry_notional(fills: pd.DataFrame, since_ms: int | None = None) -> float:
+    """FIFO-match closing fills to their entry lots and return matched entry notional.
+
+    Fixes the window-boundary edge inflation (V4): a trade opened before the
+    window and closed inside it carried its full closed_pnl against only the
+    exit leg's notional. By pairing each close with the lots that opened it, the
+    denominator becomes the true capital deployed in those round-trips.
+
+    ``since_ms`` scopes the returned notional to round-trips whose CLOSE fill
+    falls inside the window; the matching still uses the full prior history so
+    straddling trades get their true entry notional.
+
+    If no closes can be matched (e.g., test fixtures with only closing fills),
+    returns 0 so the caller can fall back to the legacy notional_traded.
+    """
+    if fills.empty:
+        return 0.0
+    total = 0.0
+    for _coin, cdf in fills.groupby("coin"):
+        # lots stored as signed size (+ long, - short), px, fee
+        lots: list[tuple[float, float, float]] = []
+        for _, row in cdf.iterrows():
+            side = row["side"]
+            sz = float(row["sz"])
+            px = float(row["px"])
+            close_in_window = since_ms is None or int(row["time_ms"]) >= since_ms
+            signed = sz if side == "B" else -sz
+            net = sum(lot_[0] for lot_ in lots)
+            if net == 0 or net * signed > 0:
+                lots.append((signed, px, 0.0))  # fee not needed for notional
+            else:
+                remaining = sz
+                while remaining > 1e-12 and lots:
+                    lot_signed, lot_px, _ = lots[0]
+                    lot_abs = abs(lot_signed)
+                    match = min(remaining, lot_abs)
+                    if close_in_window:
+                        total += match * lot_px
+                    if match >= lot_abs - 1e-12:
+                        lots.pop(0)
+                    elif lot_signed > 0:
+                        lots[0] = (lot_signed - match, lot_px, 0.0)
+                    else:
+                        lots[0] = (lot_signed + match, lot_px, 0.0)
+                    remaining -= match
+                if remaining > 1e-12:
+                    lots.append((signed / sz * remaining, px, 0.0))
+    return total
+
+
 def _sharpe(returns: pd.Series, periods_per_year: float) -> float | None:
     if returns.empty or returns.std(ddof=0) == 0:
         return None
@@ -175,10 +225,12 @@ def score_agent(
 
     # Notional & edge
     notional = float((fills["px"] * fills["sz"]).abs().sum()) if n_fills else 0.0
-    # NOTE: trades straddling the window start put full closed_pnl against
-    # only their exit-leg notional (edge inflated on some rolling looks);
-    # the promotion persistence gate damps this — proper fix is V4.
-    edge_bps = float(net / notional * 10_000) if notional > 0 else None
+    # V4: match closes inside the window to their entry lots using full history,
+    # so straddling round-trips don't pair full PnL with only the exit leg.
+    all_fills = _fills_df(conn, agent, None, source) if n_fills else fills
+    matched_notional = _matched_entry_notional(all_fills, since_ms=since) if n_fills else 0.0
+    edge_denominator = matched_notional if matched_notional > 0 else notional
+    edge_bps = float(net / edge_denominator * 10_000) if edge_denominator > 0 else None
 
     # Sharpe / DD. The account gets fractional DD from its real equity curve;
     # real agents (live AND paper) get Sharpe from daily net PnL (fills +

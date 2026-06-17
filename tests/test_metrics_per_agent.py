@@ -68,3 +68,24 @@ def test_sparse_agent_has_no_sharpe(conn):
     fill(conn, "a1", "BTC", "B", 100.0, 1.0, NOW - DAY)
     sc = score_agent(conn, "a1", "30d")
     assert sc.sharpe is None
+
+
+def test_edge_bps_pairs_straddling_trade_with_entry_notional(conn):
+    """V4: a trade opened before the window and closed inside it must use the
+    matched entry notional as the edge denominator, not just the exit leg. This
+    makes its edge comparable to an identical trade opened and closed inside the
+    window."""
+    # Intra-window round-trip: nets 10 - 0.2 fees = 9.8.
+    fill(conn, "a1", "BTC", "B", 100.0, 1.0, NOW - 20 * DAY, fee=0.1)
+    fill(conn, "a1", "BTC", "A", 110.0, 1.0, NOW - 15 * DAY, closed_pnl=10.0, fee=0.1)
+    # Straddling round-trip: entry outside 30d window, close inside. Windowed
+    # net is 10 - 0.1 close fee = 9.9 (entry fee outside window excluded).
+    fill(conn, "a1", "BTC", "B", 100.0, 1.0, NOW - 40 * DAY, fee=0.1)
+    fill(conn, "a1", "BTC", "A", 110.0, 1.0, NOW - 10 * DAY, closed_pnl=10.0, fee=0.1)
+
+    sc = score_agent(conn, "a1", "30d")
+    # Total windowed net 19.7 against $200 of matched entry notional.
+    assert sc.edge_bps == pytest.approx(19.7 / 200.0 * 10_000)
+    # Sanity: legacy denominator would have been the exit legs ($220 total) for
+    # the in-window notional, giving a lower/inconsistent number.
+    assert sc.edge_bps != pytest.approx(19.7 / 220.0 * 10_000)
