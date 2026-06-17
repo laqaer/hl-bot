@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import time
 
+from hl_bot.db.schema import init_db
+from hl_bot.ingest.hyperliquid import ingest_user_fills_ws
 from hl_bot.ingest.ws import MarketState, load_fresh_snapshot, write_snapshot
 
 
@@ -84,3 +86,46 @@ def test_snapshot_roundtrip_and_staleness(tmp_path):
     assert load_fresh_snapshot(p, max_age_s=-1) is None
     # missing file -> None
     assert load_fresh_snapshot(tmp_path / "nope.json") is None
+
+
+def test_userfills_ws_upsert(tmp_path):
+    conn = init_db(tmp_path / "db.sqlite")
+    fill = {
+        "hash": "0xabc123",
+        "tid": 1,
+        "time": 1_700_000_000_000,
+        "coin": "BTC",
+        "side": "A",
+        "px": "64000.0",
+        "sz": "0.5",
+        "startPosition": "0.5",
+        "dir": "Close Long",
+        "closedPnl": "10.0",
+        "fee": "14.4",
+        "feeToken": "USDC",
+        "builderFee": "0",
+        "cloid": None,
+    }
+    msg = {"channel": "userFills", "data": {"user": "0xuser", "isSnapshot": True, "fills": [fill]}}
+    n = ingest_user_fills_ws(conn, msg)
+    assert n == 1
+    rows = conn.execute("SELECT * FROM fills").fetchall()
+    assert len(rows) == 1
+    assert rows[0]["coin"] == "BTC"
+    assert rows[0]["agent"] == "manual"
+
+
+def test_userfills_ws_ignores_duplicates(tmp_path):
+    conn = init_db(tmp_path / "db.sqlite")
+    fill = {
+        "hash": "0xabc123", "tid": 1, "time": 1_700_000_000_000,
+        "coin": "BTC", "side": "A", "px": "64000.0", "sz": "0.5",
+    }
+    msg = {"channel": "userFills", "data": {"fills": [fill]}}
+    assert ingest_user_fills_ws(conn, msg) == 1
+    assert ingest_user_fills_ws(conn, msg) == 0
+
+
+def test_userfills_ws_empty_message(tmp_path):
+    conn = init_db(tmp_path / "db.sqlite")
+    assert ingest_user_fills_ws(conn, {"channel": "userFills", "data": {"fills": []}}) == 0

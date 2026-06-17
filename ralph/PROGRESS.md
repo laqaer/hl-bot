@@ -869,3 +869,19 @@ not done.
 **What's next.** Phase 2 is complete. Move to Phase 3 execution quality: (1) userFills WebSocket subscription for real-time fill attribution, (2) reduce-only maker exits, (3) consolidate `femr_tick` CLI with `engine/runner.py` lifecycle v2. Host-side actions remain: run the nightly dislocation sweep with the new defaults, verify `hlbot ws` liq feed through volatility, and run `hlbot s8-oi-backtest --sweep` on the host.
 
 **Update.** While this commit was being prepared, PR #33 merged to `main` (6ea4b82). The leftover work above was rebased onto `origin/main` and pushed as PR #34 (`claude/phase2-leftovers-sweep-v3`). The old `claude/phase2-forward-edge-instrumentation` branch was retired locally.
+
+---
+
+## Iteration — 2026-06-16 — Phase 3 execution quality PR 1: userFills WS + reduce-only maker exits
+
+**Context.** Phase 2 complete (PR #34). Started Phase 3 execution quality. This slice wires real-time fill attribution via WebSocket and lets normal-urgency exits rest as reduce-only maker quotes.
+
+**Changed.**
+- **Shared fill upsert helper.** `src/hl_bot/ingest/hyperliquid.py` now exposes `_upsert_fill()` and `ingest_user_fills_ws()`. REST `ingest_fills` and the new WS path use the same insertion logic and agent attribution.
+- **WebSocket `userFills` subscription.** `src/hl_bot/ingest/ws.py::run_ws` accepts `db_path` and `user_address`; when both are provided it subscribes to `{"type":"userFills","user":...}` and persists each fill to the DB inside the WS callback. `hlbot ws` gained an optional `--user` flag and defaults to the configured `hl_address`.
+- **Reduce-only maker exits in `engine/runner.py`.** Normal- or exit-urgency flattens in maker mode now call `submit_entry(..., reduce_only=True)` and rest a passive quote. The lifecycle manages fill/reprice/taker-fallback. Stop-urgency flattens and non-maker modes still use immediate taker `close_position`. The runner infers the close side and size from the `positions` table when the agent decision omits them.
+- **Tests.** New `test_userfills_ws_*` in `tests/test_ws.py`; new `test_maker_exit_resting_reduce_only` and `test_stop_exit_uses_taker_close` in `tests/test_runner.py`.
+
+**Evidence.** `uv run pytest -q` → **339 passed**. `uv run ruff check .` → All checks passed.
+
+**What's next.** PR 2 of Phase 3: consolidate `femr_tick` into `hlbot run --max-cycles 1`, update host scripts and docs.
