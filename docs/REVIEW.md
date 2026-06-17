@@ -113,7 +113,9 @@ tolerate a 5-min loop.
   replay.
 - **M3 — Two execution paths.** `agents/runtime.py::run_tick` (the "safe" path
   with `force_paper=True`) is **not** what live uses; `cli/main.py::femr_tick`
-  has its own live loop. The safe wrapper is dead code for live. Consolidate.
+  had its own live loop. The safe wrapper is dead code for live. **Resolved in
+  Phase 3 PR2:** `femr_tick` is now a thin wrapper around the consolidated
+  `hlbot run --max-cycles 1`; host scripts were updated accordingly.
 - **M4 — Auto-tuner polishes a losing system.** `scripts/auto_tuner.py` asks an
   LLM to nudge params within ±20–50%. It cannot fix taker-vs-maker, cadence, or a
   structurally wrong strategy — the things that actually matter. Keep it, but it's

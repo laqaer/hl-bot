@@ -56,7 +56,7 @@ A minimal hardened unit (sketch) — see `B14a` to codify these in-repo:
 # /etc/systemd/system/hlbot-tick.service
 [Service]
 WorkingDirectory=/opt/hl-bot
-ExecStart=/usr/bin/uv run hlbot femr_tick --live   # entries route per-agent (auto)
+ExecStart=/usr/bin/uv run hlbot run --max-cycles 1 --live   # entries route per-agent (auto)
 EnvironmentFile=/etc/hl-bot/env        # HL_ADDRESS, TG_*, HLBOT_DB
 Restart=on-failure
 # /etc/systemd/system/hlbot-tick.timer → OnUnitActiveSec=60
