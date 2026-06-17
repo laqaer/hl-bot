@@ -848,3 +848,24 @@ not done.
 **Evidence.** `uv run pytest -q` → **333 passed** (`tests/test_xvenue_cli.py`, `tests/test_accrual.py` lookback case). `uv run ruff check .` → All checks passed.
 
 **What's next.** Either finish Phase 2 with dislocation sweep improvements (use accrued frames, load overrides, taker exec-quality telemetry) or move to Phase 3 execution quality (userFills WS, reduce-only exits, path consolidation). Host-side actions remain: run the nightly dislocation sweep, run `hlbot ws` through volatility to verify the liq feed, and run `hlbot s8-oi-backtest --sweep` on the host.
+
+
+---
+
+## Iteration — 2026-06-16 — Phase 2 leftover: dislocation sweep V3 provenance + exec-quality telemetry
+
+**Context.** PR #33 (`claude/phase2-forward-edge-instrumentation`) had a merge conflict with `main` after Phase 1 merged. Resolved the conflict in `ralph/PROGRESS.md` and `src/hl_bot/cli/main.py`, force-pushed `631f9b5`, then finished the three known Phase 2 gaps in the dislocation sweep.
+
+**Changed.**
+- **Merge conflict resolved.** `main` (`d43d76e`) merged into `claude/phase2-forward-edge-instrumentation`; imports for `accrue_xvenue_funding` and `ingest_transfers` reconciled; full suite passes.
+- **Sweep now loads `agent_overrides.json` as its baseline.** `SweepSpec` gained `use_overrides: true`; `run_sweep` accepts `base_config` and layers grid params on top. The `hlbot sweep` CLI loads the agent's override block (same path `confirm`/`autoconfirm` use) and prints the baseline. This makes the sweep evaluate deviations from the deployed config, not raw factory defaults.
+- **Sweep now merges forward-accrued frames.** `SweepSpec` gained `use_accrued: true` and `accrued_since_days`. The CLI unions `cached_or_fetch` HL candles with `load_accrued_frames(...)` via `merge_frames`, extending fine-interval evidence past HL's retention cap and reporting `+N forward-accrued bars`.
+- **Taker exec-quality telemetry.** New `src/hl_bot/scoring/backtest_exec_quality.py` reads the simulated `fills` table and reports `avg_entry_slip_bps`, `avg_exit_slip_bps`, `avg_fee_bps`, and `taker_pct`. The `Backtester` now stores fill mid/entry/taker metadata in `fills.raw_json`; `BacktestResult`, `ScenarioResult`, and `SweepRow` thread these stats through; the Markdown report adds `entry slip | exit slip | fee | taker%` columns.
+- **V3-provenance-safe adoption guidance.** The sweep report's "Next actions" block now recommends adopting a confirmed combo via `configs/agent_overrides.json` and re-stamping with `hlbot confirm --agent <agent> --prefer <prefer> --record`, because `confirm --record` fingerprints the effective config. Editing dataclass defaults remains acceptable but is no longer required.
+- **Stale docstring fixed.** `src/hl_bot/agents/fingerprint.py` no longer claims `confirm` uses only default params.
+
+**Evidence.** `uv run pytest -q` → **337 passed** (new: `test_render_markdown_confirmed_steers_to_overrides_with_v3_provenance`, `test_run_sweep_uses_base_config_under_grid_params`, `test_run_sweep_includes_exec_quality_when_fills_exist`, `test_render_markdown_reports_exec_quality_columns`). `uv run ruff check .` → All checks passed.
+
+**What's next.** Phase 2 is complete. Move to Phase 3 execution quality: (1) userFills WebSocket subscription for real-time fill attribution, (2) reduce-only maker exits, (3) consolidate `femr_tick` CLI with `engine/runner.py` lifecycle v2. Host-side actions remain: run the nightly dislocation sweep with the new defaults, verify `hlbot ws` liq feed through volatility, and run `hlbot s8-oi-backtest --sweep` on the host.
+
+**Update.** While this commit was being prepared, PR #33 merged to `main` (6ea4b82). The leftover work above was rebased onto `origin/main` and pushed as PR #34 (`claude/phase2-leftovers-sweep-v3`). The old `claude/phase2-forward-edge-instrumentation` branch was retired locally.

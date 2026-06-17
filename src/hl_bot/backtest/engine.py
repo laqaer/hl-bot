@@ -29,6 +29,7 @@ Assumptions (documented so results are interpretable, not hidden):
 from __future__ import annotations
 
 import contextlib
+import json
 import sqlite3
 import time
 from dataclasses import dataclass, field
@@ -36,6 +37,7 @@ from dataclasses import dataclass, field
 from ..agents.base import Agent, MarketView
 from ..agents.decisions import Decision, log_decision
 from ..db.schema import init_db
+from ..scoring.backtest_exec_quality import BacktestExecQuality, backtest_exec_quality
 from ..scoring.curves import curve_stats
 from ..scoring.metrics import Scorecard, score_agent
 
@@ -142,6 +144,7 @@ class BacktestResult:
     n_bars: int
     starting_capital: float
     cost: CostModel
+    exec_quality: BacktestExecQuality | None = None
 
     @property
     def net_pnl(self) -> float:
@@ -302,7 +305,8 @@ class Backtester:
             self._book[coin] = _Pos(
                 side=d.side, sz=open_sz, entry_px=fill_px, entry_ts_ms=frame.ts_ms,
             )
-        self._record_fill(agent, coin, d.side, open_sz, fill_px, fee, 0.0, d.cloid)
+        self._record_fill(agent, coin, d.side, open_sz, fill_px, fee, 0.0,
+                          d.cloid, mid, is_entry=True)
         log_decision(self.conn, Decision(
             agent=agent, action="place", coin=coin, side=d.side, sz=open_sz,
             px=fill_px, cloid=d.cloid, reasoning=d.reasoning, is_paper=True,
@@ -331,7 +335,8 @@ class Backtester:
         fee = exit_px * close_sz * self.cost.exit_fee_rate
         closed_pnl = price_pnl + funding  # funding folded in; fee tracked separately
         self._realized += closed_pnl - fee
-        self._record_fill(agent, coin, close_side, close_sz, exit_px, fee, closed_pnl, d.cloid)
+        self._record_fill(agent, coin, close_side, close_sz, exit_px, fee,
+                          closed_pnl, d.cloid, mid, is_entry=False)
         log_decision(self.conn, Decision(
             agent=agent, action="flatten", coin=coin, side=close_side, sz=close_sz,
             px=exit_px, cloid=d.cloid, reasoning=d.reasoning, is_paper=True,
@@ -345,18 +350,22 @@ class Backtester:
     def _record_fill(
         self, agent: str, coin: str, side: str, sz: float, px: float,
         fee: float, closed_pnl: float, cloid: str | None,
+        mid: float, is_entry: bool,
     ) -> None:
         ts = int(time.time() * 1000)
         # Unique-ish synthetic (hash, tid) primary key.
         h = f"bt-{agent}-{coin}-{ts}-{side}"
         tid = abs(hash((h, sz, px, closed_pnl))) % (2**62)
+        # Entries use the backtester's current cost mode; exits are always taker.
+        is_taker = not (is_entry and self.cost.maker)
+        raw = json.dumps({"mid": mid, "is_entry": is_entry, "is_taker": is_taker})
         self.conn.execute(
             """INSERT OR IGNORE INTO fills(
                 hash, tid, time_ms, coin, side, px, sz, start_position, dir,
                 closed_pnl, fee, fee_token, builder_fee, cloid, agent, raw_json)
                VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
             (h, tid, ts, coin, side, px, sz, 0, "backtest",
-             closed_pnl, fee, "USDC", 0, cloid, agent, "{}"),
+             closed_pnl, fee, "USDC", 0, cloid, agent, raw),
         )
 
     def _apply(self, agent: str, d: Decision, frame: Frame) -> None:
@@ -418,6 +427,7 @@ class Backtester:
             n_bars=len(frames),
             starting_capital=self.starting_capital,
             cost=self.cost,
+            exec_quality=backtest_exec_quality(self.conn, agent.name),
         )
 
 

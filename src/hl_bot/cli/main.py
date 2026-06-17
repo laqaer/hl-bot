@@ -1313,28 +1313,62 @@ def sweep(
 
     Loads configs/sweeps/<name>.yaml, replays every combo over cached real
     history, and writes a ranked report to research/results/ (committed by the
-    nightly host job so research sessions start from fresh evidence)."""
-    from ..backtest.data import cached_or_fetch, frames_coverage_days
-    from ..engine.runner import AGENT_FACTORIES
+    nightly host job so research sessions start from fresh evidence).
+
+    With ``use_overrides: true`` (default) the sweep baseline is the deployed
+    config (factory defaults + ``configs/agent_overrides.json``); grid params
+    are layered on top. With ``use_accrued: true`` (default) the back-fetched
+    HL candles are unioned with forward-accrued ``frame_samples`` so the
+    evidence window can grow past HL's retention cap."""
+    import time
+
+    from ..backtest.data import (
+        cached_or_fetch,
+        frames_coverage_days,
+        load_accrued_frames,
+        merge_frames,
+    )
+    from ..engine.runner import AGENT_FACTORIES, _load_overrides
     from ..research.sweep import SweepSpec, run_sweep, write_outputs
 
-    _, s = _conn()
+    conn, s = _conn()
     sw = SweepSpec.load(spec)
     factory = AGENT_FACTORIES.get(sw.agent)
     if factory is None:
         console.print(f"[red]unknown agent {sw.agent}[/red]")
         raise typer.Exit(1)
+
+    # Deployed baseline: factory defaults + agent_overrides.json (V3 provenance).
+    base_config: dict = {}
+    if sw.use_overrides:
+        base_config.update(_load_overrides(s.configs_dir).get(sw.agent) or {})
+        if base_config:
+            console.print(f"[dim]baseline config from overrides: {base_config}[/dim]")
+
     frames_by_universe = {}
     for universe in sw.universes or [[]]:
         console.print(f"[dim]loading {sw.days}d {sw.interval} for {universe}…[/dim]")
         try:
-            frames_by_universe[tuple(universe)] = cached_or_fetch(
+            frames = cached_or_fetch(
                 list(universe), interval=sw.interval, days=sw.days,
                 base_url=s.hl_api_url, refresh=refresh)
         except Exception as e:  # noqa: BLE001
             console.print(f"[red]history load failed for {universe}: {e}[/red]")
             frames_by_universe[tuple(universe)] = []
-    rows = run_sweep(sw, frames_by_universe, factory)
+            continue
+
+        if sw.use_accrued:
+            since_days = sw.accrued_since_days if sw.accrued_since_days is not None else sw.days
+            since_ms = int(time.time() * 1000) - since_days * 86_400_000
+            accrued = load_accrued_frames(
+                conn, list(universe), sw.interval, since_ms=since_ms)
+            if accrued:
+                n_before = len(frames)
+                frames = merge_frames(frames, accrued)
+                console.print(f"[dim]+{len(frames) - n_before} forward-accrued bars[/dim]")
+        frames_by_universe[tuple(universe)] = frames
+
+    rows = run_sweep(sw, frames_by_universe, factory, base_config=base_config)
     # Per-universe coverage (empty/failed load → 0.0d). The report and this note
     # key off the LIMITING (shortest) span so a long-history universe can't mask
     # a short/failed one and overstate the evidence window.

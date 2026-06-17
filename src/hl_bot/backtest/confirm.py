@@ -19,7 +19,7 @@ discover it live.
 from __future__ import annotations
 
 from collections.abc import Callable
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 
 from ..agents.base import Agent
 from ..db.schema import init_db
@@ -36,6 +36,7 @@ class ScenarioResult:
     edge_bps: float | None
     sharpe: float | None
     n_trades: int
+    exec_quality: dict | None = None
 
     def row(self) -> str:
         edge = "—" if self.edge_bps is None else f"{self.edge_bps:+.1f}bps"
@@ -80,8 +81,10 @@ def _run(
     res = bt.run(factory(conn), frames)
     sharpe, _, _ = curve_stats(res.equity_curve, periods_per_year=periods_per_year)
     sc = res.scorecard
+    eq = asdict(res.exec_quality) if res.exec_quality else None
     return ScenarioResult(name=name, net_pnl=sc.net_pnl, edge_bps=sc.edge_bps,
-                          sharpe=sharpe, n_trades=sc.n_trades)
+                          sharpe=sharpe, n_trades=sc.n_trades,
+                          exec_quality=eq)
 
 
 def confirm_strategy(
