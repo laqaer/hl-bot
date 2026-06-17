@@ -256,6 +256,7 @@ def accrue_cycle(
     sample_interval_s: float = 60.0,
     listing_max_age_bars: int = 24,
     listing_bar_seconds: int = 3600,
+    oi_lookback_s: float = 1800.0,
 ) -> dict[str, int]:
     """Run the per-cycle accrual (samples + listings) and wire the live
     ``new_listings`` signal into the view. The xvenue leg is host-only (geo-
@@ -268,8 +269,11 @@ def accrue_cycle(
         out["samples"] = accrue_market_samples(
             conn, view, now_ms=now_ms, min_interval_s=sample_interval_s)
         # OI-change signal first (reads market_samples just written) so the frame
-        # store persists it for S8's forward confirm.
-        out["oi_change"] = len(build_oi_change_view(conn, view, now_ms=now_ms))
+        # store persists it for S8's forward confirm. lookback_s comes from the
+        # S8 agent config so live/backtest/confirm all use the same signal.
+        out["oi_change"] = len(
+            build_oi_change_view(conn, view, now_ms=now_ms, lookback_s=oi_lookback_s)
+        )
         out["frames"] = accrue_frame_samples(conn, view, now_ms=now_ms)
         nl = build_new_listings_view(
             conn, view, now_ms=now_ms,

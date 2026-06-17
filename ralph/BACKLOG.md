@@ -273,10 +273,15 @@ leverage *unblocked* thing. Add new findings as you discover them.
   `tests/test_oi_history.py`) for an EARLY read before the forward soak
   completes. NEXT: run it on the host; sweep `oi_spike_min`/`z_enter`/lookback;
   breadth (#25/#26) compounds the forward event rate.
-- [ ] **S5 — Cross-venue funding signal.** Spec:
-  `docs/research/S5_xvenue_funding.md`. Now MORE valuable given the baseline
-  finding: Binance/Bybit funding tells us when HL's *spike* is idiosyncratic
-  (fade-able, feeds S8) vs market-wide. Phase-1 offline study first.
+  > **UPDATED (2026-06-16):** `lookback_s` is now exposed in
+  > `OICrowdingReversalConfig` and threaded into live accrual via
+  > `engine/runner.py`. `hlbot s8-oi-backtest --sweep` persists ranked results to
+  > `research/results/` so calibration artifacts are committed like other sweeps.
+- [x] **S5 — Cross-venue funding signal (accrual wired).** Spec:
+  `docs/research/S5_xvenue_funding.md`. Host job (`hlbot-xvenue.timer`, hourly)
+  fetches Binance/Bybit `lastFundingRate` and accrues into `xvenue_funding`; CLI
+  `hlbot accrue-xvenue` for manual runs. The S5 *filter* on carry agents remains
+  off by default until an offline study confirms selectivity.
 
 ## P0b — review remediation (2026-06-12 four-track audit)
 

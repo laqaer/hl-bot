@@ -48,6 +48,7 @@ class OICrowdingReversalConfig:
     stop_pct: float = 0.02          # hard stop bounds the negative-skew tail
     max_hold_bars: int = 12         # ~60min at 5m; reversion horizon
     bar_seconds: int = 300          # 5m
+    lookback_s: float = 1800.0      # OI growth lookback (must match live accrual + backtest overlay)
     min_daily_volume_usd: float = 10_000_000.0
     max_notional_per_trade: float = 25.0
     max_total_notional: float = 75.0
@@ -72,6 +73,7 @@ class OICrowdingReversalAgent(Agent):
             stop_pct=float(c.get("stop_pct", 0.02)),
             max_hold_bars=int(c.get("max_hold_bars", 12)),
             bar_seconds=int(c.get("bar_seconds", 300)),
+            lookback_s=float(c.get("lookback_s", 1800.0)),
             min_daily_volume_usd=float(c.get("min_daily_volume_usd", 10_000_000.0)),
             max_notional_per_trade=float(c.get("max_notional_per_trade", 25.0)),
             max_total_notional=float(c.get("max_total_notional", 75.0)),

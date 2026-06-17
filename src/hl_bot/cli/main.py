@@ -30,9 +30,11 @@ from ..agents.xfund_carry import XFundCarryAgent
 from ..config import CONFIG_DIR, Settings
 from ..db.schema import init_db
 from ..engine.views import enrich_view as _enrich_view
+from ..ingest.accrual import accrue_xvenue_funding
 from ..ingest.hyperliquid import ingest_fills, ingest_funding, snapshot_equity
 from ..reports.daily import build as build_report
 from ..reports.daily import send_telegram
+from ..research.funding_xvenue import fetch_xvenue_funding
 from ..research.strategy_health import (
     agent_health,
     build_proposal_document,
@@ -97,6 +99,31 @@ def ingest(funding_days: int = 7):
     console.print(
         f"[green]✓[/green] fills:{n_fills} funding:{n_fund} +1 equity snapshot "
         f"· positions replayed:{n_pos}"
+    )
+
+
+@app.command()
+def accrue_xvenue(
+    coins: str = typer.Option(
+        "",
+        help="Comma-separated coin list (default HLBOT_XVENUE_COINS, then sweep/confirm universe)",
+    ),
+):
+    """Fetch Binance/Bybit funding and accrue into xvenue_funding (S5 signal fuel)."""
+    import os
+
+    conn, _s = _conn()
+    universe = coins or os.environ.get(
+        "HLBOT_XVENUE_COINS",
+        os.environ.get("HLBOT_CONFIRM_UNIVERSE")
+        or os.environ.get("HLBOT_SWEEP_UNIVERSE")
+        or "BTC,ETH,SOL,HYPE,DOGE,XRP,WIF,kPEPE",
+    )
+    coin_list = [c.strip() for c in universe.split(",") if c.strip()]
+    xvenue = fetch_xvenue_funding(coin_list)
+    n = accrue_xvenue_funding(conn, xvenue)
+    console.print(
+        f"[green]✓[/green] xvenue funding: {n} rows across {len(xvenue)} coins"
     )
 
 
@@ -1172,6 +1199,7 @@ def s8_oi_backtest(
     from ..backtest.data import cached_or_fetch, frames_coverage_days, overlay_oi_change
     from ..engine.runner import AGENT_FACTORIES
     from ..research.oi_history import fetch_binance_oi_vision, hl_to_binance
+    from ..research.sweep import SweepRow, SweepSpec, write_outputs
 
     s = Settings.from_env()
     coin_list = [c.strip() for c in coins.split(",") if c.strip()]
@@ -1226,13 +1254,33 @@ def s8_oi_backtest(
         console.print(f"\n[bold]sweep[/bold] (walk-forward, ~{cov:.0f}d):")
         console.print(f"{'spike':>6} {'z':>4} | {'IS_tr':>5} {'OOS_tr':>6} "
                       f"{'OOS_edge':>9} {'PASS':>5}")
+        sweep_rows: list[SweepRow] = []
         for spike in (0.005, 0.01, 0.02, 0.03):
             for z in (1.0, 1.5, 2.0):
-                r = _run({"oi_spike_min": spike, "z_enter": z})
+                params = {"oi_spike_min": spike, "z_enter": z, "lookback_min": lookback_min}
+                r = _run(params)
                 mark = "✅" if r.confirmed else "—"
                 console.print(f"{spike:>6.3f} {z:>4.1f} | {r.in_sample.n_trades:>5} "
                               f"{r.out_of_sample.n_trades:>6} {_e(r.out_of_sample.edge_bps):>9} "
                               f"{mark:>5}")
+                sweep_rows.append(SweepRow.from_result(coin_list, params, r))
+        pseudo_spec = SweepSpec(
+            agent="oi_crowding_reversal_v1",
+            interval="5m",
+            days=days,
+            prefer=prefer,
+            min_edge_bps=min_edge_bps,
+            min_sharpe=min_sharpe,
+            universes=[coin_list],
+            grid={},
+        )
+        jpath, mpath = write_outputs(
+            pseudo_spec, sweep_rows,
+            json_dir=Path("data/sweeps"),
+            md_dir=Path("research/results"),
+            coverage_by_universe={",".join(coin_list): cov},
+        )
+        console.print(f"[dim]sweep results saved: {jpath} + {mpath}[/dim]")
         console.print("[dim]Pick by a PRIOR (distribution + a real overshoot), NOT the max "
                       "OOS-edge cell — the ~5d OOS is thin and selecting on it overfits. "
                       "The forward soak is the real arbiter.[/dim]")
