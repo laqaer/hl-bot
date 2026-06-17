@@ -25,15 +25,23 @@ uv run hlbot doctor
 #    /etc/hl-bot/env: HLBOT_WS_COINS=BTC,ETH,SOL,HYPE,DOGE,XRP,WIF,kPEPE
 systemctl restart hlbot-ws
 
+# 1b. Verify the WS userFills feed is writing to the DB (Phase 3)
+uv run hlbot ws --user $HL_ADDRESS --seconds 30
+sqlite3 data/hlbot.sqlite "SELECT count(*) FROM fills WHERE time_ms > (strftime('%s','now')-60)*1000;"
+#    If count is 0 after a fill, check HLBOT_WS_COINS / HL_ADDRESS / API wallet.
+
 # 2. THE HIGHEST-VALUE STEP — fetch real history and confirm the carry class
-#    (this was blocked for the entire life of the repo; it answers whether the
-#    one plausibly-positive strategy class clears G0 with maker costs):
+#    (this answers whether the plausibly-positive strategy class clears G0 with maker costs):
 uv run hlbot backtest-fetch --coins BTC,ETH,SOL,HYPE,DOGE,XRP --interval 1h --days 180
 uv run hlbot confirm --agent xfund_carry_v1   --prefer maker --days 180 --record
 uv run hlbot confirm --agent funding_carry_v1 --prefer maker --days 180 --record
 #    --record stamps the confirmations table: this is what require_g0 checks.
 #    If NOT CONFIRMED: do not go live; the nightly sweep + research pipeline
 #    (docs/STRATEGY_PIPELINE.md) is the path forward, not a smaller gate.
+
+# 2b. Nightly dislocation sweep (Phase 2 leftovers — now loads overrides & accrued frames)
+uv run hlbot sweep configs/sweeps/dislocation_reversion_v1.yaml
+#    Read research/results/<date>_dislocation_reversion_v1.md; adopt via agent_overrides.json + confirm --record.
 
 # 3. Paper soak: hlbot-run is already running paper. Give it ≥5 days (compressed gates; min_days floor is 3); verify
 uv run hlbot score          # paper agents show n_trades, edge, non-None sharpe
@@ -45,7 +53,7 @@ journalctl -u hlbot-run -n 50   # cycles ticking, supervisor evaluating
 systemctl restart hlbot-run
 #    Auto-promotion does the rest: agents whose ladders pass go live_small at
 #    sizing caps (~$75 total / $25 per trade). WATCH THE FIRST FILLS:
-journalctl -u hlbot-run -f      # RESTING/FILLED/REPRICED events
+journalctl -u hlbot-run -f      # RESTING/FILLED/REPRICED/REDUCE events
 uv run hlbot ingest && uv run hlbot score
 uv run hlbot track-record    # the shareable artifact starts here
 ```
@@ -69,6 +77,8 @@ Live trading signs with an API wallet — **never the funded key**:
 - `/etc/hl-bot/env`: `HL_ADDRESS` / `HL_TRADER_ADDRESS` (funded account),
   `TG_BOT_TOKEN`/`TG_CHAT_ID` (alerts), `HEALTHCHECK_URL` (dead-man),
   `HLBOT_RUN_ARGS` (the live switch), `HLBOT_WS_*`.
+- The trading address must equal the ingest address:
+  `HL_ADDRESS == HL_TRADER_ADDRESS`. `hlbot run` refuses to start live otherwise.
 - Moonshot sleeve: separate sub-account + wallet in `/etc/hl-bot/moonshot.env`
   — see [`MOONSHOT.md`](MOONSHOT.md).
 
@@ -94,8 +104,9 @@ Live trading signs with an API wallet — **never the funded key**:
 - Telegram: daily report, guardrail trips, every promotion/demotion, kill
   trips.
 - Watch in week one of maker execution: **maker fill rate** (target >30%),
-  taker-fallback rate, reprice counts, realized px vs quote (journalctl
-  events; telemetry hardening tracked as backlog E1).
+  taker-fallback rate, reprice counts, realized px vs quote. Normal-urgency
+  exits now rest as reduce-only maker quotes (Phase 3); stop-urgency exits
+  still cross immediately.
 
 ## What the autonomous loop (ralph) may and may not do
 
@@ -104,12 +115,17 @@ Live trading signs with an API wallet — **never the funded key**:
 - **May not:** write `agent_state`, weaken any gate/cap/limit (CI-enforced),
   touch KILL files, or handle wallet material. See `ralph/PROMPT.md`.
 
-## Current readiness (2026-06-11, post-overhaul)
+## Current readiness (2026-06-16, post-Phase 3)
 
 Code-ready, **evidence-pending**: the engine, measurement, auto-promotion,
-safeguards and sleeve are built and tested (198 tests). The remaining blockers
-are host-side facts, not code (api.hyperliquid.xyz returns 403 from CI and
-sandboxes, so a networked host is required): run step 2 above (first-ever real-history
-confirmation of the carry class), then the paper soak. If carry confirms, the
-system takes itself live and scales as gates pass; if it doesn't, the research
-pipeline is the next move and no capital goes live on an unconfirmed strategy.
+safeguards, sleeve, forward-edge accrual, V3 params provenance, and execution-
+quality telemetry are built and tested (344 tests). The consolidated `hlbot run`
+engine replaces the deprecated `femr_tick` path; `hlbot ws` now ingests live
+userFills for sub-second attribution.
+
+The remaining blockers are host-side facts, not code (`api.hyperliquid.xyz`
+returns 403 from CI and sandboxes, so a networked host is required): run step 2
+above (first-ever real-history confirmation of the carry class), verify the WS
+userFills feed, then the paper soak. If carry confirms, the system takes itself
+live and scales as gates pass; if it doesn't, the research pipeline is the next
+move and no capital goes live on an unconfirmed strategy.
