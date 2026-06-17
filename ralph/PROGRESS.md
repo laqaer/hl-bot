@@ -814,3 +814,18 @@ not done.
 
 **Evidence.** Full suite 326 passed; ruff clean; new default verified
 (oi_spike_min=0.005, z_enter=2.0).
+
+---
+
+## Iteration — 2026-06-16 — Phase 1 safety & measurement: V5, V6, V4
+
+**Context.** Stale `p1-forward-evidence` branch was deleted after it duplicated work already on `main`. User approved a safety-first plan: harden Ralph's trusted-path checks, make the equity floor flow-adjusted, and fix the `edge_bps` window-boundary inflation before building new edges.
+
+**Changed.**
+- **V5 — Ralph trusted-path CI gate.** `.github/workflows/ralph-automerge.yml` now fails if a Ralph branch changes `src/hl_bot/ops/`, `src/hl_bot/risk/`, or `src/hl_bot/backtest/engine.py` vs. `origin/main`. Operator must review those files manually; the loop cannot weaken its own kill switch, health checks, or cost model and auto-merge.
+- **V6 — Flow-adjusted equity floor.** Migration 9 adds a `transfers` table. `ingest_transfers` pulls `userNonFundingLedgerUpdates` and keeps only external `deposit`/`withdraw` events (signed: + deposit, − withdraw). `equity_floor_breached` now computes the 30d HWM on `account_value − cumulative_net_transfers`, so deposits no longer inflate the floor and withdrawals no longer false-trip the kill. Wired into `hlbot ingest` and the `hlbot run` ingest loop.
+- **V4 — FIFO-matched `edge_bps`.** `score_agent` now uses the full fill history to FIFO-match each close inside the window to its entry lots, using the matched entry notional as the `edge_bps` denominator. Falls back to legacy total notional only when no closes can be matched (sparse fixtures). This removes the ~2x inflation/deflation for trades straddling the rolling window start.
+
+**Evidence.** `uv run pytest -q` → **331 passed** (new: `tests/test_transfers.py`, V4 regression in `tests/test_metrics_per_agent.py`). `uv run ruff check .` → All checks passed.
+
+**What's next.** Phase 1 complete. Recommended next track: Phase 2 forward-edge instrumentation (wire xvenue funding host job, S8 sweep config + persisted results, expose lookback) OR continue host-side actions (dislocation sweep, WS liq feed verification, S8 host backtest).

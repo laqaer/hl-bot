@@ -137,6 +137,56 @@ def snapshot_equity(conn: sqlite3.Connection, address: str, base_url: str) -> No
     )
 
 
+def ingest_transfers(
+    conn: sqlite3.Connection,
+    address: str,
+    base_url: str,
+    lookback_days: int = 35,
+) -> int:
+    """Pull external deposits/withdrawals from the non-funding ledger.
+
+    Only ``deposit`` and ``withdraw`` events change the account's *external*
+    capital. Spot<->perp transfers, sub-account transfers, etc. do not change
+    unified portfolio value and are ignored for the equity-floor HWM adjustment.
+    Returns rows inserted.
+    """
+    end = int(time.time() * 1000)
+    start = end - lookback_days * 86_400_000
+    with httpx.Client() as client:
+        rows = _post(
+            client,
+            base_url,
+            {"type": "userNonFundingLedgerUpdates", "user": address, "startTime": start, "endTime": end},
+        ) or []
+    n = 0
+    cur = conn.cursor()
+    for r in rows:
+        delta = r.get("delta", {}) or {}
+        typ = delta.get("type")
+        if typ not in ("deposit", "withdraw"):
+            continue
+        try:
+            cur.execute(
+                """
+                INSERT OR IGNORE INTO transfers(
+                    time_ms, hash, type, amount, raw_json
+                ) VALUES(?,?,?,?,?)
+                """,
+                (
+                    int(r["time"]),
+                    r.get("hash", ""),
+                    typ,
+                    float(delta.get("usdc", 0) or 0),
+                    json.dumps(r, separators=(",", ":")),
+                ),
+            )
+            n += cur.rowcount
+        except sqlite3.IntegrityError:
+            pass
+    log.info("ingested %d new transfer rows", n)
+    return n
+
+
 def ingest_funding(
     conn: sqlite3.Connection,
     address: str,

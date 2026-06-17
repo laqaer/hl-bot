@@ -300,6 +300,22 @@ MIGRATIONS: list[str] = [
     """
     ALTER TABLE frame_samples ADD COLUMN oi_change REAL;
     """,
+    # 9: external transfers (deposits/withdrawals) for flow-adjusted equity floor
+    # (V6). The kill switch's 30d HWM must not be inflated by deposits or tripped
+    # by withdrawals. We track only external deposit/withdraw events from
+    # userNonFundingLedgerUpdates; internal spot<->perp transfers do not change
+    # unified portfolio value and are ignored.
+    """
+    CREATE TABLE IF NOT EXISTS transfers (
+        time_ms         INTEGER NOT NULL,
+        hash            TEXT    NOT NULL,
+        type            TEXT    NOT NULL,         -- 'deposit' / 'withdraw'
+        amount          REAL    NOT NULL,         -- signed USDC: + deposit, - withdraw
+        raw_json        TEXT    NOT NULL,
+        PRIMARY KEY (time_ms, hash, type)
+    );
+    CREATE INDEX IF NOT EXISTS idx_transfers_time ON transfers(time_ms);
+    """,
 ]
 
 

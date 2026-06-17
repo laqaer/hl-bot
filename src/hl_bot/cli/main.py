@@ -30,7 +30,7 @@ from ..agents.xfund_carry import XFundCarryAgent
 from ..config import CONFIG_DIR, Settings
 from ..db.schema import init_db
 from ..engine.views import enrich_view as _enrich_view
-from ..ingest.hyperliquid import ingest_fills, ingest_funding, snapshot_equity
+from ..ingest.hyperliquid import ingest_fills, ingest_funding, ingest_transfers, snapshot_equity
 from ..reports.daily import build as build_report
 from ..reports.daily import send_telegram
 from ..research.strategy_health import (
@@ -91,12 +91,13 @@ def ingest(funding_days: int = 7):
         raise typer.Exit(1)
     n_fills = ingest_fills(conn, s.hl_address, s.hl_api_url)
     n_fund = ingest_funding(conn, s.hl_address, s.hl_api_url, funding_days)
+    n_trans = ingest_transfers(conn, s.hl_address, s.hl_api_url)
     snapshot_equity(conn, s.hl_address, s.hl_api_url)
     from ..scoring.attribution import replay_positions_table
     n_pos = replay_positions_table(conn)
     console.print(
-        f"[green]✓[/green] fills:{n_fills} funding:{n_fund} +1 equity snapshot "
-        f"· positions replayed:{n_pos}"
+        f"[green]✓[/green] fills:{n_fills} funding:{n_fund} transfers:{n_trans} "
+        f"+1 equity snapshot · positions replayed:{n_pos}"
     )
 
 
@@ -277,6 +278,7 @@ def run(
     from ..engine.views import enrich_view, overlay_ws_snapshot
     from ..ingest.hyperliquid import ingest_fills as _ingest_fills
     from ..ingest.hyperliquid import ingest_funding as _ingest_funding
+    from ..ingest.hyperliquid import ingest_transfers as _ingest_transfers
     from ..ingest.hyperliquid import snapshot_equity as _snapshot_equity
     from ..ops.kill import equity_floor_breached, kill_active, trip_kill
     from ..scoring.positions import refresh_attribution
@@ -354,6 +356,7 @@ def run(
                     try:
                         _ingest_fills(conn, s.hl_address, s.hl_api_url)
                         _ingest_funding(conn, s.hl_address, s.hl_api_url, 7)
+                        _ingest_transfers(conn, s.hl_address, s.hl_api_url)
                         _snapshot_equity(conn, s.hl_address, s.hl_api_url)
                         refresh_attribution(conn)
                         ingest_failures = 0
