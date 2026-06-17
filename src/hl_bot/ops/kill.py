@@ -72,6 +72,16 @@ def clear_kill(data_dir: str | Path, *, alert: bool = True) -> bool:
     return True
 
 
+def _net_transfers_up_to(conn: sqlite3.Connection, ts_ms: int, since_ms: int) -> float:
+    return float(
+        conn.execute(
+            "SELECT COALESCE(SUM(amount), 0) FROM transfers WHERE time_ms >= ? AND time_ms <= ?",
+            (since_ms, ts_ms),
+        ).fetchone()[0]
+        or 0.0
+    )
+
+
 def equity_floor_breached(
     conn: sqlite3.Connection,
     *,
@@ -80,24 +90,52 @@ def equity_floor_breached(
     now_ms: int | None = None,
 ) -> tuple[bool, str]:
     """True when current equity has fallen below ``frac`` of the rolling
-    high-water-mark over ``lookback_days``. The last backstop behind all
-    per-agent guardrails: catches a slow account-wide bleed."""
+    high-water-mark over ``lookback_days``. The HWM is adjusted for external
+    deposits/withdrawals so that the floor measures *trading* drawdown, not
+    capital flows."""
     now_ms = now_ms or int(time.time() * 1000)
     since = now_ms - lookback_days * 86_400_000
-    row = conn.execute(
-        "SELECT MAX(account_value) FROM equity_snapshots WHERE ts_ms >= ?", (since,)
-    ).fetchone()
-    hwm = float(row[0]) if row and row[0] is not None else None
+    snapshots = conn.execute(
+        "SELECT ts_ms, account_value FROM equity_snapshots WHERE ts_ms >= ? ORDER BY ts_ms",
+        (since,),
+    ).fetchall()
+    if not snapshots:
+        return False, "no equity history"
+
+    transfers = conn.execute(
+        "SELECT time_ms, amount FROM transfers WHERE time_ms >= ? ORDER BY time_ms",
+        (since,),
+    ).fetchall()
+
+    cumulative = 0.0
+    ti = 0
+    hwm = None
+    for ts_ms, account_value in snapshots:
+        while ti < len(transfers) and transfers[ti][0] <= ts_ms:
+            cumulative += float(transfers[ti][1])
+            ti += 1
+        adjusted = float(account_value) - cumulative
+        if hwm is None or adjusted > hwm:
+            hwm = adjusted
+
+    # Current equity may be more recent than the last snapshot; include any
+    # transfers that arrived after it.
     cur_row = conn.execute(
         "SELECT account_value FROM equity_snapshots ORDER BY ts_ms DESC LIMIT 1"
     ).fetchone()
     cur = float(cur_row[0]) if cur_row and cur_row[0] is not None else None
-    if hwm is None or cur is None or hwm <= 0:
+    if cur is None or hwm is None or hwm <= 0:
         return False, "no equity history"
+
+    for idx in range(ti, len(transfers)):
+        if transfers[idx][0] <= now_ms:
+            cumulative += float(transfers[idx][1])
+
+    cur_adj = cur - cumulative
     floor = frac * hwm
-    if cur < floor:
-        return True, f"equity ${cur:.2f} < {frac:.0%} of {lookback_days}d HWM ${hwm:.2f} (floor ${floor:.2f})"
-    return False, f"equity ${cur:.2f} ≥ floor ${floor:.2f} ({lookback_days}d HWM ${hwm:.2f})"
+    if cur_adj < floor:
+        return True, f"adj equity ${cur_adj:.2f} < {frac:.0%} of {lookback_days}d flow-adj HWM ${hwm:.2f} (floor ${floor:.2f})"
+    return False, f"adj equity ${cur_adj:.2f} ≥ floor ${floor:.2f} ({lookback_days}d flow-adj HWM ${hwm:.2f})"
 
 
 def _alert(message: str) -> None:

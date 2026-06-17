@@ -35,6 +35,19 @@ jobs:
           git fetch origin main
           git checkout origin/main -- tests/test_gate_minima.py
           uv run pytest -q tests/test_gate_minima.py
+      - name: TRUSTED path check — ralph may not edit kill, health, risk, or cost model unreviewed
+        # The autonomous loop runs on the live host's user; directory separation
+        # is not enough. Fail if this branch changed trusted safety/measurement
+        # files vs. origin/main. Operator must review and merge those manually.
+        run: |
+          git fetch origin main
+          trusted='src/hl_bot/ops/ src/hl_bot/risk/ src/hl_bot/backtest/engine.py'
+          changed=$(git diff --name-only origin/main...HEAD -- $trusted || true)
+          if [ -n "$changed" ]; then
+            echo "Trusted files changed by Ralph branch; require operator review before merge:"
+            echo "$changed"
+            exit 1
+          fi
       - name: squash-merge increment to main (green only)
         # Push the increment straight to main with the workflow's contents:write
         # token. We deliberately do NOT use `gh pr create` — repo policy forbids
