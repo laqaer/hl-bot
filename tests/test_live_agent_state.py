@@ -10,13 +10,23 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from hl_bot.cli.main import _filter_live_agents_by_state
 from hl_bot.db.schema import init_db
+from hl_bot.engine.runner import RosterEntry, split_roster
+from hl_bot.supervisor.goals import AgentGoals
 
 
 @dataclass
 class DummyAgent:
     name: str
+    is_live: bool = False
+
+
+def _goals(name, roster="live"):
+    return AgentGoals.model_validate({"agent": name, "roster": roster})
+
+
+def _entry(name, roster="live"):
+    return RosterEntry(agent=DummyAgent(name), goals=_goals(name, roster))
 
 
 def test_live_roster_requires_enabled_live_mode(tmp_path):
@@ -31,20 +41,18 @@ def test_live_roster_requires_enabled_live_mode(tmp_path):
         "INSERT INTO agent_state(agent, mode, enabled) VALUES('basis_v1', 'live_small', 0)"
     )
 
-    agents = [DummyAgent("femr_v1"), DummyAgent("twap_mr_v1"), DummyAgent("basis_v1")]
-    live_agents, skipped = _filter_live_agents_by_state(conn, agents)
+    roster = [_entry("femr_v1"), _entry("twap_mr_v1"), _entry("basis_v1")]
+    live, paper = split_roster(conn, roster, live=True)
 
-    assert [a.name for a in live_agents] == ["femr_v1"]
-    assert skipped == {
-        "twap_mr_v1": "mode=paper enabled=1",
-        "basis_v1": "mode=live_small enabled=0",
-    }
+    assert [e.agent.name for e in live] == ["femr_v1"]
+    assert {e.agent.name for e in paper} == {"twap_mr_v1"}
+    assert "basis_v1" not in {e.agent.name for e in live + paper}
 
 
 def test_missing_agent_state_is_paper_by_default(tmp_path):
     conn = init_db(tmp_path / "state.sqlite")
 
-    live_agents, skipped = _filter_live_agents_by_state(conn, [DummyAgent("liq_cascade_v1")])
+    live, paper = split_roster(conn, [_entry("liq_cascade_v1")], live=True)
 
-    assert live_agents == []
-    assert skipped == {"liq_cascade_v1": "mode=paper enabled=1"}
+    assert live == []
+    assert [e.agent.name for e in paper] == ["liq_cascade_v1"]

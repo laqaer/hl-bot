@@ -885,3 +885,24 @@ not done.
 **Evidence.** `uv run pytest -q` → **339 passed**. `uv run ruff check .` → All checks passed.
 
 **What's next.** PR 2 of Phase 3: consolidate `femr_tick` into `hlbot run --max-cycles 1`, update host scripts and docs.
+
+---
+
+## Iteration — 2026-06-16 — Phase 3 execution quality PR 2: consolidate `femr_tick` into `hlbot run`
+
+**Context.** Phase 3 PR1 (userFills WS + reduce-only maker exits) merged. This slice removes the long-deprecated duplicated `femr_tick` live loop and routes host ticks through the consolidated `hlbot run` engine.
+
+**Changed.**
+- **`src/hl_bot/cli/main.py::femr_tick` is now a thin wrapper.** It validates `execution`, prints a deprecation warning, and calls `run(live=live, execution=execution, max_cycles=1)`.
+- **Removed ~390 lines of duplicated logic** from `femr_tick`: hard-coded roster, inline account fetch/position parsing, allocator/clamp logic, manual maker lifecycle, and `execute_decisions` router path.
+- **Removed `_filter_live_agents_by_state`**; the equivalent gating already lives in `engine/runner.py::split_roster`.
+- **Updated `tests/test_live_agent_state.py`** to exercise `split_roster` directly.
+- **Host scripts and docs updated:**
+  - `deploy/run-tick.sh` now runs `uv run hlbot run --max-cycles 1`.
+  - `docs/INFRA.md` example `ExecStart` updated.
+  - `docs/REVIEW.md` M3 finding marked resolved.
+- **New test `tests/test_femr_tick.py`** verifies delegation to `run()` and rejection of invalid execution modes.
+
+**Evidence.** `uv run pytest -q` → **336 passed**. `uv run ruff check .` → All checks passed.
+
+**What's next.** Phase 3 complete once PR #36 is merged. Host-side actions remain: verify `hlbot ws --user <addr>` receives userFills on the next live session, and run the nightly dislocation sweep with the new V3-provenance reporting.

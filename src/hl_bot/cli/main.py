@@ -19,7 +19,6 @@ from ..agents.funding_arb import FundingArbAgent
 from ..agents.funding_carry import FundingCarryAgent
 from ..agents.funding_crowding_fade import FundingCrowdingFadeAgent
 from ..agents.liq_cascade import LiqCascadeAgent
-from ..agents.meta_allocator import MetaAllocator, MetaAllocatorConfig
 from ..agents.new_listing_reversion import NewListingReversionAgent
 from ..agents.runtime import run_tick
 from ..agents.spot_perp_carry import SpotPerpCarryAgent
@@ -29,7 +28,6 @@ from ..agents.veto import VetoAgent
 from ..agents.xfund_carry import XFundCarryAgent
 from ..config import CONFIG_DIR, Settings
 from ..db.schema import init_db
-from ..engine.views import enrich_view as _enrich_view
 from ..ingest.accrual import accrue_xvenue_funding
 from ..ingest.hyperliquid import ingest_fills, ingest_funding, ingest_transfers, snapshot_equity
 from ..reports.daily import build as build_report
@@ -40,8 +38,6 @@ from ..research.strategy_health import (
     build_proposal_document,
     propose_overrides,
 )
-from ..risk.allocation import resolve_agent_caps
-from ..risk.scaling import compute_notional_cap, spot_usdc_from_state, unified_portfolio_value
 from ..scoring.metrics import score_all
 from ..supervisor.loop import supervise
 
@@ -53,25 +49,6 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name
 def _conn():
     s = Settings.from_env()
     return init_db(s.db_path), s
-
-
-def _filter_live_agents_by_state(conn, agents):
-    """Return agents allowed to place live orders plus skipped reasons.
-
-    Paper/default state is safe: an agent must be explicitly enabled and in
-    live_small/live mode before it enters the live execution roster.
-    """
-    rows = conn.execute("SELECT agent, mode, enabled FROM agent_state").fetchall()
-    state = {r["agent"]: (r["mode"], int(r["enabled"])) for r in rows}
-    live_agents = []
-    skipped: dict[str, str] = {}
-    for agent in agents:
-        mode, enabled = state.get(agent.name, ("paper", 1))
-        if enabled == 1 and mode in ("live_small", "live"):
-            live_agents.append(agent)
-        else:
-            skipped[agent.name] = f"mode={mode} enabled={enabled}"
-    return live_agents, skipped
 
 
 @app.command()
@@ -441,387 +418,25 @@ def _ping_healthcheck() -> None:
 
 @app.command()
 def femr_tick(live: bool = False, execution: str = "auto"):
-    """DEPRECATED — one-shot tick of the full agent roster, kept for manual
-    ops; production runs `hlbot run` (consolidated engine loop).
+    """DEPRECATED — one-shot tick of the full agent roster.
 
-    paper (default): log decisions only, no orders placed.
-    live: place real orders on MAIN account, gated by guardrails.
-          Bot only touches positions it itself opened (cloid-tagged).
-    execution: 'auto' (default) routes each agent's entries per its own
-          execution mode — carry/funding agents post maker, momentum agents
-          cross taker; 'maker'/'taker' force one mode for every agent.
-          Exits always go taker.
+    Use `hlbot run --max-cycles 1` instead. This wrapper exists so existing
+    host scripts and muscle memory keep working until they are migrated.
     """
-    import os as _os
-
-    from ..agents.decisions import log_decision
-    from ..agents.runtime import fetch_market_view
-    from ..exec.orders import (
-        HL_TRADER_ADDRESS,
-        GuardrailConfig,
-        bot_owned_coins,
-        build_exchange,
-        check_guardrails,
-        dynamic_daily_loss_limit,
-        reconcile_positions,
-        telegram_alert,
-    )
-    from ..exec.router import execute_decisions
+    import warnings
 
     if execution not in ("auto", "maker", "taker"):
         console.print(f"[red]--execution must be auto|maker|taker, got {execution}[/red]")
         raise typer.Exit(1)
-
-    conn, s = _conn()
-    ws_path = _os.environ.get("HLBOT_WS_SNAPSHOT")
-
-    # Load auto-tuner overrides if present
-    overrides_path = Path(__file__).resolve().parents[3] / "configs" / "agent_overrides.json"
-    overrides: dict = {}
-    if overrides_path.exists():
-        try:
-            overrides = json.loads(overrides_path.read_text())
-        except (ValueError, OSError):
-            overrides = {}
-
-    def _cfg(agent_name: str, defaults: dict) -> dict:
-        merged = dict(defaults)
-        merged.update(overrides.get(agent_name) or {})
-        return merged
-
-    import httpx as _httpx
-    with _httpx.Client(timeout=10) as cli:
-        st = cli.post(
-            s.hl_api_url + "/info",
-            json={"type": "clearinghouseState", "user": HL_TRADER_ADDRESS},
-        ).json() or {}
-        try:
-            spot_st = cli.post(
-                s.hl_api_url + "/info",
-                json={"type": "spotClearinghouseState", "user": HL_TRADER_ADDRESS},
-            ).json() or {}
-        except _httpx.HTTPError:
-            spot_st = {}
-    acct_val = float((st.get("marginSummary") or {}).get("accountValue", 0) or 0)
-    spot_usdc = spot_usdc_from_state(spot_st)
-    portfolio_value = unified_portfolio_value(st, spot_st)
-    withdrawable = float(st.get("withdrawable", 0) or 0)
-    risk_cap = compute_notional_cap(conn, live_portfolio_value=portfolio_value)
-    pv_label = "—" if risk_cap.portfolio_value is None else f"${risk_cap.portfolio_value:.2f}"
-    console.print(
-        "[bold]risk cap[/bold]: "
-        f"bot-open <= ${risk_cap.max_total_notional:.0f}; "
-        f"per-position <= ${risk_cap.max_per_position_notional:.0f} "
-        f"({risk_cap.multiplier:g}x / {risk_cap.per_position_multiplier:g}x live unified portfolio {pv_label}; "
-        f"perp ${acct_val:.2f} + spot USDC ${spot_usdc:.2f}; "
-        f"ceiling={'none' if risk_cap.ceiling_notional is None else f'${risk_cap.ceiling_notional:.0f}'}; "
-        f"source={risk_cap.source})"
+    console.print("[yellow]WARNING: femr_tick is deprecated; "
+                  "use `hlbot run --max-cycles 1`[/yellow]")
+    warnings.warn(
+        "femr_tick is deprecated; use `hlbot run --max-cycles 1`",
+        DeprecationWarning,
+        stacklevel=2,
     )
-
-    # Instantiate the full agent roster. In paper mode, evaluate everything. In
-    # live mode, only agents explicitly enabled and promoted to live_small/live
-    # in agent_state are allowed into the execution roster.
-    # Roster: confirmed post-cost bleeders (twap_mr_v1 taker, basis_v1) are
-    # retired (configs/*.yaml roster: retired) so they stop consuming
-    # MetaAllocator weight; the maker-designed carry strategies are in.
-    agents = [
-        FemrAgent(config=_cfg("femr_v1", {
-            "max_notional_per_trade": 20.0,
-            "max_total_notional": 40.0,
-            "funding_enter_per_hr": 0.00015,
-            "funding_exit_per_hr": 0.00005,
-        }), conn=conn),
-        XFundCarryAgent(config=_cfg("xfund_carry_v1", {}), conn=conn),
-        FundingCarryAgent(config=_cfg("funding_carry_v1", {}), conn=conn),
-        TwapMrRegimeAgent(config=_cfg("twap_mr_regime_v1", {}), conn=conn),
-        BasisAgent(config=_cfg("basis_v1", {}), conn=conn),
-        # liq_cascade is entry-dead without a WS snapshot (its only real signal
-        # source — REVIEW C6) but MUST stay on the roster: its stop/max-hold
-        # exits and position reconciliation manage anything it already holds.
-        LiqCascadeAgent(config=_cfg("liq_cascade_v1", {}), conn=conn),
-    ]
-    paper_sim_agents: list = []
-    if live and not ws_path:
-        console.print("[dim]liq_cascade_v1: no HLBOT_WS_SNAPSHOT — no liquidation "
-                      "signal, entries impossible (exits still managed)[/dim]")
-    if live:
-        heartbeat = Path(str(s.db_path.parent / "run_heartbeat"))
-        if heartbeat.exists() and (time.time() - heartbeat.stat().st_mtime) < 60:
-            console.print("[red]REFUSED: hlbot run is active (run_heartbeat fresh) — "
-                          "two live executors would duplicate orders[/red]")
-            raise typer.Exit(2)
-        full_roster = agents
-        agents, skipped_live = _filter_live_agents_by_state(conn, agents)
-        disabled = {
-            r["agent"] for r in
-            conn.execute("SELECT agent FROM agent_state WHERE enabled = 0").fetchall()
-        }
-        live_names = {a.name for a in agents}
-        # Paper-mode (but not paused) agents keep trading in the simulator so
-        # their scorecards accrue the evidence auto-promotion gates on.
-        paper_sim_agents = [
-            a for a in full_roster
-            if a.name not in live_names and a.name not in disabled
-        ]
-        if skipped_live:
-            console.print(
-                "[yellow]live roster skipped[/yellow]: "
-                + ", ".join(f"{name}({why})" for name, why in skipped_live.items())
-            )
-        if not agents:
-            console.print("[yellow]LIVE MODE but no agent_state rows are enabled in live_small/live; paper simulation only[/yellow]")
-
-    # Allocator: rebalance per-agent caps from rolling 7d performance.
-    # The approved live risk rule is dynamic but layered:
-    #   - aggregate bot-open notional can reach 5x live unified portfolio value
-    #   - any SINGLE agent is limited to 1x portfolio value (max_alloc), so one
-    #     agent can never consume the whole 5x portfolio cap.
-    # resolve_agent_caps applies the final rule: explicit (sub-legacy) configured
-    # caps win, legacy broad $1000 ceilings are replaced by the dynamic 1x cap,
-    # and configured per-trade sizes are preserved (never raised).
-    allocator = MetaAllocator(
-        [a.name for a in agents],
-        MetaAllocatorConfig(
-            total_capital=risk_cap.max_total_notional,
-            max_alloc=risk_cap.max_per_position_notional,
-        ),
-    )
-    allocs = allocator.allocate(conn)
-    configured_caps_in = {
-        a.name: {
-            "max_total_notional": float(getattr(a.cfg, "max_total_notional", float("inf"))),
-            "max_notional_per_trade": float(getattr(a.cfg, "max_notional_per_trade", float("inf"))),
-        }
-        for a in agents if hasattr(a, "cfg")
-    }
-    resolved = resolve_agent_caps(allocs, risk_cap, configured_caps_in)
-    if live:
-        # Same clamp the engine applies: live_small runs deliberately tiny
-        # regardless of allocator grant (this path skipped it — a live_small
-        # agent could size at the full 1x-portfolio cap).
-        from ..engine.runner import load_agent_goals
-        from ..risk.allocation import apply_mode_sizing
-        modes = {r["agent"]: r["mode"] for r in
-                 conn.execute("SELECT agent, mode FROM agent_state").fetchall()}
-        goals_by_agent = load_agent_goals(CONFIG_DIR)
-        for name, cap in list(resolved.items()):
-            g = goals_by_agent.get(name)
-            resolved[name] = apply_mode_sizing(
-                cap, modes.get(name, "paper"), g.sizing if g else None)
-    effective_caps: dict[str, float] = {}
-    effective_order_caps: dict[str, float] = {}
-    for a in agents:
-        cap = resolved.get(a.name)
-        if cap is None:
-            effective_caps[a.name] = allocs.get(a.name, 0.0)
-            continue
-        effective_caps[a.name] = cap.max_total_notional
-        if hasattr(a, "cfg") and hasattr(a.cfg, "max_total_notional"):
-            a.cfg.max_total_notional = cap.max_total_notional
-            if hasattr(a.cfg, "max_notional_per_trade"):
-                a.cfg.max_notional_per_trade = cap.max_notional_per_trade
-                effective_order_caps[a.name] = cap.max_notional_per_trade
-    console.print("[bold]allocator caps[/bold]: " +
-                  ", ".join(
-                      f"{n}=total ${effective_caps.get(n, v):.0f}/pos ${effective_order_caps.get(n, 0):.0f}"
-                      for n, v in allocs.items()
-                  ))
-
-    # Entry execution per agent: 'auto' asks each agent (config override or
-    # class default — carry agents post maker, momentum crosses taker);
-    # an explicit --execution maker/taker forces every agent.
-    exec_modes = {
-        a.name: (a.execution_mode() if execution == "auto" else execution)
-        for a in agents
-    }
-    console.print("[bold]execution[/bold]: " +
-                  ", ".join(f"{n}={m}" for n, m in exec_modes.items()))
-
-    view = fetch_market_view(s.hl_api_url, [])
-    _enrich_view(view, s.hl_api_url, view.extra.get("day_ntl_vlm", {}),
-                 universe_size=s.enrich_universe_size, max_workers=s.enrich_max_workers)
-
-    # Overlay a fresh WS snapshot if available (sub-second mids, L2 book, and a
-    # REAL liquidations feed for liq_cascade). Purely additive; REST is the
-    # fallback when no fresh snapshot exists. Opt-in via HLBOT_WS_SNAPSHOT.
-    if ws_path:
-        from ..ingest.ws import load_fresh_snapshot
-        snap = load_fresh_snapshot(ws_path, max_age_s=30.0)
-        if snap is not None:
-            view.mids.update(snap.mids)
-            view.funding.update(snap.funding)
-            if snap.book_top:
-                view.book_top.update(snap.book_top)
-            liqs = snap.extra.get("liquidations") or []
-            if liqs:
-                view.extra["liquidations"] = liqs
-            console.print(f"[dim]ws snapshot overlaid: {len(snap.mids)} mids, "
-                          f"{len(liqs)} liqs[/dim]")
-
-    # Build position list from HL truth
-    all_positions = []
-    for ap in st.get("assetPositions", []) or []:
-        pos = ap.get("position", {}) or {}
-        with contextlib.suppress(TypeError, ValueError):
-            all_positions.append({
-                "coin": pos.get("coin"),
-                "szi": float(pos.get("szi", 0) or 0),
-                "entry_px": float(pos.get("entryPx", 0) or 0),
-                "position_value": float(pos.get("positionValue", 0) or 0),
-                "unrealized_pnl": float(pos.get("unrealizedPnl", 0) or 0),
-                "liquidation_px": float(pos.get("liquidationPx", 0) or 0),
-                "leverage": (pos.get("leverage") or {}).get("value"),
-                "margin_used": float(pos.get("marginUsed", 0) or 0),
-            })
-
-    # RECONCILE first — clear stale DB ownership for each agent independently
-    reconciled_all: dict[str, list[str]] = {}
-    for a in agents:
-        r = reconcile_positions(conn, all_positions, agent=a.name)
-        if r:
-            reconciled_all[a.name] = r
-    if reconciled_all:
-        console.print(f"[yellow]reconciled stale ownership: {reconciled_all}[/yellow]")
-
-    # FEMR sees only its own owned coins (adopts handled internally by name match).
-    owned_femr = bot_owned_coins(conn, agent="femr_v1")
-    bot_positions = [p for p in all_positions if p["coin"] in owned_femr]
-    view.extra["live_positions"] = bot_positions
-
-    owned_all: set[str] = set()
-    for a in agents:
-        owned_all |= bot_owned_coins(conn, agent=a.name)
-    manual_coins = [p["coin"] for p in all_positions if p["coin"] not in owned_all]
-    console.print(
-        f"[dim]market: {len(view.mids)} coins, {len(view.funding)} funding · "
-        f"candles: {len(view.extra.get('candles_1h', {}))} · "
-        f"spot: {sorted(view.extra.get('spot_mids', {}).keys())} · "
-        f"liqs: {len(view.extra.get('liquidations', []))} · "
-        f"acct ${acct_val:.2f}, free ${withdrawable:.2f} · "
-        f"bot-owned: {sorted(owned_all) or '∅'} · manual: {manual_coins or '∅'}[/dim]"
-    )
-
-    paper_names = {a.name for a in paper_sim_agents}
-    all_decisions = []
-    for agent in [*agents, *paper_sim_agents]:
-        decisions = agent.decide(view)
-        for d in decisions:
-            d.is_paper = (not live) or (agent.name in paper_names)
-            # Only log non-place/flatten actions immediately (holds skipped, rejected later).
-            # `place` and `flatten` are logged ONLY after exchange acceptance in the execution
-            # loop below (or after a simulated fill in the paper simulator) — otherwise the
-            # cooldown check would see our own intent rows and block subsequent ticks forever.
-            if d.action not in ("hold", "place", "flatten"):
-                log_decision(conn, d)
-            all_decisions.append(d)
-
-    console.print(f"[green]✓[/green] {len(all_decisions)} decisions (live={live})")
-    for d in all_decisions:
-        tag = "" if d.action != "hold" else "[dim]"
-        end = "" if d.action != "hold" else "[/dim]"
-        console.print(f"  {tag}{d.agent} {d.action} {d.coin or ''} :: {d.reasoning}{end}")
-
-    from ..sim.paper import simulate_cycle
-
-    if not live:
-        # Every decision is paper: simulate fills so paper performance is
-        # scoreable (n_trades/edge/sharpe gates can actually fire).
-        sim = simulate_cycle(
-            conn, view,
-            [d for d in all_decisions if d.action in ("place", "flatten")],
-            maker_entries=(execution == "maker"),
-        )
-        console.print(f"[yellow]PAPER MODE[/yellow] — {sim.summary()}")
-        return
-
-    paper_decisions = [
-        d for d in all_decisions
-        if d.agent in paper_names and d.action in ("place", "flatten")
-    ]
-    if paper_names:
-        sim = simulate_cycle(conn, view, paper_decisions,
-                             maker_entries=(execution == "maker"))
-        console.print(f"[dim]{sim.summary()}[/dim]")
-    if not agents:
-        return  # nothing enabled for live execution
-
-    from ..ops.kill import kill_active
-    kill_reason = kill_active(s.db_path.parent)
-    if kill_reason:
-        console.print(
-            f"[red]KILL ACTIVE[/red]: {kill_reason} — "
-            "new entries blocked; flatten/cancel still allowed (`hlbot resume` to clear)"
-        )
-
-    try:
-        exchange, info, _ = build_exchange()
-    except Exception as e:  # noqa: BLE001
-        console.print(f"[red]FATAL: build_exchange failed: {e}[/red]")
-        telegram_alert(f"🚨 hl-bot: build_exchange failed: {e}")
-        raise typer.Exit(2) from e
-
-    ok, why = check_guardrails(
-        conn,
-        info,
-        GuardrailConfig(
-            min_bot_capital=40.0,
-            max_daily_loss=dynamic_daily_loss_limit(portfolio_value),
-            max_total_notional=risk_cap.max_total_notional,
-            max_concurrent_positions=4,
-        ),
-        agents=[a.name for a in agents],
-    )
-    if not ok:
-        console.print(f"[red]HALT new entries[/red]: {why}")
-        console.print("[yellow]Flatten/close decisions are still allowed for risk reduction.[/yellow]")
-    else:
-        console.print(f"[green]guardrails[/green]: {why}")
-
-    # Maker execution prep: refresh fills, promote filled resting orders to owned,
-    # cancel stale quotes. Runs when any agent quotes maker this tick OR any
-    # agent still has a working quote from a previous tick — flipping an agent
-    # (or the whole tick) to taker must never orphan a live resting order.
-    from ..exec.maker import working_orders
-    working_by_agent = {a.name: working_orders(conn, a.name) for a in agents}
-    if any(m == "maker" for m in exec_modes.values()) or any(working_by_agent.values()):
-        from ..exec.maker import log_cancel, reconcile_maker_fills, stale_working
-        from ..exec.orders import cancel_order
-        from ..ingest.hyperliquid import ingest_fills
-        ingest_fills(conn, s.hl_address, s.hl_api_url)  # so cloid fills are visible
-        for a in agents:
-            working = working_by_agent[a.name]
-            got = reconcile_maker_fills(conn, a.name, working)
-            for o in stale_working(working):
-                if o["coin"] in got or o.get("oid") is None:
-                    continue
-                cancel_order(exchange, o["coin"], o["oid"])
-                log_cancel(conn, a.name, o)
-            if got:
-                console.print(f"[green]maker fills[/green] {a.name}: {got}")
-        conn.commit()
-
-    # Execute through the single audited router (exec/router.py): per-agent
-    # maker/taker entries (maker quotes priced off the live book), taker exits,
-    # guardrail/cooldown gates, fill-confirmed decision logging. The sticky
-    # kill switch vetoes new entries; risk-reducing flatten/closes still run.
-    outcomes = execute_decisions(
-        conn, exchange, all_decisions,
-        exec_modes=exec_modes, entries_allowed=ok and not kill_reason,
-        book_top=view.book_top,
-    )
-    for oc in outcomes:
-        if oc.status == "filled":
-            console.print(f"[bold green]FILLED[/bold green] {oc.agent} {oc.coin} {oc.sz} @ ${oc.px} [{oc.mode}]")
-        elif oc.status == "resting":
-            console.print(f"[cyan]RESTING[/cyan] {oc.agent} {oc.coin} {oc.sz} @ ${oc.px} {oc.detail}")
-        elif oc.status == "closed":
-            console.print(f"[bold]CLOSED[/bold] {oc.agent} {oc.coin} @ ${oc.px}")
-        elif oc.status == "rejected":
-            console.print(f"[red]REJECT[/red] {oc.agent} {oc.coin}: {oc.detail}")
-        elif oc.status == "close_failed":
-            console.print(f"[red]CLOSE FAILED[/red] {oc.agent} {oc.coin}: {oc.detail}")
-        else:
-            console.print(f"[dim]SKIP {oc.agent} {oc.coin}: {oc.detail}[/dim]")
+    # Delegate to the consolidated engine loop with a single-cycle exit.
+    run(live=live, execution=execution, max_cycles=1)
 
 
 @app.command()
