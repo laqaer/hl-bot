@@ -1059,12 +1059,13 @@ def doctor(require_live: bool = False):
     """
     from pathlib import Path as _Path
 
-    from ..exec.orders import DEFAULT_API_WALLET_ENV
+    from ..exec.orders import DEFAULT_API_WALLET_ENV, HL_TRADER_ADDRESS
     from ..ops.doctor import render, run_doctor
 
     _, s = _conn()
     checks = run_doctor(
         hl_address=s.hl_address,
+        trader_address=HL_TRADER_ADDRESS or None,
         api_url=s.hl_api_url,
         db_path=s.db_path,
         config_dir=_Path(CONFIG_DIR),

@@ -84,7 +84,8 @@ def test_doctor_ready_with_valid_setup(conn, tmp_path):
     cfg.mkdir()
     (cfg / "x.yaml").write_text("agent: x\nmode: paper\n")
     checks = run_doctor(
-        hl_address="0xabc", api_url="https://api.hyperliquid.xyz",
+        hl_address="0xabc", trader_address="0xabc",
+        api_url="https://api.hyperliquid.xyz",
         db_path=tmp_path / "d.sqlite", config_dir=cfg,
         api_wallet_path=tmp_path / "nope.env", require_live=False,
     )
@@ -97,7 +98,8 @@ def test_doctor_not_ready_without_address(conn, tmp_path):
     cfg.mkdir()
     (cfg / "x.yaml").write_text("agent: x\nmode: paper\n")
     checks = run_doctor(
-        hl_address="", api_url="https://api.hyperliquid.xyz",
+        hl_address="", trader_address=None,
+        api_url="https://api.hyperliquid.xyz",
         db_path=tmp_path / "d.sqlite", config_dir=cfg,
         api_wallet_path=tmp_path / "nope.env",
     )
@@ -110,7 +112,8 @@ def test_doctor_live_requires_wallet(conn, tmp_path):
     cfg.mkdir()
     (cfg / "x.yaml").write_text("agent: x\nmode: paper\n")
     checks = run_doctor(
-        hl_address="0xabc", api_url="https://api.hyperliquid.xyz",
+        hl_address="0xabc", trader_address="0xabc",
+        api_url="https://api.hyperliquid.xyz",
         db_path=tmp_path / "d.sqlite", config_dir=cfg,
         api_wallet_path=tmp_path / "nope.env", require_live=True,
     )
