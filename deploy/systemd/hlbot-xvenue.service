@@ -1,0 +1,17 @@
+[Unit]
+Description=hl-bot cross-venue funding accrual (S5)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=hlbot
+WorkingDirectory=/opt/hl-bot
+EnvironmentFile=/etc/hl-bot/env
+ExecStart=/opt/hl-bot/deploy/run-xvenue.sh
+TimeoutStartSec=300
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/opt/hl-bot
+PrivateTmp=true

@@ -134,3 +134,23 @@ def test_accrue_cycle_runs_all_legs_and_wires_view(conn):
     assert out["samples"] == 2 and out["listings"] == 1
     # NEW is age 0 (just listed this cycle) -> within day 1 -> wired
     assert v.extra["new_listings"].get("NEW", {}).get("ref_px") == 5.0
+
+
+def test_accrue_cycle_uses_configured_oi_lookback(conn):
+    # Use non-zero timestamps (now_ms=0 is falsy and falls back to _now_ms()).
+    # OI=100 at t=30min, 1h; OI=110 at t=1h12min. At t=1h20min with current OI=110:
+    #   lookback 5min  -> ref at 1h15min = 110 -> change 0
+    #   lookback 25min -> ref at 55min   = 100 -> change +10%
+    base = HOUR
+    accrue_market_samples(conn, _view({"BTC": 100.0}, oi={"BTC": 100.0}),
+                          now_ms=base - 30 * 60 * 1000, min_interval_s=0)
+    accrue_market_samples(conn, _view({"BTC": 100.0}, oi={"BTC": 100.0}),
+                          now_ms=base, min_interval_s=0)
+    accrue_market_samples(conn, _view({"BTC": 100.0}, oi={"BTC": 110.0}),
+                          now_ms=base + 12 * 60 * 1000, min_interval_s=0)
+    v_short = _view({"BTC": 100.0}, oi={"BTC": 110.0})
+    accrue_cycle(conn, v_short, now_ms=base + 20 * 60 * 1000, oi_lookback_s=5 * 60)
+    v_long = _view({"BTC": 100.0}, oi={"BTC": 110.0})
+    accrue_cycle(conn, v_long, now_ms=base + 20 * 60 * 1000, oi_lookback_s=25 * 60)
+    assert v_short.extra["oi_change"].get("BTC") == pytest.approx(0.0)
+    assert v_long.extra["oi_change"].get("BTC") == pytest.approx(0.1)

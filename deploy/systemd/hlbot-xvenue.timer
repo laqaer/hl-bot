@@ -1,0 +1,10 @@
+[Unit]
+Description=Hourly hl-bot cross-venue funding accrual
+
+[Timer]
+OnCalendar=hourly
+RandomizedDelaySec=120
+Persistent=true
+
+[Install]
+WantedBy=timers.target

@@ -260,7 +260,14 @@ def run_cycle(
     # needs. Best-effort and additive; must run before decide so fresh listings
     # are visible this cycle.
     from ..ingest.accrual import accrue_cycle
-    acc = accrue_cycle(conn, view, now_ms=now_ms)
+    # Use the S8 agent's configured OI lookback so live/backtest/confirm see the
+    # same crowding signal. Default 1800s if no S8 agent is rostered.
+    oi_lookback_s = 1800.0
+    for e in roster:
+        if "oi_crowding" in e.agent.name and hasattr(e.agent, "cfg"):
+            oi_lookback_s = float(getattr(e.agent.cfg, "lookback_s", oi_lookback_s))
+            break
+    acc = accrue_cycle(conn, view, now_ms=now_ms, oi_lookback_s=oi_lookback_s)
     if acc.get("listings"):
         res.events.append(f"ACCRUE: {acc['listings']} new listing(s) logged")
 

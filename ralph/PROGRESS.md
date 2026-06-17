@@ -829,3 +829,22 @@ not done.
 **Evidence.** `uv run pytest -q` → **331 passed** (new: `tests/test_transfers.py`, V4 regression in `tests/test_metrics_per_agent.py`). `uv run ruff check .` → All checks passed.
 
 **What's next.** Phase 1 complete. Recommended next track: Phase 2 forward-edge instrumentation (wire xvenue funding host job, S8 sweep config + persisted results, expose lookback) OR continue host-side actions (dislocation sweep, WS liq feed verification, S8 host backtest).
+
+---
+
+## Iteration — 2026-06-16 — Phase 2 forward-edge instrumentation
+
+**Context.** Phase 1 safety/measurement PR (#32) merged. Moved to Phase 2: instrument the forward-soaking edges so they can iterate on real evidence and the host can operate them autonomously.
+
+**Changed.**
+- **S5 — Cross-venue funding accrual host job.**
+  - New CLI `hlbot accrue-xvenue --coins ...` fetches Binance/Bybit funding and writes to `xvenue_funding`.
+  - `deploy/run-xvenue.sh` + `deploy/systemd/hlbot-xvenue.{service,timer}` run hourly.
+  - `deploy/install.sh` enables the timer on fresh deploys.
+- **S8 — OI-crowding reversal iteration harness.**
+  - `OICrowdingReversalConfig` now exposes `lookback_s`; `engine/runner.py` reads the rostered S8 config and passes it to `accrue_cycle`/`build_oi_change_view` so live, backtest, and confirm all use the same crowding signal.
+  - `hlbot s8-oi-backtest --sweep` persists ranked JSON + Markdown reports under `data/sweeps/` and `research/results/`, matching the standard sweep workflow.
+
+**Evidence.** `uv run pytest -q` → **333 passed** (`tests/test_xvenue_cli.py`, `tests/test_accrual.py` lookback case). `uv run ruff check .` → All checks passed.
+
+**What's next.** Either finish Phase 2 with dislocation sweep improvements (use accrued frames, load overrides, taker exec-quality telemetry) or move to Phase 3 execution quality (userFills WS, reduce-only exits, path consolidation). Host-side actions remain: run the nightly dislocation sweep, run `hlbot ws` through volatility to verify the liq feed, and run `hlbot s8-oi-backtest --sweep` on the host.
