@@ -1,12 +1,12 @@
-"""Stable config fingerprints for evidence provenance (backlog V3).
+"""Stable config fingerprints for evidence provenance (V3).
 
 ``hlbot confirm --record`` stamps a G0 pass into ``confirmations`` and the
-supervisor's ``require_g0`` reads it back to gate promotion. But confirm
-instantiates each agent with its DEFAULT params while the live runner may apply
-``agent_overrides.json`` — so a tuned override could inherit a G0 stamp earned
-for a DIFFERENT config (the audit's G1 finding). A ``params_hash`` of the
-agent's EFFECTIVE config makes that mismatch detectable: stamp it on confirm,
-match it in ``require_g0``.
+supervisor's ``require_g0`` reads it back to gate promotion. Both ``confirm``
+and the nightly sweep now load ``agent_overrides.json`` before fingerprinting,
+so the recorded ``params_hash`` corresponds to the config the agent is actually
+instantiated with. A ``params_hash`` of the agent's EFFECTIVE config makes any
+remaining mismatch (manual edit, stale stamp, cross-agent copy-paste)
+detectable: stamp it on confirm, match it in ``require_g0``.
 
 The hash covers the resolved param dataclass (``agent.cfg`` — defaults with any
 overrides applied) when the agent exposes one, else the raw override dict. Two

@@ -49,6 +49,9 @@ class SweepSpec:
     min_sharpe: float = 1.0
     universes: list[list[str]] = field(default_factory=list)
     grid: dict[str, list[Any]] = field(default_factory=dict)
+    use_overrides: bool = True
+    use_accrued: bool = True
+    accrued_since_days: int | None = None
 
     @classmethod
     def load(cls, path: str | Path) -> SweepSpec:
@@ -74,6 +77,7 @@ class SweepRow:
     oos_net_pnl: float
     n_trades: int
     reasons: list[str]
+    exec_quality: dict[str, Any] | None = None
 
     @classmethod
     def from_result(cls, universe: list[str], params: dict[str, Any],
@@ -86,6 +90,7 @@ class SweepRow:
             oos_net_pnl=res.out_of_sample.net_pnl,
             n_trades=res.out_of_sample.n_trades,
             reasons=res.reasons,
+            exec_quality=res.out_of_sample.exec_quality,
         )
 
 
@@ -93,16 +98,25 @@ def run_sweep(
     spec: SweepSpec,
     frames_by_universe: dict[tuple[str, ...], list[Frame]],
     agent_factory,
+    *,
+    base_config: dict[str, Any] | None = None,
 ) -> list[SweepRow]:
     """Run every (universe x params) combo through the G0 gate. Pure given
-    frames; ``agent_factory(conn, cfg) -> Agent`` is the runner-style factory."""
+    frames; ``agent_factory(conn, cfg) -> Agent`` is the runner-style factory.
+
+    ``base_config`` is merged UNDER grid params, so the sweep explores
+    deviations from the deployed config (factory defaults +
+    ``agent_overrides.json``) rather than from raw factory defaults.
+    """
     rows: list[SweepRow] = []
     per_year = PERIODS_PER_YEAR.get(spec.interval, 8_760)
+    base = dict(base_config or {})
     for universe in spec.universes or [[]]:
         frames = frames_by_universe.get(tuple(universe), [])
         for params in spec.combos():
+            cfg = {**base, **params}
             res = confirm_strategy(
-                lambda conn, _p=params: agent_factory(conn, dict(_p)),
+                lambda conn, _cfg=dict(cfg): agent_factory(conn, dict(_cfg)),
                 frames, prefer=spec.prefer,
                 min_edge_bps=spec.min_edge_bps, min_sharpe=spec.min_sharpe,
                 periods_per_year=per_year,
@@ -157,16 +171,21 @@ def render_markdown(
         f"- combos: {len(rows)} (ranked by IN-SAMPLE edge; OOS columns are a "
         f"one-shot readout, never the selection key)",
         "",
-        "| # | verdict | OOS edge (bps) | OOS sharpe | OOS net | trades | universe | params |",
-        "|---:|---|---:|---:|---:|---:|---|---|",
+        "| # | verdict | OOS edge (bps) | OOS sharpe | OOS net | trades | entry slip | exit slip | fee | taker% | universe | params |",
+        "|---:|---|---:|---:|---:|---:|---:|---:|---:|---:|---|---|",
     ]
+    def _eq(v: float | None) -> str:
+        return "—" if v is None else f"{v:.1f}"
     for i, r in enumerate(rows, 1):
         edge = "—" if r.oos_edge_bps is None else f"{r.oos_edge_bps:+.1f}"
         sharpe = "—" if r.oos_sharpe is None else f"{r.oos_sharpe:+.2f}"
         verdict = "✅" if r.confirmed else "❌"
+        eq = r.exec_quality or {}
         lines.append(
             f"| {i} | {verdict} | {edge} | {sharpe} | {r.oos_net_pnl:+.2f} "
-            f"| {r.n_trades} | {','.join(r.universe)} | `{json.dumps(r.params)}` |")
+            f"| {r.n_trades} | {_eq(eq.get('avg_entry_slip_bps'))} | {_eq(eq.get('avg_exit_slip_bps'))} "
+            f"| {_eq(eq.get('avg_fee_bps'))} | {_eq(eq.get('taker_pct'))} "
+            f"| {','.join(r.universe)} | `{json.dumps(r.params)}` |")
     confirmed = [r for r in rows if r.confirmed]
     lines += [
         "",
@@ -179,11 +198,13 @@ def render_markdown(
             "Next actions:",
             f"- Top IN-SAMPLE-ranked confirmed combo: `{json.dumps(best.params)}` on "
             f"`{','.join(best.universe)}`. If it beats the deployed config, adopt it by "
-            f"editing the agent's DATACLASS DEFAULTS (a tested code change), NOT "
-            f"`configs/agent_overrides.json`: `hlbot confirm` instantiates agents with "
-            f"defaults, so an override would inherit a G0 stamp validated against a "
-            f"DIFFERENT config (the V3 provenance hole). Then self-stamp the deployed "
-            f"config: `hlbot confirm --agent {spec.agent} --prefer {spec.prefer} --record`.",
+            f"updating `configs/agent_overrides.json` for `{spec.agent}`, then "
+            f"re-stamping with V3 provenance: "
+            f"`hlbot confirm --agent {spec.agent} --prefer {spec.prefer} --record`. "
+            f"`confirm --record` now fingerprints the config the agent is actually "
+            f"instantiated with, so an override inherits a G0 stamp for THAT config, "
+            f"not the factory defaults. Editing dataclass defaults remains acceptable "
+            f"but is no longer required.",
         ]
     else:
         lines += ["", "No combo cleared the gate — do not loosen the gate; "

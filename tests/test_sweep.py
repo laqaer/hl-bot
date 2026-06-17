@@ -72,11 +72,10 @@ def test_render_markdown_report():
         assert "do not loosen the gate" in md
 
 
-def test_render_markdown_confirmed_steers_to_defaults_not_overrides():
-    # When a combo confirms, the report's "Next actions" must steer adoption via
-    # DATACLASS DEFAULTS (which `hlbot confirm` actually validates), NOT
-    # agent_overrides.json — an override inherits a G0 stamp for the wrong config
-    # (the V3 provenance hole). Build a confirmed row deterministically.
+def test_render_markdown_confirmed_steers_to_overrides_with_v3_provenance():
+    # V3 provenance: `hlbot confirm --record` fingerprints the config the agent
+    # is actually instantiated with, so adopting via agent_overrides.json is now
+    # safe. The report should recommend that path.
     row = SweepRow(
         universe=[COIN], params={"z_enter": 3.0}, confirmed=True,
         is_edge_bps=12.0, oos_edge_bps=5.0, oos_sharpe=2.0, oos_net_pnl=1.0,
@@ -84,6 +83,54 @@ def test_render_markdown_confirmed_steers_to_defaults_not_overrides():
     )
     md = render_markdown(SPEC, [row], date="2026-06-14")
     assert "Next actions:" in md
-    assert "DATACLASS DEFAULTS" in md
-    assert "NOT" in md and "agent_overrides.json" in md
+    assert "agent_overrides.json" in md
+    assert "V3 provenance" in md or "fingerprint" in md or "actually instantiated" in md
     assert "--record" in md
+
+
+def test_run_sweep_uses_base_config_under_grid_params():
+    # A base config should be merged under grid params and affect the agent.
+    frames = {(COIN,): _choppy()}
+    base = {"entry_sigma": 99.0}  # implausibly high -> should suppress trades
+    rows = run_sweep(SPEC, frames,
+                     lambda conn, cfg: TwapMrAgent(config=cfg, conn=conn),
+                     base_config=base)
+    assert len(rows) == 2
+    # All combos see the base value unless the grid overrides it.
+    for r in rows:
+        if "entry_sigma" not in r.params:
+            assert r.n_trades == 0
+
+
+def test_run_sweep_includes_exec_quality_when_fills_exist():
+    # When a combo trades, exec-quality telemetry should be attached to the row.
+    frames = {(COIN,): _choppy()}
+    rows = run_sweep(SPEC, frames,
+                     lambda conn, cfg: TwapMrAgent(config=cfg, conn=conn))
+    for r in rows:
+        if r.n_trades > 0:
+            assert r.exec_quality is not None
+            assert "avg_entry_slip_bps" in r.exec_quality
+            assert "avg_exit_slip_bps" in r.exec_quality
+            assert "avg_fee_bps" in r.exec_quality
+            assert "taker_pct" in r.exec_quality
+
+
+def test_render_markdown_reports_exec_quality_columns():
+    row = SweepRow(
+        universe=[COIN], params={"z_enter": 3.0}, confirmed=True,
+        is_edge_bps=12.0, oos_edge_bps=5.0, oos_sharpe=2.0, oos_net_pnl=1.0,
+        n_trades=40, reasons=[],
+        exec_quality={
+            "avg_entry_slip_bps": 1.5,
+            "avg_exit_slip_bps": 2.0,
+            "avg_fee_bps": 4.5,
+            "taker_pct": 1.0,
+        },
+    )
+    md = render_markdown(SPEC, [row], date="2026-06-14")
+    assert "entry slip" in md
+    assert "exit slip" in md
+    assert "fee" in md
+    assert "taker%" in md
+    assert "1.5" in md and "2.0" in md and "4.5" in md
