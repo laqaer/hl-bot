@@ -17,6 +17,7 @@ tick keeps a safe REST fallback. The network connect loop is a thin wrapper.
 from __future__ import annotations
 
 import json
+import sqlite3
 import time
 from collections import deque
 from dataclasses import dataclass, field
@@ -234,13 +235,20 @@ def run_ws(
     base_url: str = "https://api.hyperliquid.xyz",
     write_interval_s: float = 1.0,
     duration_s: float | None = None,
+    db_path: str | Path | None = None,
+    user_address: str | None = None,
 ) -> None:  # pragma: no cover - requires a live socket
     """Subscribe to HL WS for ``coins`` and persist a snapshot every interval.
 
     Uses the hyperliquid SDK's Info subscriptions. Runs until ``duration_s``
     (None = forever). Intended to be supervised by ``hlbot-ws`` / systemd.
+
+    When ``user_address`` is provided, also subscribes to the ``userFills``
+    channel and upserts fills into ``db_path`` in real time.
     """
     from hyperliquid.info import Info
+
+    from .hyperliquid import ingest_user_fills_ws
 
     state = MarketState()
     info = Info(base_url, skip_ws=False)
@@ -249,6 +257,19 @@ def run_ws(
         info.subscribe({"type": "l2Book", "coin": coin}, lambda m: state.apply_message(m))
         info.subscribe({"type": "trades", "coin": coin}, lambda m: state.apply_message(m))
         info.subscribe({"type": "activeAssetCtx", "coin": coin}, lambda m: state.apply_message(m))
+
+    conn: sqlite3.Connection | None = None
+    if db_path and user_address:
+        conn = sqlite3.connect(str(db_path))
+
+        def _on_user_fills(msg: dict[str, Any]) -> None:
+            if conn is None:
+                return
+            n = ingest_user_fills_ws(conn, msg)
+            if n:
+                conn.commit()
+
+        info.subscribe({"type": "userFills", "user": user_address}, _on_user_fills)
 
     liq_log = Path(snapshot_path).parent / "liq_log.jsonl"
     seen_liqs: set[tuple] = set()

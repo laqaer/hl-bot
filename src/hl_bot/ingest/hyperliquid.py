@@ -47,6 +47,44 @@ def _post(client: httpx.Client, base_url: str, payload: dict[str, Any]) -> Any:
     return r.json()
 
 
+def _upsert_fill(cur: sqlite3.Cursor, f: dict[str, Any]) -> int:
+    """Insert a single HL fill dict into ``fills``; returns rowcount (0/1)."""
+    cloid = f.get("cloid")
+    agent = agent_from_cloid(cloid, known_agents=KNOWN_AGENTS) if cloid else "manual"
+    try:
+        cur.execute(
+            """
+            INSERT OR IGNORE INTO fills(
+                hash, tid, time_ms, coin, side, px, sz,
+                start_position, dir, closed_pnl, fee, fee_token,
+                builder_fee, cloid, agent, raw_json
+            ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+            """,
+            (
+                f["hash"],
+                int(f["tid"]),
+                int(f["time"]),
+                f["coin"],
+                f["side"],
+                float(f["px"]),
+                float(f["sz"]),
+                float(f.get("startPosition", 0) or 0),
+                f.get("dir"),
+                float(f.get("closedPnl", 0) or 0),
+                float(f.get("fee", 0) or 0),
+                f.get("feeToken"),
+                float(f.get("builderFee", 0) or 0),
+                cloid,
+                agent,
+                json.dumps(f, separators=(",", ":")),
+            ),
+        )
+        return cur.rowcount
+    except sqlite3.IntegrityError as e:
+        log.warning("fill insert failed hash=%s tid=%s: %s", f.get("hash"), f.get("tid"), e)
+        return 0
+
+
 def ingest_fills(conn: sqlite3.Connection, address: str, base_url: str) -> int:
     """Pull recent userFills and upsert. Returns rows inserted."""
     with httpx.Client() as client:
@@ -54,40 +92,26 @@ def ingest_fills(conn: sqlite3.Connection, address: str, base_url: str) -> int:
     n = 0
     cur = conn.cursor()
     for f in fills:
-        cloid = f.get("cloid")
-        agent = agent_from_cloid(cloid, known_agents=KNOWN_AGENTS) if cloid else "manual"
-        try:
-            cur.execute(
-                """
-                INSERT OR IGNORE INTO fills(
-                    hash, tid, time_ms, coin, side, px, sz,
-                    start_position, dir, closed_pnl, fee, fee_token,
-                    builder_fee, cloid, agent, raw_json
-                ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
-                """,
-                (
-                    f["hash"],
-                    int(f["tid"]),
-                    int(f["time"]),
-                    f["coin"],
-                    f["side"],
-                    float(f["px"]),
-                    float(f["sz"]),
-                    float(f.get("startPosition", 0) or 0),
-                    f.get("dir"),
-                    float(f.get("closedPnl", 0) or 0),
-                    float(f.get("fee", 0) or 0),
-                    f.get("feeToken"),
-                    float(f.get("builderFee", 0) or 0),
-                    cloid,
-                    agent,
-                    json.dumps(f, separators=(",", ":")),
-                ),
-            )
-            n += cur.rowcount
-        except sqlite3.IntegrityError as e:
-            log.warning("fill insert failed hash=%s tid=%s: %s", f.get("hash"), f.get("tid"), e)
+        n += _upsert_fill(cur, f)
     log.info("ingested %d new fills (of %d returned)", n, len(fills))
+    return n
+
+
+def ingest_user_fills_ws(conn: sqlite3.Connection, msg: dict[str, Any]) -> int:
+    """Upsert fills from a Hyperliquid ``userFills`` WebSocket message.
+
+    WS payload shape: ``{"channel": "userFills", "data": {"user": ..., "isSnapshot": bool, "fills": [Fill]}}``.
+    Returns rows inserted.
+    """
+    data = msg.get("data") or {}
+    fills = data.get("fills") or []
+    if not fills:
+        return 0
+    cur = conn.cursor()
+    n = 0
+    for f in fills:
+        n += _upsert_fill(cur, f)
+    log.info("ws userFills ingested %d new fills (of %d returned)", n, len(fills))
     return n
 
 

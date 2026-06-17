@@ -34,6 +34,7 @@ class FakeExchange:
     def __init__(self):
         self.market_opens: list[str] = []
         self.limit_orders: list[str] = []
+        self.reduce_onlys: list[bool] = []
         self.closed: list[str] = []
 
     def market_open(self, *, name, is_buy, sz, slippage, cloid, builder=None):
@@ -43,6 +44,7 @@ class FakeExchange:
 
     def order(self, *, name, is_buy, sz, limit_px, order_type, reduce_only, cloid, builder=None):
         self.limit_orders.append(name)
+        self.reduce_onlys.append(reduce_only)
         return {"response": {"data": {"statuses": [
             {"resting": {"oid": 6, "cloid": str(cloid)}}]}}}
 
@@ -175,3 +177,42 @@ def test_paper_mode_simulates_everything(env):
     assert res.live_agents == []
     rows = conn.execute("SELECT DISTINCT agent FROM paper_fills").fetchall()
     assert {r["agent"] for r in rows} == {"a1", "a2"}
+
+
+def test_maker_exit_resting_reduce_only(env):
+    conn, s = env
+    set_mode(conn, "a_live", "live_small")
+    # Track a long position so the runner can infer the close side (sell).
+    conn.execute(
+        "INSERT OR REPLACE INTO positions(agent, coin, net_sz, avg_entry_px, realized_pnl, fees_paid, last_update_ms) "
+        "VALUES(?,?,?,?,?,?,?)",
+        ("a_live", "BTC", 1.0, 100.0, 0.0, 0.0, NOW),
+    )
+    roster = [entry("a_live", [flatten("a_live")])]
+    ex = FakeExchange()
+    res = run_cycle(conn, s, view(), live=True, execution="maker",
+                    roster=roster, exchange=ex, account_state={}, spot_state={})
+    assert ex.limit_orders == ["BTC"]
+    assert ex.reduce_onlys == [True]
+    assert ex.closed == []
+    assert any("RESTING" in e for e in res.events)
+
+
+def test_stop_exit_uses_taker_close(env):
+    conn, s = env
+    set_mode(conn, "a_live", "live_small")
+    conn.execute(
+        "INSERT OR REPLACE INTO positions(agent, coin, net_sz, avg_entry_px, realized_pnl, fees_paid, last_update_ms) "
+        "VALUES(?,?,?,?,?,?,?)",
+        ("a_live", "BTC", 1.0, 100.0, 0.0, 0.0, NOW),
+    )
+    from hl_bot.agents.cloid import make_cloid
+    stop_flat = Decision(agent="a_live", action="flatten", coin="BTC", sz=1.0,
+                         cloid=make_cloid("a_live"), urgency="stop")
+    roster = [entry("a_live", [stop_flat])]
+    ex = FakeExchange()
+    res = run_cycle(conn, s, view(), live=True, execution="maker",
+                    roster=roster, exchange=ex, account_state={}, spot_state={})
+    assert ex.limit_orders == []
+    assert ex.closed == ["BTC"]
+    assert any("CLOSED" in e for e in res.events)

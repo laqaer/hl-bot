@@ -1390,19 +1390,27 @@ def ws(
     coins: str = "BTC,ETH,SOL,HYPE",
     snapshot: Path = Path("data/ws_snapshot.json"),
     seconds: float = 0.0,
+    user: str = "",
 ):
     """Run the WebSocket market-data service: maintain live state, write a snapshot.
 
     Long-running (supervise via systemd). The tick reads the snapshot when fresh
     (set HLBOT_WS_SNAPSHOT) for sub-second mids, L2 depth, and live liquidations.
+    With ``--user`` (or the configured HL address) also subscribes to
+    ``userFills`` and writes fills to the DB in real time.
     seconds=0 runs forever.
     """
     from ..ingest.ws import run_ws
 
     _, s = _conn()
     coin_list = [c.strip() for c in coins.split(",") if c.strip()]
-    console.print(f"[green]ws[/green] subscribing {coin_list} → {snapshot} (every 1s)")
-    run_ws(coin_list, snapshot, base_url=s.hl_api_url, duration_s=(seconds or None))
+    user_address = user or s.hl_address
+    if user_address:
+        console.print(f"[green]ws[/green] subscribing {coin_list} + userFills({user_address}) → {snapshot} (every 1s)")
+    else:
+        console.print(f"[green]ws[/green] subscribing {coin_list} → {snapshot} (every 1s)")
+    run_ws(coin_list, snapshot, base_url=s.hl_api_url, duration_s=(seconds or None),
+           db_path=s.db_path, user_address=user_address or None)
 
 
 @app.command()

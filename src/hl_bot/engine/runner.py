@@ -27,6 +27,7 @@ import httpx
 
 from ..agents.base import Agent, MarketView
 from ..agents.basis import BasisAgent
+from ..agents.cloid import make_cloid
 from ..agents.decisions import Decision, log_decision
 from ..agents.dislocation_reversion import DislocationReversionAgent
 from ..agents.femr import FemrAgent
@@ -432,6 +433,31 @@ def run_cycle(
             if exchange is None:
                 res.events.append(f"SKIP flatten {d.agent} {d.coin}: no exchange")
                 continue
+            mode = exec_modes.get(d.agent, execution)
+            if mode == "maker" and d.urgency != "stop":
+                # Rest a reduce-only maker exit quote. The lifecycle will manage
+                # fill/reprice/taker-fallback. Infer the close side and size from
+                # our tracked position if the agent didn't supply them.
+                row = conn.execute(
+                    "SELECT net_sz FROM positions WHERE agent = ? AND coin = ?",
+                    (d.agent, d.coin),
+                ).fetchone()
+                net_sz = float(row["net_sz"] or 0) if row else 0.0
+                if not d.side and net_sz != 0:
+                    if net_sz > 0:
+                        d.side = "A"          # sell to close long
+                    else:
+                        d.side = "B"          # buy to close short
+                if not d.sz and net_sz != 0:
+                    d.sz = abs(net_sz)
+                if not d.cloid:
+                    d.cloid = make_cloid(d.agent)
+                if d.side and d.sz:
+                    event = submit_entry(conn, exchange, view, d, maker_cfg,
+                                         now_ms=now_ms)
+                    res.events.append(event)
+                    continue
+                # fall through to taker close if we can't infer the exit side/size
             r = close_position(exchange, d.coin, cloid=d.cloid)
             if r.ok:
                 if r.avg_px:
