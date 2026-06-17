@@ -867,3 +867,5 @@ not done.
 **Evidence.** `uv run pytest -q` → **337 passed** (new: `test_render_markdown_confirmed_steers_to_overrides_with_v3_provenance`, `test_run_sweep_uses_base_config_under_grid_params`, `test_run_sweep_includes_exec_quality_when_fills_exist`, `test_render_markdown_reports_exec_quality_columns`). `uv run ruff check .` → All checks passed.
 
 **What's next.** Phase 2 is complete. Move to Phase 3 execution quality: (1) userFills WebSocket subscription for real-time fill attribution, (2) reduce-only maker exits, (3) consolidate `femr_tick` CLI with `engine/runner.py` lifecycle v2. Host-side actions remain: run the nightly dislocation sweep with the new defaults, verify `hlbot ws` liq feed through volatility, and run `hlbot s8-oi-backtest --sweep` on the host.
+
+**Update.** While this commit was being prepared, PR #33 merged to `main` (6ea4b82). The leftover work above was rebased onto `origin/main` and pushed as PR #34 (`claude/phase2-leftovers-sweep-v3`). The old `claude/phase2-forward-edge-instrumentation` branch was retired locally.
