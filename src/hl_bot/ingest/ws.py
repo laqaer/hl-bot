@@ -17,6 +17,7 @@ tick keeps a safe REST fallback. The network connect loop is a thin wrapper.
 from __future__ import annotations
 
 import json
+import logging
 import sqlite3
 import time
 from collections import deque
@@ -25,6 +26,8 @@ from pathlib import Path
 from typing import Any
 
 from ..agents.base import MarketView
+
+log = logging.getLogger(__name__)
 
 
 @dataclass
@@ -258,16 +261,17 @@ def run_ws(
         info.subscribe({"type": "trades", "coin": coin}, lambda m: state.apply_message(m))
         info.subscribe({"type": "activeAssetCtx", "coin": coin}, lambda m: state.apply_message(m))
 
-    conn: sqlite3.Connection | None = None
     if db_path and user_address:
-        conn = sqlite3.connect(str(db_path))
-
+        # Each WS callback may run on a different thread than the one that
+        # created the connection, so open a fresh connection per message.
         def _on_user_fills(msg: dict[str, Any]) -> None:
-            if conn is None:
-                return
-            n = ingest_user_fills_ws(conn, msg)
-            if n:
-                conn.commit()
+            try:
+                with sqlite3.connect(str(db_path)) as conn:
+                    n = ingest_user_fills_ws(conn, msg)
+                    if n:
+                        conn.commit()
+            except Exception as e:
+                log.exception("failed to ingest userFills from WS: %s", e)
 
         info.subscribe({"type": "userFills", "user": user_address}, _on_user_fills)
 
