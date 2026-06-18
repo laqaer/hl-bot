@@ -27,3 +27,4 @@ data/
 *.tfstate.*
 crash.*.log
 deploy/aws/.terraform/
+deploy/aws/terraform.tfvars

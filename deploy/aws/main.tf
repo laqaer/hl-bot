@@ -76,7 +76,6 @@ data "aws_iam_policy_document" "assume" {
 resource "aws_iam_role" "hlbot" {
   name_prefix        = "hlbot-"
   assume_role_policy = data.aws_iam_policy_document.assume.json
-  tags               = var.tags
 }
 
 data "aws_iam_policy_document" "s3" {
