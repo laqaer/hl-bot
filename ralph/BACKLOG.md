@@ -11,6 +11,26 @@ leverage *unblocked* thing. Add new findings as you discover them.
 > sweep harness. Superseded items moved to Done. New center of gravity:
 > **make a strategy pass its gates on real evidence.**
 
+## P0 — FIND NEXT EDGE (2026-06-18)
+
+> Both the live candidate (`dislocation_reversion_v1`) and the forward-soaking
+> candidate (`oi_crowding_reversal_v1`) failed G0 on the current ~17.5d HL
+> window. The mission is now to find the next cost-surviving edge. Each item
+> below: spec in `docs/research/`, agent + factory + sweep, `hlbot confirm`,
+> then paper soak. No live promotion until G0 passes.
+
+- [ ] **H1 — Funding-settlement snap fade.** Fade the pre-settlement perp
+  premium swing around funding payments. Needs `funding_hourly` + 5m perp
+  candles. Sweep z_enter / hold / settlement offset.
+- [ ] **H2 — New-listing day-1 reversion.** Moonshot sleeve. Use the existing
+  `listing_log` forward signal. Spec, sweep, confirm. Expect small samples.
+- [ ] **H3 — L2 book-imbalance mean reversion.** Use WS `book_imb` (already
+  accrued in `market_samples`). Fade short-term bid/ask pressure spikes.
+- [ ] **H4 — Cross-venue funding anomaly filter.** Use `xvenue_funding`
+  (Binance/Bybit) as a selectivity filter on dislocation or carry entries.
+- [ ] **H5 — Liquidation cascade fade.** Verify the WS liquidation feed,
+  build `liq_log` distribution, then spec + sweep.
+
 ## P1 — FORWARD-EVIDENCE FLYWHEEL (the binding constraint, 2026-06-15)
 
 > Backtesting is exhausted as a discovery engine here: HL retains ~5000
