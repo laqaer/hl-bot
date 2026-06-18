@@ -8,6 +8,8 @@ Type=simple
 User=hlbot
 WorkingDirectory=/opt/hl-bot
 EnvironmentFile=/etc/hl-bot/env
+# uv needs a writable cache directory; home is read-only under ProtectHome.
+Environment=UV_CACHE_DIR=/opt/hl-bot/data/.uv-cache
 # Long-running: maintains live state, writes an atomic snapshot every ~1s. The
 # tick overlays it when fresh (HLBOT_WS_SNAPSHOT) and falls back to REST if stale.
 ExecStart=/usr/bin/env bash -lc 'uv run hlbot ws --coins "$${HLBOT_WS_COINS:-BTC,ETH,SOL,HYPE}" --snapshot "$${HLBOT_WS_SNAPSHOT:-/opt/hl-bot/data/ws_snapshot.json}"'

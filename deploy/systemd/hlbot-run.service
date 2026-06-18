@@ -8,6 +8,8 @@ Type=simple
 User=hlbot
 WorkingDirectory=/opt/hl-bot
 EnvironmentFile=/etc/hl-bot/env
+# uv needs a writable cache directory; home is read-only under ProtectHome.
+Environment=UV_CACHE_DIR=/opt/hl-bot/data/.uv-cache
 # HLBOT_RUN_ARGS controls posture, e.g. "--live --execution maker".
 # Default (empty) is paper-only — safe. Going live: docs/GO_LIVE.md.
 ExecStart=/usr/bin/env bash -lc 'uv run hlbot run $${HLBOT_RUN_ARGS:-}'
