@@ -7,7 +7,7 @@
 # Usage:
 #   ralph/loop.sh                 # 25 iterations, commit on green, no push
 #   RALPH_ITERS=50 ralph/loop.sh  # more iterations
-#   RALPH_PUSH=1 ralph/loop.sh    # also push to the current branch each green commit
+#   RALPH_PUSH=1 ralph/loop.sh    # gate mode: rebase onto origin/main each iter, force-push the increment
 #   touch ralph/STOP              # graceful stop after the current iteration
 #
 # Env:
@@ -67,8 +67,14 @@ run_agent() {
 push_branch() {
   local delay=2 try
   for try in 1 2 3 4; do
-    if git push -u origin "$BRANCH" >/dev/null 2>&1; then
-      log "pushed to $BRANCH"; return 0
+    # Force-with-lease: in gate mode (PUSH=1) the branch is rebuilt onto
+    # origin/main every iteration (see the sync step in the loop), so it
+    # intentionally diverges from the previously pushed increment — a plain
+    # push would be rejected non-fast-forward. --force-with-lease still refuses
+    # to clobber a push we haven't observed (e.g. a second loop instance), so
+    # we overwrite our own prior increment but never stomp another writer.
+    if git push --force-with-lease origin "HEAD:$BRANCH" >/dev/null 2>&1; then
+      log "pushed increment to $BRANCH"; return 0
     fi
     log "push failed (attempt $try) — retrying in ${delay}s"
     sleep "$delay"; delay=$((delay * 2))
@@ -103,6 +109,20 @@ for i in $(seq 1 "$ITERS"); do
   # the unit sets RestartPreventExitStatus=42, so systemd will NOT relaunch us.
   [ -f "$ROOT/ralph/STOP" ] && { log "STOP file present — exiting"; rm -f "$ROOT/ralph/STOP"; exit 42; }
   log "iteration $i/$ITERS"
+
+  # Gate mode (PUSH=1): start every iteration from reviewed origin/main so the
+  # branch is never more than ONE increment ahead of main. The squash-merge
+  # gate (ralph-trusted-merge) folds each pushed increment into main; without
+  # this reset the branch slowly re-diverges from the squashed main until it
+  # conflicts — the exact drift that once stranded ~8k unmerged commits and
+  # jammed automerge. PUSH=0 (local-only research) keeps its accumulated
+  # history untouched.
+  if [ "$PUSH" = "1" ]; then
+    git fetch -q origin main 2>/dev/null || log "fetch origin main failed; building on last-known main this iteration"
+    git fetch -q origin "$BRANCH" 2>/dev/null || true   # refresh the lease ref; fine if the branch is absent
+    git reset --hard origin/main >/dev/null 2>&1 \
+      || log "could not reset to origin/main; building on current HEAD this iteration"
+  fi
 
   before="$(git rev-parse HEAD)"
   rc=0; run_agent || rc=$?
