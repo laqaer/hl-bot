@@ -1,21 +1,21 @@
-# Autonomous merge for the ralph loop's branches ONLY. When ralph pushes to
-# claude/ralph-auto*, this runs the FULL gate (ruff + the entire test suite,
-# which includes the CI-pinned gate minima and CostModel cost floors that ralph
-# cannot weaken) and, only if green, squash-pushes the increment to main.
-# The operator's own branches are unaffected and still merge by hand. Disable
-# anytime by deleting this file. The live engine then auto-deploys reviewed
-# main (hlbot-deploy.timer); the kill switch + caps bound everything.
+# CI for the ralph loop's branches (claude/ralph-auto*). GitHub runs this file
+# from the PUSHED branch, which the autonomous loop controls — so it is
+# UNPRIVILEGED (contents: read) and only lints + tests. The actual gate and
+# merge to main live in ralph-trusted-merge.yml, which GitHub always executes
+# from main's copy (workflow_run semantics), so the loop cannot weaken or
+# delete the gate. Merge privileges must never return to this file: the loop's
+# branch copy once dropped the trusted path check, and only a shallow-clone
+# failure kept that from landing on main.
 name: ralph-automerge
 on:
   push:
     branches: ['claude/ralph-auto', 'claude/ralph-auto/**']
 
 permissions:
-  contents: write
-  pull-requests: write
+  contents: read
 
 jobs:
-  gate-and-merge:
+  branch-ci:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -23,51 +23,5 @@ jobs:
         with:
           enable-cache: true
       - run: uv sync --frozen --all-extras --dev
-      - name: lint
-        run: uv run ruff check .
-      - name: full test suite (branch's own tests)
-        run: uv run pytest -q
-      - name: TRUSTED safety gate — run main's invariant tests against this branch's code
-        # ralph controls its branch and could weaken/delete test_gate_minima.py;
-        # restore that file (gate minima + CostModel cost floors) from main and
-        # run it against the branch's configs/engine so the invariant truly pins.
-        run: |
-          git fetch origin main
-          git checkout origin/main -- tests/test_gate_minima.py
-          uv run pytest -q tests/test_gate_minima.py
-      - name: TRUSTED path check — ralph may not edit kill, health, risk, or cost model unreviewed
-        # The autonomous loop runs on the live host's user; directory separation
-        # is not enough. Fail if this branch changed trusted safety/measurement
-        # files vs. origin/main. Operator must review and merge those manually.
-        run: |
-          git fetch origin main
-          trusted='src/hl_bot/ops/ src/hl_bot/risk/ src/hl_bot/backtest/engine.py'
-          changed=$(git diff --name-only origin/main...HEAD -- $trusted || true)
-          if [ -n "$changed" ]; then
-            echo "Trusted files changed by Ralph branch; require operator review before merge:"
-            echo "$changed"
-            exit 1
-          fi
-      - name: squash-merge increment to main (green only)
-        # Push the increment straight to main with the workflow's contents:write
-        # token. We deliberately do NOT use `gh pr create` — repo policy forbids
-        # GitHub Actions from creating PRs, which silently stalled every merge.
-        # A direct squash-push needs no PR and no settings toggle, so the loop is
-        # fully self-merging. main then auto-deploys via hlbot-deploy.timer.
-        run: |
-          set -euo pipefail
-          git config user.email "ralph-ci@hl-bot.local"
-          git config user.name  "hlbot-ralph-ci"
-          git fetch origin main
-          git checkout -B _main origin/main
-          # Squash this branch's diff onto current main. Conflicts (e.g. main
-          # moved ahead) fail the step loudly rather than guessing — re-sync then.
-          git merge --squash "${GITHUB_SHA}"
-          # Defense in depth: pin the trusted gate-minima test to main's version
-          # so a weakened copy can never land even though the prior step already
-          # validated this branch's code against it.
-          git checkout origin/main -- tests/test_gate_minima.py
-          git add -A
-          git commit -m "ralph: autonomous increment (${GITHUB_REF_NAME}) [CI green]" \
-            || { echo "no net change to merge"; exit 0; }
-          git push origin HEAD:main
+      - run: uv run ruff check .
+      - run: uv run pytest -q

@@ -1,0 +1,83 @@
+# Trusted gate-and-merge for the ralph loop. Fires when a "ralph-automerge"
+# run on the loop's branches completes, but GitHub always executes THIS file
+# from main (workflow_run semantics) — the loop cannot edit, weaken, or delete
+# the gate no matter what it does to its own branch. Everything is
+# re-validated here from scratch; the upstream run's conclusion is
+# deliberately ignored because the loop controls that workflow file. Disable
+# automerge anytime by deleting this file from main. A green merge
+# squash-pushes to main, which auto-deploys via hlbot-deploy.timer; the kill
+# switch + caps bound everything.
+name: ralph-trusted-merge
+on:
+  workflow_run:
+    workflows: [ralph-automerge]
+    types: [completed]
+    branches: ['claude/ralph-auto', 'claude/ralph-auto/**']
+
+permissions:
+  contents: write
+
+# Serialize merges: ralph pushes every couple of minutes and interleaved
+# squash-pushes to main would trip over each other.
+concurrency:
+  group: ralph-trusted-merge
+  cancel-in-progress: false
+
+jobs:
+  gate-and-merge:
+    runs-on: ubuntu-latest
+    if: github.event.workflow_run.head_repository.full_name == github.repository
+    env:
+      HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+      HEAD_BRANCH: ${{ github.event.workflow_run.head_branch }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+          # Full history: the squash-merge below needs a merge base with main.
+          # The default depth-1 clone has none, and git fails every merge with
+          # "refusing to merge unrelated histories".
+          fetch-depth: 0
+      - uses: astral-sh/setup-uv@v3
+        with:
+          enable-cache: true
+      - run: uv sync --frozen --all-extras --dev
+      - name: lint
+        run: uv run ruff check .
+      - name: full test suite (branch's own tests)
+        run: uv run pytest -q
+      - name: TRUSTED safety gate — run main's invariant tests against this branch's code
+        # ralph controls its branch and could weaken/delete test_gate_minima.py;
+        # restore that file (gate minima + CostModel cost floors) from main and
+        # run it against the branch's configs/engine so the invariant truly pins.
+        run: |
+          git fetch origin main
+          git checkout origin/main -- tests/test_gate_minima.py
+          uv run pytest -q tests/test_gate_minima.py
+      - name: TRUSTED squash-merge to main (green only)
+        # Build the squash result on top of current main, then verify the
+        # RESULT: it must not alter kill, health, risk, or the backtest engine
+        # relative to main — the operator reviews those by hand — and the
+        # gate-minima test is pinned to main's copy. Checking the merged result
+        # (rather than the branch's three-dot diff) cannot be skipped by a
+        # missing merge base and does not false-block changes main has already
+        # adopted. Conflicts (e.g. main moved ahead) fail loudly; re-sync then.
+        run: |
+          set -euo pipefail
+          git config user.email "ralph-ci@hl-bot.local"
+          git config user.name  "hlbot-ralph-ci"
+          git fetch origin main
+          git checkout -B _main origin/main
+          git merge --squash "${HEAD_SHA}"
+          git checkout origin/main -- tests/test_gate_minima.py
+          git add -A
+          trusted='src/hl_bot/ops/ src/hl_bot/risk/ src/hl_bot/backtest/engine.py'
+          changed=$(git diff --cached --name-only -- $trusted)
+          if [ -n "$changed" ]; then
+            echo "::error::Increment changes trusted safety files; operator must review and merge these manually:"
+            echo "$changed"
+            exit 1
+          fi
+          git commit -m "ralph: autonomous increment (${HEAD_BRANCH}) [CI green]" \
+            || { echo "no net change to merge"; exit 0; }
+          git push origin HEAD:main
