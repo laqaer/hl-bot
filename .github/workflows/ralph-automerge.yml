@@ -19,6 +19,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          # This job runs branch code; leave it no git credentials at all.
+          persist-credentials: false
       - uses: astral-sh/setup-uv@v3
         with:
           enable-cache: true
