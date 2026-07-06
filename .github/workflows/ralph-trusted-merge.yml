@@ -1,0 +1,118 @@
+# Trusted gate-and-merge for the ralph loop. Fires when a "ralph-automerge"
+# run on the loop's branches completes, but GitHub always executes THIS file
+# from main (workflow_run semantics) — the loop cannot edit, weaken, or delete
+# the gate no matter what it does to its own branch. Everything is
+# re-validated here from scratch; the upstream run's conclusion is
+# deliberately ignored because the loop controls that workflow file. Disable
+# automerge anytime by deleting this file from main. A green merge
+# squash-pushes to main, which auto-deploys via hlbot-deploy.timer; the kill
+# switch + caps bound everything.
+#
+# Privilege separation (do not collapse these jobs): `validate` executes the
+# branch's code — uv sync, pytest, all of it loop-controllable — so it runs
+# on its own runner with a read-only token and no persisted git credentials.
+# `merge` holds the write token but never executes anything from the branch's
+# tree: git plumbing only. Collapsing them would hand branch code a
+# push-capable credential via .git/config or the runner process.
+name: ralph-trusted-merge
+on:
+  workflow_run:
+    workflows: [ralph-automerge]
+    types: [completed]
+    branches: ['claude/ralph-auto', 'claude/ralph-auto/**']
+
+permissions:
+  contents: read
+
+# Serialize merges: ralph pushes every couple of minutes and interleaved
+# squash-pushes to main would trip over each other.
+concurrency:
+  group: ralph-trusted-merge
+  cancel-in-progress: false
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    if: github.event.workflow_run.head_repository.full_name == github.repository
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+          # This job runs branch-controlled code; leave it no git credentials,
+          # not even read-only ones.
+          persist-credentials: false
+      - name: TRUSTED — pin gate-minima tests to main's copy
+        # ralph controls its branch and could weaken/delete
+        # test_gate_minima.py; overwrite it with main's version (gate minima +
+        # CostModel cost floors) before anything runs so the invariant truly
+        # pins. A credential-free sparse checkout instead of `git fetch`,
+        # because this workspace deliberately has no credentials.
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          path: _trusted_main
+          sparse-checkout: tests/test_gate_minima.py
+          sparse-checkout-cone-mode: false
+          persist-credentials: false
+      - run: |
+          cp _trusted_main/tests/test_gate_minima.py tests/test_gate_minima.py
+          rm -rf _trusted_main
+      - uses: astral-sh/setup-uv@v3
+        with:
+          enable-cache: true
+      - run: uv sync --frozen --all-extras --dev
+      - name: lint
+        run: uv run ruff check .
+      - name: full test suite (branch's tests + main's pinned gate-minima invariants)
+        run: uv run pytest -q
+
+  merge:
+    runs-on: ubuntu-latest
+    needs: validate
+    if: github.event.workflow_run.head_repository.full_name == github.repository
+    permissions:
+      contents: write
+    env:
+      HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+      HEAD_BRANCH: ${{ github.event.workflow_run.head_branch }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          # Full history: the squash-merge needs a merge base with the branch.
+          # A depth-1 clone has none, and git fails every merge with
+          # "refusing to merge unrelated histories".
+          fetch-depth: 0
+      - name: TRUSTED squash-merge to main (green only)
+        # Build the squash result on top of current main, then verify the
+        # RESULT: it must not alter kill, health, risk, the backtest engine,
+        # or ANYTHING under .github/ relative to main — the operator reviews
+        # those by hand — and the gate-minima test is pinned to main's copy.
+        # Blocking .github/ closes the bootstrap hole where the loop merges an
+        # edited copy of this very gate and the NEXT run executes the weakened
+        # version. Checking the merged result (rather than the branch's
+        # three-dot diff) cannot be skipped by a missing merge base and does
+        # not false-block changes main has already adopted. Conflicts (e.g.
+        # main moved ahead) fail loudly; re-sync then. No step in this job
+        # executes branch-controlled code.
+        run: |
+          set -euo pipefail
+          git config user.email "ralph-ci@hl-bot.local"
+          git config user.name  "hlbot-ralph-ci"
+          git fetch origin main
+          git fetch origin "${HEAD_SHA}" || true
+          git rev-parse --verify "${HEAD_SHA}^{commit}" >/dev/null
+          git checkout -B _main origin/main
+          git merge --squash "${HEAD_SHA}"
+          git checkout origin/main -- tests/test_gate_minima.py
+          git add -A
+          trusted='src/hl_bot/ops/ src/hl_bot/risk/ src/hl_bot/backtest/engine.py .github/'
+          changed=$(git diff --cached --name-only -- $trusted)
+          if [ -n "$changed" ]; then
+            echo "::error::Increment changes trusted safety files; operator must review and merge these manually:"
+            echo "$changed"
+            exit 1
+          fi
+          git commit -m "ralph: autonomous increment (${HEAD_BRANCH}) [CI green]" \
+            || { echo "no net change to merge"; exit 0; }
+          git push origin HEAD:main
