@@ -1,0 +1,6 @@
+$ git diff --numstat
+3	0	CLAUDE.md
+4	56	src/hl_bot/exec/maker.py
+2	49	tests/test_maker_lifecycle.py
+
+Exit: 0

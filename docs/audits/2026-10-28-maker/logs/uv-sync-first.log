@@ -1,0 +1,147 @@
+Using CPython 3.11.15
+Creating virtual environment at: .venv
+   Building hl-bot @ file:///Users/andyzhou/dev/hl-bot--deep-test-audit
+WARN Retry attempt #0. Sleeping 1.952686795s before the next attempt
+WARN Retry attempt #0. Sleeping 1.923351044s before the next attempt
+WARN Retry attempt #0. Sleeping 1.371882057s before the next attempt
+WARN Retry attempt #0. Sleeping 1.749233306s before the next attempt
+WARN Retry attempt #0. Sleeping 1.048616138s before the next attempt
+WARN Retry attempt #0. Sleeping 1.309192647s before the next attempt
+WARN Retry attempt #0. Sleeping 1.8623085s before the next attempt
+WARN Retry attempt #0. Sleeping 1.55561668s before the next attempt
+WARN Retry attempt #0. Sleeping 1.593143286s before the next attempt
+WARN Retry attempt #0. Sleeping 1.767303867s before the next attempt
+WARN Retry attempt #0. Sleeping 1.451228226s before the next attempt
+WARN Retry attempt #0. Sleeping 1.654528226s before the next attempt
+WARN Retry attempt #0. Sleeping 1.369326451s before the next attempt
+WARN Retry attempt #0. Sleeping 1.261055338s before the next attempt
+WARN Retry attempt #0. Sleeping 1.357450586s before the next attempt
+WARN Retry attempt #0. Sleeping 1.738811752s before the next attempt
+WARN Retry attempt #0. Sleeping 1.889378243s before the next attempt
+WARN Retry attempt #0. Sleeping 1.096123372s before the next attempt
+WARN Retry attempt #0. Sleeping 1.515182816s before the next attempt
+WARN Retry attempt #0. Sleeping 1.22679317s before the next attempt
+WARN Retry attempt #0. Sleeping 1.326622889s before the next attempt
+WARN Retry attempt #0. Sleeping 1.70083817s before the next attempt
+WARN Retry attempt #0. Sleeping 1.555685009s before the next attempt
+WARN Retry attempt #0. Sleeping 1.893536306s before the next attempt
+WARN Retry attempt #0. Sleeping 1.461183199s before the next attempt
+WARN Retry attempt #0. Sleeping 1.027203483s before the next attempt
+WARN Retry attempt #0. Sleeping 1.429934055s before the next attempt
+WARN Retry attempt #0. Sleeping 1.634344199s before the next attempt
+WARN Retry attempt #0. Sleeping 1.833309375s before the next attempt
+WARN Retry attempt #0. Sleeping 1.67611567s before the next attempt
+WARN Retry attempt #0. Sleeping 1.858731949s before the next attempt
+WARN Retry attempt #0. Sleeping 1.859293067s before the next attempt
+WARN Retry attempt #0. Sleeping 1.267446791s before the next attempt
+WARN Retry attempt #0. Sleeping 1.107757314s before the next attempt
+WARN Retry attempt #0. Sleeping 1.336764361s before the next attempt
+WARN Retry attempt #0. Sleeping 1.292117577s before the next attempt
+WARN Retry attempt #0. Sleeping 1.278312368s before the next attempt
+WARN Retry attempt #0. Sleeping 1.205365305s before the next attempt
+WARN Retry attempt #0. Sleeping 1.363307431s before the next attempt
+WARN Retry attempt #0. Sleeping 1.45143842s before the next attempt
+WARN Retry attempt #0. Sleeping 1.899227739s before the next attempt
+WARN Retry attempt #0. Sleeping 1.062974274s before the next attempt
+WARN Retry attempt #0. Sleeping 1.319159745s before the next attempt
+WARN Retry attempt #0. Sleeping 1.048168931s before the next attempt
+WARN Retry attempt #0. Sleeping 1.891644289s before the next attempt
+WARN Retry attempt #0. Sleeping 1.684762422s before the next attempt
+WARN Retry attempt #0. Sleeping 1.794715172s before the next attempt
+WARN Retry attempt #0. Sleeping 1.599605641s before the next attempt
+WARN Retry attempt #0. Sleeping 1.37248791s before the next attempt
+WARN Retry attempt #0. Sleeping 1.779331022s before the next attempt
+WARN Retry attempt #1. Sleeping 1.886989755s before the next attempt
+WARN Retry attempt #1. Sleeping 1.862317358s before the next attempt
+WARN Retry attempt #1. Sleeping 1.687932637s before the next attempt
+WARN Retry attempt #1. Sleeping 1.804928365s before the next attempt
+WARN Retry attempt #1. Sleeping 1.090490812s before the next attempt
+WARN Retry attempt #1. Sleeping 3.931967388s before the next attempt
+WARN Retry attempt #1. Sleeping 2.742593846s before the next attempt
+WARN Retry attempt #1. Sleeping 3.480257997s before the next attempt
+WARN Retry attempt #1. Sleeping 2.458887971s before the next attempt
+WARN Retry attempt #1. Sleeping 1.059486432s before the next attempt
+WARN Retry attempt #1. Sleeping 2.366923438s before the next attempt
+WARN Retry attempt #1. Sleeping 2.670984727s before the next attempt
+WARN Retry attempt #1. Sleeping 2.282174266s before the next attempt
+WARN Retry attempt #1. Sleeping 1.650612647s before the next attempt
+WARN Retry attempt #1. Sleeping 3.556272017s before the next attempt
+WARN Retry attempt #1. Sleeping 2.716514504s before the next attempt
+WARN Retry attempt #1. Sleeping 1.313038498s before the next attempt
+WARN Retry attempt #1. Sleeping 3.989264853s before the next attempt
+WARN Retry attempt #1. Sleeping 1.863148252s before the next attempt
+WARN Retry attempt #1. Sleeping 1.326653708s before the next attempt
+WARN Retry attempt #1. Sleeping 2.208191389s before the next attempt
+WARN Retry attempt #1. Sleeping 1.775466498s before the next attempt
+WARN Retry attempt #1. Sleeping 3.854249728s before the next attempt
+WARN Retry attempt #1. Sleeping 1.881149856s before the next attempt
+WARN Retry attempt #1. Sleeping 3.007747776s before the next attempt
+WARN Retry attempt #1. Sleeping 3.233169602s before the next attempt
+WARN Retry attempt #1. Sleeping 2.23234846s before the next attempt
+WARN Retry attempt #1. Sleeping 2.200177103s before the next attempt
+WARN Retry attempt #1. Sleeping 3.38733987s before the next attempt
+WARN Retry attempt #1. Sleeping 2.226244373s before the next attempt
+WARN Retry attempt #1. Sleeping 1.800775691s before the next attempt
+WARN Retry attempt #1. Sleeping 3.534021268s before the next attempt
+WARN Retry attempt #1. Sleeping 2.675513885s before the next attempt
+WARN Retry attempt #1. Sleeping 3.144357251s before the next attempt
+WARN Retry attempt #1. Sleeping 2.250878603s before the next attempt
+WARN Retry attempt #1. Sleeping 2.416494258s before the next attempt
+WARN Retry attempt #1. Sleeping 3.890414623s before the next attempt
+WARN Retry attempt #1. Sleeping 1.583345165s before the next attempt
+WARN Retry attempt #1. Sleeping 2.354226272s before the next attempt
+WARN Retry attempt #1. Sleeping 2.613394276s before the next attempt
+WARN Retry attempt #1. Sleeping 1.886519006s before the next attempt
+WARN Retry attempt #1. Sleeping 3.934455796s before the next attempt
+WARN Retry attempt #1. Sleeping 3.618062632s before the next attempt
+WARN Retry attempt #1. Sleeping 2.479292174s before the next attempt
+WARN Retry attempt #1. Sleeping 2.153004022s before the next attempt
+WARN Retry attempt #1. Sleeping 3.737197608s before the next attempt
+WARN Retry attempt #1. Sleeping 3.482710817s before the next attempt
+WARN Retry attempt #1. Sleeping 2.319313707s before the next attempt
+WARN Retry attempt #1. Sleeping 3.048028423s before the next attempt
+WARN Retry attempt #1. Sleeping 2.900090344s before the next attempt
+WARN Retry attempt #2. Sleeping 6.715640278s before the next attempt
+WARN Retry attempt #2. Sleeping 7.509329413s before the next attempt
+WARN Retry attempt #2. Sleeping 6.861626302s before the next attempt
+WARN Retry attempt #2. Sleeping 1.737599794s before the next attempt
+WARN Retry attempt #2. Sleeping 3.863407763s before the next attempt
+WARN Retry attempt #2. Sleeping 4.794871237s before the next attempt
+WARN Retry attempt #2. Sleeping 7.091909112s before the next attempt
+WARN Retry attempt #2. Sleeping 1.627001383s before the next attempt
+WARN Retry attempt #2. Sleeping 1.777054589s before the next attempt
+WARN Retry attempt #2. Sleeping 1.191580108s before the next attempt
+WARN Retry attempt #2. Sleeping 4.288042269s before the next attempt
+WARN Retry attempt #2. Sleeping 3.031423708s before the next attempt
+WARN Retry attempt #2. Sleeping 3.773590814s before the next attempt
+WARN Retry attempt #2. Sleeping 7.824844693s before the next attempt
+WARN Retry attempt #2. Sleeping 3.593326049s before the next attempt
+WARN Retry attempt #2. Sleeping 1.730796111s before the next attempt
+WARN Retry attempt #2. Sleeping 2.877385659s before the next attempt
+WARN Retry attempt #2. Sleeping 1.223634589s before the next attempt
+WARN Retry attempt #2. Sleeping 7.275542814s before the next attempt
+WARN Retry attempt #2. Sleeping 5.346163221s before the next attempt
+WARN Retry attempt #2. Sleeping 3.109161953s before the next attempt
+WARN Retry attempt #2. Sleeping 1.3437806s before the next attempt
+WARN Retry attempt #2. Sleeping 3.996791526s before the next attempt
+WARN Retry attempt #2. Sleeping 1.583277354s before the next attempt
+WARN Retry attempt #2. Sleeping 7.881501422s before the next attempt
+WARN Retry attempt #2. Sleeping 1.582951684s before the next attempt
+WARN Retry attempt #2. Sleeping 1.072280705s before the next attempt
+WARN Retry attempt #2. Sleeping 6.776577625s before the next attempt
+WARN Retry attempt #2. Sleeping 6.269859092s before the next attempt
+WARN Retry attempt #2. Sleeping 2.681850523s before the next attempt
+WARN Retry attempt #2. Sleeping 4.33006338s before the next attempt
+WARN Retry attempt #2. Sleeping 6.353478762s before the next attempt
+  × Failed to download `msgpack==1.1.2`
+  ├─▶ Request failed after 3 retries in 4.4s
+  ├─▶ Failed to fetch:
+  │   `https://files.pythonhosted.org/packages/83/04/28a41024ccbd67467380b6fb440ae916c1e4f25e2cd4c63abe6835ac566e/msgpack-1.1.2-cp311-cp311-macosx_11_0_arm64.whl`
+  ├─▶ error sending request for url
+  │   (https://files.pythonhosted.org/packages/83/04/28a41024ccbd67467380b6fb440ae916c1e4f25e2cd4c63abe6835ac566e/msgpack-1.1.2-cp311-cp311-macosx_11_0_arm64.whl)
+  ├─▶ client error (Connect)
+  ├─▶ dns error
+  ╰─▶ failed to lookup address information: nodename nor servname provided, or
+      not known
+
+hint: `msgpack` (v1.1.2) was included because `hl-bot` (v0.1.0) depends on `hyperliquid-python-sdk` (v0.23.0) which depends on `msgpack`

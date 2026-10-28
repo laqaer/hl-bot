@@ -1,0 +1,133 @@
+--- /Users/andyzhou/dev/hl-bot--deep-test-audit/src/hl_bot/exec/maker.py	2026-10-22 06:35:20
++++ /Users/andyzhou/dev/hl-bot--maker-audit-controls-20261028/exact-deletion/src/hl_bot/exec/maker.py	2026-10-28 09:52:42
+@@ -20,14 +20,12 @@
+ 
+ import logging
+ import sqlite3
+-import time
+ from typing import Any
+ 
+ from ..agents.decisions import Decision, log_decision
+ 
+ log = logging.getLogger(__name__)
+ 
+-DEFAULT_MAX_REST_S = 1800  # cancel a maker quote unfilled after 30 min
+ 
+ 
+ def maker_price(
+@@ -100,41 +98,10 @@
+     return out
+ 
+ 
+-def reconcile_maker_fills(
+-    conn: sqlite3.Connection, agent: str, working: dict[str, dict[str, Any]]
+-) -> list[str]:
+-    """For working orders whose cloid now appears in ``fills``, log a 'place'
+-    (with the REAL fill px/sz) so the position becomes owned. Returns filled coins.
+ 
+-    Requires fills to be ingested (cloid-attributed) before calling.
+-    """
+-    filled: list[str] = []
+-    for coin, o in working.items():
+-        row = conn.execute(
+-            "SELECT px, sz FROM fills WHERE cloid = ? ORDER BY time_ms ASC LIMIT 1",
+-            (o["cloid"],),
+-        ).fetchone()
+-        if not row:
+-            continue
+-        log_decision(conn, Decision(
+-            agent=agent, action="place", coin=coin, side=o["side"],
+-            sz=float(row["sz"] or o["sz"]), px=float(row["px"] or o["px"]), cloid=o["cloid"],
+-            reasoning=f"MAKER FILLED {coin} (resting order cloid {o['cloid'][:10]}…)",
+-            is_paper=False,
+-        ))
+-        filled.append(coin)
+-    return filled
+ 
+ 
+-def stale_working(
+-    working: dict[str, dict[str, Any]], *, now_s: float | None = None,
+-    max_rest_s: int = DEFAULT_MAX_REST_S,
+-) -> list[dict[str, Any]]:
+-    """Working orders that have rested longer than ``max_rest_s`` -> cancel."""
+-    now_s = now_s if now_s is not None else time.time()
+-    return [o for o in working.values() if now_s - o["ts_ms"] / 1000 > max_rest_s]
+ 
+-
+ def log_cancel(conn: sqlite3.Connection, agent: str, o: dict[str, Any]) -> None:
+     log_decision(conn, Decision(
+         agent=agent, action="cancel", coin=o["coin"], side=o["side"], sz=o["sz"],
+--- /Users/andyzhou/dev/hl-bot--deep-test-audit/tests/test_maker_lifecycle.py	2026-10-22 06:35:20
++++ /Users/andyzhou/dev/hl-bot--maker-audit-controls-20261028/exact-deletion/tests/test_maker_lifecycle.py	2026-10-28 09:52:42
+@@ -7,7 +7,6 @@
+ 
+ from __future__ import annotations
+ 
+-import time
+ 
+ import pytest
+ 
+@@ -15,8 +14,6 @@
+ from hl_bot.exec.maker import (
+     log_cancel,
+     log_rest,
+-    reconcile_maker_fills,
+-    stale_working,
+     working_orders,
+ )
+ from hl_bot.exec.orders import bot_owned_coins
+@@ -27,16 +24,6 @@
+     return init_db(tmp_path / "m.sqlite")
+ 
+ 
+-def _fill(conn, agent, coin, cloid, px=100.0, sz=1.0, t_ms=None):
+-    t_ms = t_ms or int(time.time() * 1000)
+-    conn.execute(
+-        """INSERT INTO fills(hash, tid, time_ms, coin, side, px, sz,
+-           start_position, dir, closed_pnl, fee, fee_token, builder_fee,
+-           cloid, agent, raw_json)
+-           VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+-        (f"h{cloid}", t_ms, t_ms, coin, "B", px, sz, 0, "Open Long",
+-         0.0, 0.05, "USDC", 0, cloid, agent, "{}"),
+-    )
+ 
+ 
+ def test_rested_order_is_working_not_owned(conn):
+@@ -48,17 +35,8 @@
+     assert bot_owned_coins(conn, "xfund_carry_v1") == set()
+ 
+ 
+-def test_fill_detection_makes_it_owned(conn):
+-    log_rest(conn, "xfund_carry_v1", "BTC", "B", 0.01, 64000.0, "0xabc1", oid=111)
+-    _fill(conn, "xfund_carry_v1", "BTC", "0xabc1", px=63995.0, sz=0.01)
+ 
+-    filled = reconcile_maker_fills(conn, "xfund_carry_v1", working_orders(conn, "xfund_carry_v1"))
+-    assert filled == ["BTC"]
+-    # now owned, and no longer a working order (place resolved the rest)
+-    assert "BTC" in bot_owned_coins(conn, "xfund_carry_v1")
+-    assert "BTC" not in working_orders(conn, "xfund_carry_v1")
+ 
+-
+ def test_cancel_resolves_working_order(conn):
+     log_rest(conn, "xfund_carry_v1", "ETH", "A", 0.5, 3000.0, "0xdef2", oid=222)
+     o = working_orders(conn, "xfund_carry_v1")["ETH"]
+@@ -67,19 +45,3 @@
+     assert bot_owned_coins(conn, "xfund_carry_v1") == set()
+ 
+ 
+-def test_stale_detection(conn):
+-    old = int(time.time() * 1000) - 4000 * 1000  # ~66 min ago
+-    conn.execute(
+-        """INSERT INTO agent_decisions(ts_ms, agent, action, coin, side, sz, px,
+-           cloid, reasoning, market_snapshot, is_paper)
+-           VALUES(?,?,?,?,?,?,?,?,?,?,?)""",
+-        (old, "xfund_carry_v1", "rest", "SOL", "B", 1.0, 150.0, "0xstale",
+-         "old", '{"oid": 333, "resting": true}', 0),
+-    )
+-    working = working_orders(conn, "xfund_carry_v1")
+-    stale = stale_working(working, max_rest_s=1800)
+-    assert [o["coin"] for o in stale] == ["SOL"]
+-    # a fresh one is not stale
+-    log_rest(conn, "xfund_carry_v1", "BTC", "B", 0.01, 64000.0, "0xfresh", oid=444)
+-    fresh = working_orders(conn, "xfund_carry_v1")
+-    assert "BTC" not in [o["coin"] for o in stale_working(fresh, max_rest_s=1800)]

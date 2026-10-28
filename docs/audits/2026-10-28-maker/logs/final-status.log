@@ -1,0 +1,7 @@
+$ git status --short
+ M CLAUDE.md
+ M src/hl_bot/exec/maker.py
+ M tests/test_maker_lifecycle.py
+?? docs/audits/
+
+Exit: 0

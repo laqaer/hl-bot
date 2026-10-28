@@ -1,0 +1,41 @@
+--- /Users/andyzhou/dev/hl-bot--deep-test-audit/src/hl_bot/exec/maker.py	2026-10-22 06:35:20
++++ /Users/andyzhou/dev/hl-bot--maker-audit-controls-20261028/legacy-noop/src/hl_bot/exec/maker.py	2026-10-28 09:52:42
+@@ -103,36 +103,14 @@
+ def reconcile_maker_fills(
+     conn: sqlite3.Connection, agent: str, working: dict[str, dict[str, Any]]
+ ) -> list[str]:
+-    """For working orders whose cloid now appears in ``fills``, log a 'place'
+-    (with the REAL fill px/sz) so the position becomes owned. Returns filled coins.
++    return []
+ 
+-    Requires fills to be ingested (cloid-attributed) before calling.
+-    """
+-    filled: list[str] = []
+-    for coin, o in working.items():
+-        row = conn.execute(
+-            "SELECT px, sz FROM fills WHERE cloid = ? ORDER BY time_ms ASC LIMIT 1",
+-            (o["cloid"],),
+-        ).fetchone()
+-        if not row:
+-            continue
+-        log_decision(conn, Decision(
+-            agent=agent, action="place", coin=coin, side=o["side"],
+-            sz=float(row["sz"] or o["sz"]), px=float(row["px"] or o["px"]), cloid=o["cloid"],
+-            reasoning=f"MAKER FILLED {coin} (resting order cloid {o['cloid'][:10]}…)",
+-            is_paper=False,
+-        ))
+-        filled.append(coin)
+-    return filled
+ 
+-
+ def stale_working(
+     working: dict[str, dict[str, Any]], *, now_s: float | None = None,
+     max_rest_s: int = DEFAULT_MAX_REST_S,
+ ) -> list[dict[str, Any]]:
+-    """Working orders that have rested longer than ``max_rest_s`` -> cancel."""
+-    now_s = now_s if now_s is not None else time.time()
+-    return [o for o in working.values() if now_s - o["ts_ms"] / 1000 > max_rest_s]
++    return []
+ 
+ 
+ def log_cancel(conn: sqlite3.Connection, agent: str, o: dict[str, Any]) -> None:

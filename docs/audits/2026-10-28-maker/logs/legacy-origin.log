@@ -1,0 +1,26 @@
+$ git show --stat c5eba01 -- src/hl_bot/exec/maker.py tests/test_maker_lifecycle.py src/hl_bot/cli/main.py
+commit c5eba013391135c8f7e4c01c59592755cf68f98a
+Author: Claude <noreply@anthropic.com>
+Date:   Mon Jun 8 19:12:31 2026 +0000
+
+    feat(exec): maker execution lifecycle + opt-in --execution maker (B2b)
+    
+    Maker (post-only) orders rest across ticks, so add the cross-tick state machine:
+    - 'rest' decision action records a working post-only order (not yet owned).
+    - working_orders/reconcile_maker_fills/stale_working: a resting order becomes an
+      owned 'place' only when its cloid fills; stale quotes get cancelled.
+    - cancel_order wrapper in orders.py.
+    - femr_tick --execution maker (default 'taker'): refresh fills, promote filled
+      quotes, cancel stale, then rest entries post-only instead of crossing the
+      spread. Exits stay taker for urgency.
+    
+    Default stays taker; maker path is opt-in and human-gated. Logic is fully unit-
+    tested offline (in-memory DB); first live use should be watched at tiny size since
+    exchange calls can't be validated in CI. 69 tests pass, lint clean.
+
+ src/hl_bot/cli/main.py        |  46 +++++++++++++++-
+ src/hl_bot/exec/maker.py      | 123 ++++++++++++++++++++++++++++++++++++++++++
+ tests/test_maker_lifecycle.py |  85 +++++++++++++++++++++++++++++
+ 3 files changed, 253 insertions(+), 1 deletion(-)
+
+Exit: 0

@@ -1,0 +1,44 @@
+FF                                                                       [100%]
+=================================== FAILURES ===================================
+______________________ test_fill_detection_makes_it_owned ______________________
+
+conn = <sqlite3.Connection object at 0x10cc74b80>
+
+    def test_fill_detection_makes_it_owned(conn):
+        log_rest(conn, "xfund_carry_v1", "BTC", "B", 0.01, 64000.0, "0xabc1", oid=111)
+        _fill(conn, "xfund_carry_v1", "BTC", "0xabc1", px=63995.0, sz=0.01)
+    
+        filled = reconcile_maker_fills(conn, "xfund_carry_v1", working_orders(conn, "xfund_carry_v1"))
+>       assert filled == ["BTC"]
+E       AssertionError: assert [] == ['BTC']
+E         
+E         Right contains one more item: 'BTC'
+E         Use -v to get more diff
+
+tests/test_maker_lifecycle.py:56: AssertionError
+_____________________________ test_stale_detection _____________________________
+
+conn = <sqlite3.Connection object at 0x10cc745e0>
+
+    def test_stale_detection(conn):
+        old = int(time.time() * 1000) - 4000 * 1000  # ~66 min ago
+        conn.execute(
+            """INSERT INTO agent_decisions(ts_ms, agent, action, coin, side, sz, px,
+               cloid, reasoning, market_snapshot, is_paper)
+               VALUES(?,?,?,?,?,?,?,?,?,?,?)""",
+            (old, "xfund_carry_v1", "rest", "SOL", "B", 1.0, 150.0, "0xstale",
+             "old", '{"oid": 333, "resting": true}', 0),
+        )
+        working = working_orders(conn, "xfund_carry_v1")
+        stale = stale_working(working, max_rest_s=1800)
+>       assert [o["coin"] for o in stale] == ["SOL"]
+E       AssertionError: assert [] == ['SOL']
+E         
+E         Right contains one more item: 'SOL'
+E         Use -v to get more diff
+
+tests/test_maker_lifecycle.py:81: AssertionError
+=========================== short test summary info ============================
+FAILED tests/test_maker_lifecycle.py::test_fill_detection_makes_it_owned - As...
+FAILED tests/test_maker_lifecycle.py::test_stale_detection - AssertionError: ...
+2 failed in 3.52s

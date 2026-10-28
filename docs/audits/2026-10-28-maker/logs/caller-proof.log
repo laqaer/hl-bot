@@ -1,0 +1,12 @@
+$ git grep -n -E reconcile_maker_fills|stale_working|DEFAULT_MAX_REST_S HEAD
+HEAD:src/hl_bot/exec/maker.py:30:DEFAULT_MAX_REST_S = 1800  # cancel a maker quote unfilled after 30 min
+HEAD:src/hl_bot/exec/maker.py:103:def reconcile_maker_fills(
+HEAD:src/hl_bot/exec/maker.py:129:def stale_working(
+HEAD:src/hl_bot/exec/maker.py:131:    max_rest_s: int = DEFAULT_MAX_REST_S,
+HEAD:tests/test_maker_lifecycle.py:18:    reconcile_maker_fills,
+HEAD:tests/test_maker_lifecycle.py:19:    stale_working,
+HEAD:tests/test_maker_lifecycle.py:55:    filled = reconcile_maker_fills(conn, "xfund_carry_v1", working_orders(conn, "xfund_carry_v1"))
+HEAD:tests/test_maker_lifecycle.py:80:    stale = stale_working(working, max_rest_s=1800)
+HEAD:tests/test_maker_lifecycle.py:85:    assert "BTC" not in [o["coin"] for o in stale_working(fresh, max_rest_s=1800)]
+
+Exit: 0

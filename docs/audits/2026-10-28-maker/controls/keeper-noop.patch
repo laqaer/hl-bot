@@ -1,0 +1,27 @@
+--- /Users/andyzhou/dev/hl-bot--deep-test-audit/src/hl_bot/exec/lifecycle.py	2026-10-22 06:35:20
++++ /Users/andyzhou/dev/hl-bot--maker-audit-controls-20261028/keeper-noop/src/hl_bot/exec/lifecycle.py	2026-10-28 09:52:42
+@@ -190,13 +190,13 @@
+ 
+         is_exit = o["urgency"] in ("exit", "stop") or bool(o["reduce_only"])
+         if not is_exit and not entries_allowed:
+-            actions.append(MakerAction("expire", o, filled_sz=filled, fill_px=avg_px))
++            pass  # audit control: lose expiry
+             continue
+         if is_exit and age_s > cfg.exit_timeout_s:
+             actions.append(MakerAction("taker_fallback", o, filled_sz=filled, fill_px=avg_px))
+             continue
+         if not is_exit and age_s > cfg.max_rest_s:
+-            actions.append(MakerAction("expire", o, filled_sz=filled, fill_px=avg_px))
++            pass  # audit control: lose expiry
+             continue
+ 
+         quote = price_quote(view, o["coin"], o["side"], cfg)
+@@ -233,7 +233,7 @@
+     events: list[str] = []
+     for a in actions:
+         o = a.order
+-        if a.kind == "fill":
++        if a.kind == "fill" and False:  # audit control: lose ownership
+             _set_state(conn, o["cloid"], "filled", filled_sz=a.filled_sz, now_ms=ts)
+             log_decision(conn, Decision(
+                 agent=o["agent"], action="flatten" if o["reduce_only"] else "place",

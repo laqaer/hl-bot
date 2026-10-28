@@ -1,0 +1,4 @@
+$ git show HEAD:src/hl_bot/exec/__init__.py
+"""hl_bot.exec — live order placement layer (sub-account only)."""
+
+Exit: 0

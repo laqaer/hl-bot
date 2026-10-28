@@ -1,0 +1,7 @@
+$ git grep -n -E execute_decisions|working_orders HEAD -- src scripts deploy
+HEAD:src/hl_bot/exec/maker.py:66:def working_orders(conn: sqlite3.Connection, agent: str) -> dict[str, dict[str, Any]]:
+HEAD:src/hl_bot/exec/router.py:29:from .maker import log_rest, maker_price, working_orders
+HEAD:src/hl_bot/exec/router.py:52:def execute_decisions(
+HEAD:src/hl_bot/exec/router.py:92:                    working_by_agent[d.agent] = working_orders(conn, d.agent)
+
+Exit: 0

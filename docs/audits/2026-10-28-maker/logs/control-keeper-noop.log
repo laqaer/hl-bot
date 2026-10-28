@@ -1,0 +1,36 @@
+FF                                                                       [100%]
+=================================== FAILURES ===================================
+________________________ test_apply_fill_logs_ownership ________________________
+
+conn = <sqlite3.Connection object at 0x1080ecf40>
+
+    def test_apply_fill_logs_ownership(conn):
+        o = order(conn)
+        ex = FakeExchange()
+        apply_actions(conn, ex, plan_actions([o], {"c1": (1.0, 99.0)}, view(), NOW + 1000, CFG))
+        row = conn.execute("SELECT state, filled_sz FROM maker_orders WHERE cloid='c1'").fetchone()
+>       assert row["state"] == "filled"
+E       AssertionError: assert 'quoted' == 'filled'
+E         
+E         - filled
+E         + quoted
+
+tests/test_lifecycle.py:152: AssertionError
+______________________ test_entry_expires_after_max_rest _______________________
+
+conn = <sqlite3.Connection object at 0x1080ed030>
+
+    def test_entry_expires_after_max_rest(conn):
+        o = order(conn)
+        actions = plan_actions([o], {}, view(), NOW + 901_000, CFG)
+>       assert [a.kind for a in actions] == ["expire"]
+E       AssertionError: assert [] == ['expire']
+E         
+E         Right contains one more item: 'expire'
+E         Use -v to get more diff
+
+tests/test_lifecycle.py:131: AssertionError
+=========================== short test summary info ============================
+FAILED tests/test_lifecycle.py::test_apply_fill_logs_ownership - AssertionErr...
+FAILED tests/test_lifecycle.py::test_entry_expires_after_max_rest - Assertion...
+2 failed in 3.52s

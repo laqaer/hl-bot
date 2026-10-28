@@ -1,0 +1,9 @@
+$ git grep -n -E apply_actions|plan_actions|fills_by_cloid HEAD -- src/hl_bot/engine/runner.py
+HEAD:src/hl_bot/engine/runner.py:48:    apply_actions,
+HEAD:src/hl_bot/engine/runner.py:49:    fills_by_cloid,
+HEAD:src/hl_bot/engine/runner.py:51:    plan_actions,
+HEAD:src/hl_bot/engine/runner.py:357:            fills = fills_by_cloid(conn, [o["cloid"] for o in orders])
+HEAD:src/hl_bot/engine/runner.py:358:            actions = plan_actions(orders, fills, view, now_ms, maker_cfg,
+HEAD:src/hl_bot/engine/runner.py:364:            res.events.extend(apply_actions(conn, exchange, actions, now_ms=now_ms))
+
+Exit: 0

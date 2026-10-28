@@ -1,0 +1,12 @@
+........................................................................ [ 21%]
+........................................................................ [ 42%]
+........................................................................ [ 63%]
+........................................................................ [ 84%]
+......................................................                   [100%]
+=============================== warnings summary ===============================
+tests/test_femr_tick.py::test_femr_tick_delegates_to_run_with_max_cycles_one
+  /Users/andyzhou/dev/hl-bot--deep-test-audit/tests/test_femr_tick.py:16: DeprecationWarning: femr_tick is deprecated; use `hlbot run --max-cycles 1`
+    femr_tick(live=True, execution="maker")
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+342 passed, 1 warning in 2.22s

@@ -1,0 +1,19 @@
+I001 [*] Import block is un-sorted or un-formatted
+  --> src/hl_bot/exec/maker.py:8:1
+   |
+ 6 |   """
+ 7 |
+ 8 | / from __future__ import annotations
+ 9 | |
+10 | | import sqlite3
+11 | | from typing import Any
+12 | |
+13 | | from ..agents.decisions import Decision, log_decision
+   | |_____________________________________________________^
+14 |
+15 |   def maker_price(
+   |
+help: Organize imports
+
+Found 1 error.
+[*] 1 fixable with the `--fix` option.

@@ -1,0 +1,53 @@
+                                                                                
+ Usage: hlbot [OPTIONS] COMMAND [ARGS]...                                       
+                                                                                
+╭─ Options ────────────────────────────────────────────────────────────────────╮
+│ --help          Show this message and exit.                                  │
+╰──────────────────────────────────────────────────────────────────────────────╯
+╭─ Commands ───────────────────────────────────────────────────────────────────╮
+│ init                 Create the database and ensure config dir exists.       │
+│ ingest               Pull fills, funding, and an equity snapshot from        │
+│                      Hyperliquid.                                            │
+│ accrue-xvenue        Fetch Binance/Bybit funding and accrue into             │
+│                      xvenue_funding (S5 signal fuel).                        │
+│ score                Print per-agent scorecards.                             │
+│ supervisor           Evaluate goals/guardrails for every agent config in     │
+│                      ./configs.                                              │
+│ kill                 Trip the kill switch: halt all NEW orders and           │
+│                      promotions until `hlbot resume`.                        │
+│ resume               Clear the kill switch and allow trading again.          │
+│ research-strategies  Evaluate strategy health from fills; emit risk-reducing │
+│                      proposals.                                              │
+│ tick                 Run one tick of all wired agents (paper mode).          │
+│ run                  Long-running event-paced engine — replaces the 5-min    │
+│                      cron tick.                                              │
+│ femr-tick            DEPRECATED — one-shot tick of the full agent roster.    │
+│ backtest-fetch       Fetch + cache HL candle/funding history for offline,    │
+│                      reproducible backtests.                                 │
+│ backtest             Replay an agent over real Hyperliquid history with an   │
+│                      explicit cost model.                                    │
+│ confirm              Confirm a strategy through the G0 gate: walk-forward +  │
+│                      cost stress.                                            │
+│ autoconfirm          Nightly FORWARD auto-confirm loop (P1c): re-run `hlbot  │
+│                      confirm --record`                                       │
+│                      over the accrued forward window for every unconfirmed   │
+│                      agent, so any that now                                  │
+│                      clear a params-matched G0 are auto-promoted by the      │
+│                      supervisor — no human                                   │
+│                      step. See                                               │
+│                      docs/research/P1_forward_evidence_flywheel.md.          │
+│ s8-oi-backtest       Measure the S8 OI-crowding edge on real Binance OI      │
+│                      history.                                                │
+│ sweep                Run a parameter/universe sweep through the G0           │
+│                      confirmation gate.                                      │
+│ ws                   Run the WebSocket market-data service: maintain live    │
+│                      state, write a snapshot.                                │
+│ health               Assess bot health (tick/ingest freshness, equity,       │
+│                      paused agents, 24h PnL).                                │
+│ doctor               Preflight: env, DB, configs, API-wallet perms, HL       │
+│                      reachability.                                           │
+│ track-record         Export a public-grade track record (equity curve,       │
+│                      Sharpe, DD, per-agent).                                 │
+│ report               Build daily report; optionally send to Telegram.        │
+╰──────────────────────────────────────────────────────────────────────────────╯
+

@@ -1,0 +1,7 @@
+$ git grep -n -E exec\.maker|from \.maker import|from .* import maker|maker\.log|maker import.*log HEAD -- src tests scripts
+HEAD:src/hl_bot/exec/lifecycle.py:34:from .maker import log_cancel, log_rest
+HEAD:src/hl_bot/exec/router.py:29:from .maker import log_rest, maker_price, working_orders
+HEAD:tests/test_maker_lifecycle.py:15:from hl_bot.exec.maker import (
+HEAD:tests/test_router.py:15:from hl_bot.exec.maker import maker_price, working_orders
+
+Exit: 0

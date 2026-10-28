@@ -1,0 +1,43 @@
+{
+  "date": "2026-10-28",
+  "base": "d10ed2f0aef787d6887427c8cfd69645280f944d",
+  "baseline_pytest": {
+    "exit": 0,
+    "passed": 344
+  },
+  "baseline_ruff": {
+    "exit": 0
+  },
+  "control_legacy_noop": {
+    "exit": 1,
+    "expected_failures": 2
+  },
+  "control_keeper_noop": {
+    "exit": 1,
+    "expected_failures": 2
+  },
+  "control_exact_deletion": {
+    "exit": 0,
+    "passed": 342
+  },
+  "final_focused": {
+    "exit": 0,
+    "passed": 58
+  },
+  "final_pytest": {
+    "exit": 0,
+    "passed": 342
+  },
+  "final_ruff": {
+    "exit": 0
+  },
+  "final_cli_help": {
+    "exit": 0
+  },
+  "final_run_help": {
+    "exit": 0
+  },
+  "final_diff_check": {
+    "exit": 0
+  }
+}

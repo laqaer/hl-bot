@@ -1,33 +1,16 @@
-"""Maker execution lifecycle — track post-only orders across ticks.
+"""Maker quote pricing and shared audit helpers.
 
-Taker orders fill (or don't) in the same tick; maker (post-only) orders *rest*
-and fill later, so the live loop needs a small state machine spanning ticks:
-
-  submit post-only  ──► log 'rest' (coin, side, sz, px, cloid, oid)
-  next ticks:        ──► if a fill with that cloid appears  → log 'place' (owned)
-                     ──► if it's been resting too long       → cancel + log 'cancel'
-
-Ownership (``bot_owned_coins``) still keys off 'place'/'flatten', so a resting
-order is NOT treated as a position until it actually fills. The logic here is
-pure (DB + dict in, decisions out) so it's unit-testable without an exchange; the
-thin exchange calls (place_limit_order / cancel_order) live in ``orders.py``.
-
-Default execution stays taker; this path is opt-in and human-gated (see
-docs/GO_LIVE.md). Its first live use should be watched at tiny size.
+A 'rest' audit row records a working quote without position ownership.
+A 'place' or 'cancel' row with the same cloid resolves that quote.
+The current fill and expiry state machine lives in ``lifecycle.py``.
 """
 
 from __future__ import annotations
 
-import logging
 import sqlite3
-import time
 from typing import Any
 
 from ..agents.decisions import Decision, log_decision
-
-log = logging.getLogger(__name__)
-
-DEFAULT_MAX_REST_S = 1800  # cancel a maker quote unfilled after 30 min
 
 
 def maker_price(
@@ -98,41 +81,6 @@ def working_orders(conn: sqlite3.Connection, agent: str) -> dict[str, dict[str, 
     for info in by_cloid.values():
         out[info["coin"]] = info
     return out
-
-
-def reconcile_maker_fills(
-    conn: sqlite3.Connection, agent: str, working: dict[str, dict[str, Any]]
-) -> list[str]:
-    """For working orders whose cloid now appears in ``fills``, log a 'place'
-    (with the REAL fill px/sz) so the position becomes owned. Returns filled coins.
-
-    Requires fills to be ingested (cloid-attributed) before calling.
-    """
-    filled: list[str] = []
-    for coin, o in working.items():
-        row = conn.execute(
-            "SELECT px, sz FROM fills WHERE cloid = ? ORDER BY time_ms ASC LIMIT 1",
-            (o["cloid"],),
-        ).fetchone()
-        if not row:
-            continue
-        log_decision(conn, Decision(
-            agent=agent, action="place", coin=coin, side=o["side"],
-            sz=float(row["sz"] or o["sz"]), px=float(row["px"] or o["px"]), cloid=o["cloid"],
-            reasoning=f"MAKER FILLED {coin} (resting order cloid {o['cloid'][:10]}…)",
-            is_paper=False,
-        ))
-        filled.append(coin)
-    return filled
-
-
-def stale_working(
-    working: dict[str, dict[str, Any]], *, now_s: float | None = None,
-    max_rest_s: int = DEFAULT_MAX_REST_S,
-) -> list[dict[str, Any]]:
-    """Working orders that have rested longer than ``max_rest_s`` -> cancel."""
-    now_s = now_s if now_s is not None else time.time()
-    return [o for o in working.values() if now_s - o["ts_ms"] / 1000 > max_rest_s]
 
 
 def log_cancel(conn: sqlite3.Connection, agent: str, o: dict[str, Any]) -> None:
