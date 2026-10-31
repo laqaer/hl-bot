@@ -6,3 +6,5 @@ Never put real API keys/private keys in committed files — use `.env` (gitignor
 
 E2E: no dedicated black-box suite exists. Run automated checks with `uv run pytest -q`.
 Safe CLI smoke checks: `uv run hlbot --help` and `uv run hlbot run --help`.
+
+Start with [docs/HUB.md](docs/HUB.md) for canonical documents and verification records.

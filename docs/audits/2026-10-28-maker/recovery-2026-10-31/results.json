@@ -1,0 +1,81 @@
+[
+  {
+    "command": [
+      "uv",
+      "run",
+      "--frozen",
+      "--offline",
+      "pytest",
+      "-q"
+    ],
+    "started_at": "2026-10-31T11:42:50.517440+00:00",
+    "duration_seconds": 4.16,
+    "exit_code": 0,
+    "log": "1-uv-pytest.log",
+    "raw_stdout_sha256": "254c873e2de88946479fd9200957415b5897c7e2993f9f10459c33a5b5c8c39d",
+    "log_normalization": "Trailing whitespace and terminal blank lines removed."
+  },
+  {
+    "command": [
+      "uv",
+      "run",
+      "--frozen",
+      "--offline",
+      "ruff",
+      "check",
+      "."
+    ],
+    "started_at": "2026-10-31T11:42:54.676106+00:00",
+    "duration_seconds": 0.08,
+    "exit_code": 0,
+    "log": "2-uv-ruff.log",
+    "raw_stdout_sha256": "82b3e6a6c090a57601d22943bd23fca9218d1031dbe5a7b754092f9a156b4f18",
+    "log_normalization": "Trailing whitespace and terminal blank lines removed."
+  },
+  {
+    "command": [
+      "uv",
+      "run",
+      "--frozen",
+      "--offline",
+      "hlbot",
+      "--help"
+    ],
+    "started_at": "2026-10-31T11:42:54.756035+00:00",
+    "duration_seconds": 0.68,
+    "exit_code": 0,
+    "log": "3-uv-hlbot.log",
+    "raw_stdout_sha256": "1012f975e953f539915a9846a8be62e3e5ecfb40e3ac6baa1b1084d76bb756b4",
+    "log_normalization": "Trailing whitespace and terminal blank lines removed."
+  },
+  {
+    "command": [
+      "uv",
+      "run",
+      "--frozen",
+      "--offline",
+      "hlbot",
+      "run",
+      "--help"
+    ],
+    "started_at": "2026-10-31T11:42:55.434928+00:00",
+    "duration_seconds": 0.54,
+    "exit_code": 0,
+    "log": "4-uv-hlbot.log",
+    "raw_stdout_sha256": "fcd49324e70787bc6a4139e6d75379bd2d5de55e7d7dbfd3bedde6eed5457fba",
+    "log_normalization": "Trailing whitespace and terminal blank lines removed."
+  },
+  {
+    "command": [
+      "git",
+      "diff",
+      "--check"
+    ],
+    "started_at": "2026-10-31T11:42:55.977773+00:00",
+    "duration_seconds": 0.02,
+    "exit_code": 0,
+    "log": "5-git-diff.log",
+    "raw_stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "log_normalization": "Trailing whitespace and terminal blank lines removed."
+  }
+]
