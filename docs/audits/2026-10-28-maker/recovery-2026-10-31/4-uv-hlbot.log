@@ -1,17 +1,17 @@
-                                                                                
- Usage: hlbot run [OPTIONS]                                                     
-                                                                                
- Long-running event-paced engine — replaces the 5-min cron tick.                
-                                                                                
- Every ``interval`` seconds: build a market view (WS snapshot preferred,        
- REST fallback) and run one consolidated cycle (paper sim + live execution).    
- Every ``ingest_every_s``: ingest fills/funding/equity and refresh              
- attribution; trips the kill switch on an equity-floor breach.                  
- Every ``supervise_every_s``: evaluate goals (auto-promotion lives here).       
- ``max_cycles`` > 0 exits after N cycles (for testing/ops checks).              
- ``--profile moonshot`` runs the ring-fenced sleeve: own data dir/DB/KILL,      
- configs/moonshot/ contracts, and (via env) its own sub-account + wallet.       
-                                                                                
+
+ Usage: hlbot run [OPTIONS]
+
+ Long-running event-paced engine — replaces the 5-min cron tick.
+
+ Every ``interval`` seconds: build a market view (WS snapshot preferred,
+ REST fallback) and run one consolidated cycle (paper sim + live execution).
+ Every ``ingest_every_s``: ingest fills/funding/equity and refresh
+ attribution; trips the kill switch on an equity-floor breach.
+ Every ``supervise_every_s``: evaluate goals (auto-promotion lives here).
+ ``max_cycles`` > 0 exits after N cycles (for testing/ops checks).
+ ``--profile moonshot`` runs the ring-fenced sleeve: own data dir/DB/KILL,
+ configs/moonshot/ contracts, and (via env) its own sub-account + wallet.
+
 ╭─ Options ────────────────────────────────────────────────────────────────────╮
 │ --live                 --no-live             [default: no-live]              │
 │ --execution                         TEXT     [default: auto]                 │
@@ -23,4 +23,3 @@
 │ --profile                           TEXT                                     │
 │ --help                                       Show this message and exit.     │
 ╰──────────────────────────────────────────────────────────────────────────────╯
-

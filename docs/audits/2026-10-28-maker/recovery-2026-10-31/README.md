@@ -23,7 +23,7 @@ A fresh fetch on 2026-10-31 showed that remote `main` already contained the exac
 GitHub reported a successful [push CI run](https://github.com/laqaer/hl-bot/actions/runs/40618400409) for that commit on 2026-10-28.
 The commit-to-PR API returned no associated PR. The issue's claim that the commit was unpushed was stale.
 This follow-up PR records verification and closes the recovery task. It does not reapply the source deletion.
-Use the PR linked from [issue #39](https://github.com/laqaer/hl-bot/issues/39) for the final integration receipt.
+Use [PR #40](https://github.com/laqaer/hl-bot/pull/40) for the final integration receipt.
 
 The existing main checkout had edits in `ralph/loop.sh` and `scripts/auto_tuner.py`. This session did not change them.
 The portfolio still marks this bot as superseded and paper-only. No deployment or trading command ran.
@@ -32,7 +32,8 @@ The portfolio still marks this bot as superseded and paper-only. No deployment o
 
 Checks ran at the recovered head on macOS arm64, with Python 3.11.15 and uv 0.11.19.
 The existing uv environment supplied dependencies. The environment omitted trading and Telegram credentials, disabled dotenv loading, and selected paper mode.
-The [command results](results.json) retain UTC start times, durations, exit codes, and log paths.
+The [command results](results.json) retain UTC start times, durations, exit codes, log paths, and original output hashes.
+Published logs remove trailing whitespace and terminal blank lines. Original output remains identified by its SHA-256 hash.
 The run started at 2026-10-31 11:42:50 UTC, or 19:42:50 Asia/Shanghai.
 
 | Check | Result | Evidence |
@@ -68,4 +69,4 @@ No installation, deployment, or runtime acceptance is claimed.
 
 One helper supplied independent review. No repair attempt was needed. Local command durations are in `results.json`.
 Model, agent compute, and CI monetary costs are unknown, not zero.
-The author checked the new prose against all ten documentation-style checks. Exact commands, source hashes, and frozen log output retain their original form.
+The author checked the new prose against all ten documentation-style checks. Exact commands and source hashes retain their original form. Log normalization changes whitespace only.

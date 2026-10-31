@@ -1,6 +1,6 @@
-                                                                                
- Usage: hlbot [OPTIONS] COMMAND [ARGS]...                                       
-                                                                                
+
+ Usage: hlbot [OPTIONS] COMMAND [ARGS]...
+
 ╭─ Options ────────────────────────────────────────────────────────────────────╮
 │ --help          Show this message and exit.                                  │
 ╰──────────────────────────────────────────────────────────────────────────────╯
@@ -50,4 +50,3 @@
 │                      Sharpe, DD, per-agent).                                 │
 │ report               Build daily report; optionally send to Telegram.        │
 ╰──────────────────────────────────────────────────────────────────────────────╯
-
