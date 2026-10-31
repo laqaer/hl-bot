@@ -1,0 +1,16 @@
+........................................................................ [ 21%]
+........................................................................ [ 42%]
+........................................................................ [ 63%]
+........................................................................ [ 84%]
+......................................................                   [100%]
+=============================== warnings summary ===============================
+tests/test_femr_tick.py::test_femr_tick_delegates_to_run_with_max_cycles_one
+  /Users/andyzhou/dev/hl-bot--deep-test-audit/tests/test_femr_tick.py:16: DeprecationWarning: femr_tick is deprecated; use `hlbot run --max-cycles 1`
+    femr_tick(live=True, execution="maker")
+
+.venv/lib/python3.11/site-packages/_pytest/cacheprovider.py:475
+  /Users/andyzhou/dev/hl-bot--deep-test-audit/.venv/lib/python3.11/site-packages/_pytest/cacheprovider.py:475: PytestCacheWarning: cache could not write path /Users/andyzhou/dev/hl-bot--deep-test-audit/.pytest_cache/v/cache/nodeids: [Errno 1] Operation not permitted: '/Users/andyzhou/dev/hl-bot--deep-test-audit/.pytest_cache/v/cache/nodeids'
+    config.cache.set("cache/nodeids", sorted(self.cached_nodeids))
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+342 passed, 2 warnings in 3.19s

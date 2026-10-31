@@ -1,0 +1,71 @@
+[
+  {
+    "command": [
+      "uv",
+      "run",
+      "--frozen",
+      "--offline",
+      "pytest",
+      "-q"
+    ],
+    "started_at": "2026-10-31T11:42:50.517440+00:00",
+    "duration_seconds": 4.16,
+    "exit_code": 0,
+    "log": "1-uv-pytest.log"
+  },
+  {
+    "command": [
+      "uv",
+      "run",
+      "--frozen",
+      "--offline",
+      "ruff",
+      "check",
+      "."
+    ],
+    "started_at": "2026-10-31T11:42:54.676106+00:00",
+    "duration_seconds": 0.08,
+    "exit_code": 0,
+    "log": "2-uv-ruff.log"
+  },
+  {
+    "command": [
+      "uv",
+      "run",
+      "--frozen",
+      "--offline",
+      "hlbot",
+      "--help"
+    ],
+    "started_at": "2026-10-31T11:42:54.756035+00:00",
+    "duration_seconds": 0.68,
+    "exit_code": 0,
+    "log": "3-uv-hlbot.log"
+  },
+  {
+    "command": [
+      "uv",
+      "run",
+      "--frozen",
+      "--offline",
+      "hlbot",
+      "run",
+      "--help"
+    ],
+    "started_at": "2026-10-31T11:42:55.434928+00:00",
+    "duration_seconds": 0.54,
+    "exit_code": 0,
+    "log": "4-uv-hlbot.log"
+  },
+  {
+    "command": [
+      "git",
+      "diff",
+      "--check"
+    ],
+    "started_at": "2026-10-31T11:42:55.977773+00:00",
+    "duration_seconds": 0.02,
+    "exit_code": 0,
+    "log": "5-git-diff.log"
+  }
+]
